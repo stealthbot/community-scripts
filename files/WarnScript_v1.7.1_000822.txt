@@ -1,0 +1,547 @@
+Option Explicit
+Script("Name") = "WarnScript"
+Script("Author") = "Swent and asshead, Conversion by Dragon_Legion"
+Script("Major") = 1
+Script("Minor") = 7
+Script("Revision") = 1
+Script("Description") = "Script to warn users a specific amount of times and then ban them"
+
+
+'// Warn Script v1.7
+'//   by Swent and asshead, Port by Dragon_Legion
+'//     Last Modifed by Dragon_Legion 17:52 Aug 17, 2010
+
+'// ver 1.8
+'//   Changed errors on no mod to be less vocal
+'//   Added support for using timeban script
+'//   Added command "usetimeban" to turn on and off timebans
+'//   Added command "timebantime" to set timeban time
+'//   Added settings variables for the same (scripts.ini)
+'// ver 1.7 Revision 1
+'//   As per more reccommendations from Hdx the following has been adressed
+'//   *  Changed command creation section to individual subs
+'//   *  Removed final .SendResponse
+'//   *  Added FormatString to outputs
+'//   *  Removed warnhelp section and command
+'//   *  Fixed bug where it was banning users with less than the required amount of warns
+'// ver 1.7
+'//   As per reccommendations from Hdx the following has been added/changed
+'//   *  Removed delete section
+'//   *  Removed saving access into scripts file (clears the values as well) since we wont be deleting the commands now
+'//   *  Cleared all but one of the Command.SendResponse (remaining one needed for list)
+'//   *  Changed Private declaration to public and set functions and subs to public
+'//   *  Changed how checking for ops (avoid errors and bot timeouts)
+'//   *  Removed Command.HasAccess checks as unneccessary
+'//   *  Changed warns to a class (provides more functionality and extensionability)
+'//   *  Cleaned up code
+'//   Fixed a typo in mail section
+'//   Fixed error where it would exit before clearing the warn list
+'//   Added warnmail (on/off) command
+'//   Added warnsafe/warnunsafe (user) command (basic safelisting)
+'//   Added a timer to force a db save every hour (prevents list from getting lost)
+'//   Added force lowercase to prevent users from relogging in with no warns by changing any letter's case
+'//   Added comments to better delineate code
+'//   Changed name of resetwarns to warnclear (makes more sense imo)
+'// ver 1.6.1
+'//   Converted to script format to work with SB 2.7.1
+'//   Changed how users are accessed (Dictionary style)
+'//   Changed how reasons are accessed (Dictionary style)
+'//   Added commands to command database for SB 2.7.1
+'//   Changed event usage to Event_Command(Command)
+'//   Added warnhelp command with optional <topic> parameter
+'//   Fixed typo in mail command
+'//   Added a check for if user is in the channel
+'//   Added a check for if the bot is opped in the channel
+'//   Moved settings to settings file
+'//   Added mail to clear list section
+'// ver 1.6
+'//   Added reason saving and proper display in kick/ban message
+'// ver 1.55
+'//   Fixed reason saving (Thanks Mondster)
+'// ver 1.53
+'//   Added a .resetwarns command (Thanks AciD_BurN_)
+'//   Fix a problem with the listwarn command (Thanks PaokArxis)
+'// ver 1.3
+'//   Fixed the .listwarn command and added 2 aliases for it: .listwarns, .warnlist
+'//   You can now use "/" as your trigger inside the bot for ws commands
+
+'/*************************
+'* DO NOT EDIT BELOW HERE *
+'* DO NOT EDIT BELOW HERE *
+'* DO NOT EDIT BELOW HERE *
+'* DO NOT EDIT BELOW HERE *
+'*************************/
+
+'%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+'%%%                        %%%
+'%%%       Variables        %%%
+'%%%                        %%%
+'%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Public wsMaxWarn, wsEmail, wsEmailFlag, wsEmailAccess, wsFileR, wsFileW, warnCmd '// Main file and access objects
+Public wsUsers, wsReasons, wsTimer '// Main script objects
+Private wsFSO, wsLines, wsLine, Key, wsFile '//Private objects that should ONLY be accessed from within the script
+
+Sub Event_Load()
+	'// Create File Object and users dictionary
+	Set wsFSO = CreateObject("Scripting.FilesystemObject")
+	Set wsUsers = CreateObject("Scripting.Dictionary")
+	wsUsers.CompareMode = 1
+	'// Create timer for database saving
+	CreateObj "LongTimer", "wsTimer"
+	wsTimer.Enabled = True
+	wsTimer.Interval = 3600
+
+	'// Check if warn file exists and if not, create it
+	If NOT wsFSO.FolderExists(BotPath & "warns\") Then wsFSO.CreateFolder(BotPath & "warns\")
+	If NOT wsFSO.FileExists(BotPath & "warns\warns.txt") Then wsFSO.CreateTextFile(BotPath & "warns\warns.txt")
+
+	'// Call the settings and userlist loading
+	Call Settings("get")
+	Call Settings("load")
+
+	Set warnCmd = new WarnCmds '// Call the command creation class
+    Set warnCmd = Nothing
+End Sub
+
+Sub Event_Command(Command)
+	If Command.HasAccess Then
+		checkWarn(Command)
+	End If
+End Sub
+
+Sub Event_UserInChannel(Username, Flags, Message, Ping, Product, StatUpdate)
+	checkWarnStatus LCase(Username)
+End Sub
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+	checkWarnStatus LCase(Username)
+End Sub
+
+Sub Event_Close()
+	Call Settings("save")
+End Sub
+
+Class WarnCmds
+	Private cmd, cmdWarn, Param
+	
+	Sub Class_Initialize()
+		Call Warn()
+		Call Unwarn()
+		Call Warnlist()
+		Call Warnclear()
+		Call Warnmail()
+		Call Warnsafe()
+		Call Warnunsafe()
+		Call Timeban()
+		Call Timebantime()
+	End Sub
+	
+	Sub Warn()
+		Set cmdWarn = OpenCommand("warn")
+		If cmdWarn Is Nothing Then
+			Set cmd = CreateCommand("warn")
+			cmd.RequiredRank = 70
+			cmd.Description = "Warns a user for whatever reason"
+			Set Param = cmd.NewParameter("user",False,"word")
+			Param.Description = "User to warn"
+			cmd.Parameters.Add Param
+			Set Param = cmd.NewParameter("reason",True,"string")
+			Param.Description = "Reason to warn user"
+			cmd.Parameters.Add Param
+			cmd.Aliases.Add "warnadd" : cmd.Aliases.Add "addwarn"
+			cmd.Save
+		End If
+		Set cmdWarn = Nothing : Set cmd = Nothing : Set Param = Nothing
+	End Sub
+	
+	Sub Unwarn()
+		Set cmdWarn = OpenCommand("unwarn")
+		If cmdWarn Is Nothing Then
+			Set cmd = CreateCommand("unwarn")
+			cmd.RequiredRank = 70
+			cmd.Description = "Removes all warns from a user"
+			Set Param = cmd.NewParameter("user",False,"word")
+			Param.Description = "User to unwarn"
+			cmd.Parameters.Add Param
+			cmd.Aliases.Add "warndel" : cmd.Aliases.Add "warnrem" : cmd.Aliases.Add "remwarn" : cmd.Aliases.Add "delwarn"
+			cmd.Save
+		End If
+		Set cmdWarn = Nothing : Set cmd = Nothing : Set Param = Nothing
+	End Sub
+	
+	Sub Warnlist()
+		Set cmdWarn = OpenCommand("warnlist")
+		If cmdWarn Is Nothing Then
+			Set cmd = CreateCommand("warnlist")
+			cmd.RequiredRank = 70
+			cmd.Description = "Lists all current warns in the bot's database"
+			cmd.Aliases.Add "warns" : cmd.Aliases.Add "listwarns" : cmd.Aliases.Add "warnslist" : cmd.Aliases.Add "warned"
+			cmd.Save
+		End If
+		Set cmdWarn = Nothing : Set cmd = Nothing
+	End Sub
+	
+	Sub Warnclear()
+		Set cmdWarn = OpenCommand("warnclear")
+		If cmdWarn Is Nothing Then
+			Set cmd = CreateCommand("warnclear")
+			cmd.RequiredRank = 100
+			cmd.Description = "Clears the warns database."
+			cmd.Aliases.Add "cwl" : cmd.Aliases.Add "clearwarns"
+			cmd.Save
+		End If
+		Set cmd = Nothing : Set cmdWarn = Nothing
+	End Sub
+	
+	Sub Warnsafe()
+		Set cmdWarn = OpenCommand("warnsafe")
+		If cmdWarn Is Nothing Then
+			Set cmd = CreateCommand("warnsafe")
+			cmd.RequiredRank = 100
+			cmd.Description = "Safelist <user> from being kicked or banned from warns"
+			Set Param = cmd.NewParameter("user", False, "word")
+			Param.Description = "Username to safelist"
+			cmd.Parameters.Add Param
+			cmd.Save
+		End If
+		Set cmdWarn = Nothing : Set cmd = Nothing : Set Param = Nothing
+	End Sub
+	
+	Sub Warnunsafe()
+		Set cmdWarn = OpenCommand("warnunsafe")
+		If cmdWarn Is Nothing Then
+			Set cmd = CreateCommand("warnunsafe")
+			cmd.RequiredRank = 100
+			cmd.Description = "Remove <user> from safelist"
+			Set Param = cmd.NewParameter("user",False,"word")
+			Param.Description = "Username to unsafelist"
+			cmd.Parameters.Add Param
+			cmd.Save
+		End If
+		Set cmd = Nothing : Set cmdWarn = Nothing : Set Param = Nothing
+	End Sub
+	
+	Sub Warnmail()
+		Set cmdWarn = OpenCommand("warnmail")
+		If cmdWarn Is Nothing Then
+			Set cmd = CreateCommand("warnmail")
+			cmd.RequiredRank = 100
+			cmd.Description = "Turn on or off the mail function"
+			Set Param = cmd.NewParameter("on/off", False, "bool")
+			Param.Description = "Turn on or off mailing information"
+			cmd.Parameters.Add Param
+			cmd.Save
+		End If
+		Set cmd = Nothing : Set cmdWarn = Nothing : Set Param = Nothing
+	End Sub
+	
+	Sub Timeban()
+		Set cmdWarn = OpenCommand("usetimeban")
+		If cmdWarn Is Nothing Then
+			Set cmd = CreateCommand("usetimeban")
+			cmd.RequiredRank = 100
+			cmd.Description = "Turn on or off timeban functionality"
+			cmd.Save
+		End If
+	End Sub
+	
+	Sub Timebantime()
+		Set cmdWarn = OpenCommand("timebantime")
+		If cmdWarn Is Nothing Then
+			Set cmd = CreateCommand("timebantime")
+			cmd.RequiredRank = 100
+			cmd.Description = "Timeban time to use with timebans.  Saved between loads."
+			Set Param = cmd.NewParameter("time",False,"word")
+			Param.Description = "Time to timeban for in timeban format"
+			cmd.Parameters.Add Param
+			cmd.Save
+		End If
+	End Sub
+
+End Class
+
+Sub checkWarn(Cmd)
+	Dim msg, reason, modulus, c, wsEn, access, flags
+	Select Case LCase(Cmd.Name)
+		Case "warn"
+			If Channel.Self.IsOperator = False Then
+				'Cmd.Respond "Error: This command requires channel operator status. Please op me if you want to have a working Warn Script"
+				Exit Sub
+			End If
+			If Cmd.Argument("user") = vbNullString Then
+				Cmd.Respond "Error: You need to specify a user and a reason when requesting a warn."
+				Exit Sub
+			End If
+			If Channel.GetUserIndex(Cmd.Argument("user")) = 0 Then
+				Cmd.Respond "Error: That user is not in channel.  Cannot warn if the user is not in channel."
+				Exit Sub
+			End If
+			If Len(Cmd.Argument("reason")) = 0 Then
+				reason = StringFormat("Requested by {0} at time {1}", Cmd.Username, Now())
+			Else
+				reason = Cmd.Argument("reason")
+			End If
+			If wsUsers.Exists(LCase(Cmd.Argument("user"))) Then
+				GetDBEntry Cmd.Argument("user"), access, flags
+				If InStr(UCase(flags), "S") OR wsUsers.Item(LCase(Cmd.Argument("user"))).Exempt = 1 Then
+					Exit Sub
+				End If
+				wsUsers.Item(LCase(Cmd.Argument("user"))).Warn = wsUsers.Item(Cmd.Argument("user")).Warn + 1
+				wsUsers.Item(LCase(Cmd.Argument("user"))).Reason = reason
+			Else
+				wsUsers.Add LCase(Cmd.Argument("user")), new wsUser
+				wsUsers.Item(LCase(Cmd.Argument("user"))).Reason = reason
+			End If
+			If Int(wsUsers.Item(LCase(Cmd.Argument("user"))).Warn) >= wsMaxWarn + 1 Then
+				If GetSettingsEntry("usetimeban") = 1 Then
+					Command BotVars.Username, StringFormat("/timeban {0} {1} Warned. {2} (max warns exceeded)", Cmd.Argument("user"), GetSettingsEntry("timebantime"), reason), True
+					If wsEmail = True Then
+						Command BotVars.Username, StringFormat("/mmail {0} {1} was banned for {2}", wsEmailFlag, LCase(Cmd.Argument("user")), reason), True
+						Command BotVars.Username, StringFormat("/mmail {0} {1} Was banned for {2}", wsEmailAccess, LCase(Cmd.Argument("user")), reason), True
+					End If
+				Else
+					msg = "/ban " & Cmd.Argument("user") & " Warned. " & reason & " (max warns exceeded)"
+					If wsEmail = True Then
+						Command BotVars.Username, StringFormat("/mmail {0} {1} was banned for {2}", wsEmailFlag, LCase(Cmd.Argument("user")), reason), True
+						Command BotVars.Username, StringFormat("/mmail {0} {1} Was banned for {2}", wsEmailAccess, LCase(Cmd.Argument("user")), reason), True
+					End If
+				End If
+			Else
+				msg = StringFormat("/kick {0} Warned. {1}", Cmd.Argument("user"),reason)
+			End If
+			AddQ msg
+		Case "unwarn"
+			If Channel.Self.IsOperator = False Then
+				'Cmd.Respond "Error: This command requires channel operator status. Please op me if you want to have a working Warn Script"
+				Exit Sub
+			End If
+			If Cmd.Argument("user") = vbNullString Then
+				Cmd.Respond "Error: This command requires a username."
+				Exit Sub
+			End If
+			If wsUsers.Exists(LCase(Cmd.Argument("user"))) Then
+				wsUsers.Remove LCase(Cmd.Argument("user"))
+				Cmd.Respond StringFormat("User {0} has been removed from the database.", Cmd.Argument("user"))
+			Else
+				Cmd.Respond StringFormat("User {0} was not found in the database.", Cmd.Argument("user"))
+			End If
+			If GetSettingsEntry("usetimeban") = 1 Then
+				Command BotVars.Username, "/untimeban " & Cmd.Argument("user"), True
+			Else
+				AddQ "/unban " & Cmd.Argument("user")
+			End If
+		Case "warnlist"
+			If Channel.Self.IsOperator = False Then
+				'Cmd.Respond "Error: This command requires channel operator status. Please op me if you want to have a working Warn Script"
+				Exit Sub
+			End If
+			If wsUsers.Count = 0 Then
+				Cmd.Respond "Error: There is nobody in the warn database"
+				Exit Sub
+			Else
+				c = 0
+				For Each Key in wsUsers.Keys
+					c = c + 1
+					modulus = c/10
+					If InStr(modulus, ".") Then
+						msg = msg & Key & " (" & wsUsers.Item(Key).Warn & "), "
+					Else
+						If wsUsers.Count > c Then
+							Cmd.Respond "Current Warns: " & Left(msg,Len(msg)-2) & " [more]"
+						Else
+							Cmd.Respond "Current Warns: " & Left(msg,Len(msg)-2)
+						End If
+						msg = Key & ", "
+					End If
+				Next
+				If Len(msg) > 0 Then
+					Cmd.Respond "Current Warns: " & Left(msg,Len(msg)-2)
+				End If
+			End If
+		Case "warnclear"
+			If Channel.Self.IsOperator = False Then
+				'Cmd.Respond "Error: This command requires channel operator status. Please op me if you want to have a working Warn Script"
+				Exit Sub
+			End If
+			If wsUsers.Count = 0 Then
+				Cmd.Respond "Error: No users to clear"
+				Exit Sub
+			Else
+				Cmd.Respond "Warn list cleared"
+				wsUsers.RemoveAll
+				If wsEmail = True Then
+					Command BotVars.Username, StringFormat("/mmail {0} {1} Cleared ban list at {2}",wsEmailFlag, Cmd.Username, Now()), True
+					Command BotVars.Username, StringFormat("/mmail {0} {1} cleared ban list at {2}", wsEmailAccess, Cmd.Username, Now()), True
+				End If
+			End If
+		Case "warnmail"
+			If Channel.Self.IsOperator = False Then
+				'Cmd.Respond "Error: This command requires channel operator status. Please op me if you want to have a working Warn Script"
+				Exit Sub
+			End If
+			wsEn = LCase(Cmd.Argument("on/off"))
+			If wsEn <> vbNullString Then
+				Select Case wsEn
+					Case "on"
+						Cmd.Respond "Warn Script emails enabled."
+						wsEmail = True
+					Case "off"
+						Cmd.Respond "Warn Script emails disabled."
+						wsEmail = False
+					Case Else
+						Cmd.Respond "Error: Invalid value.  Valid values are 'on' or 'off'"
+				End Select
+			Else
+				Cmd.Respond "Error: You must specify a value for that command.  Valid values are 'on' or 'off'"
+			End If
+		Case "warnsafe"
+			If Channel.Self.IsOperator = False Then
+				'Cmd.Respond "Error: This command requires channel operator status. Please op me if you want to have a working Warn Script"
+				Exit Sub
+			End If
+			If Channel.GetUserIndex(Cmd.Argument("user")) = 0 Then
+				Cmd.Respond "Error: That user is not in channel.  The user must be in channel to be safelisted"
+				Exit Sub
+			End If
+			If wsUsers.Exists(LCase(Command.Argument("user"))) Then
+				wsUsers.Item(LCase(Command.Argument("user"))).Exempt = 1
+				Cmd.Respond Cmd.Argument("user") & " added to the safelist"
+			Else
+				wsUsers.Add LCase(Cmd.Argument("user")), new wsUser
+				wsUsers.Item(Cmd.Argument("user")).Warn = 0
+				wsUsers.Item(Cmd.Argument("user")).Exempt = 1
+				Command.Respond Cmd.Argument("user") & " added to the safelist"
+			End If
+		Case "warnunsafe"
+			If Channel.Self.IsOperator = False Then
+				'Cmd.Respond "Error: This command requires channel operator status. Please op me if you want to have a working Warn Script"
+				Exit Sub
+			End If
+			If Channel.GetUserIndex(Cmd.Argument("user")) = 0 Then
+				Cmd.Respond "Error: That user is not in channel.  The user must be in channel to be unsafelisted"
+				Exit Sub
+			End If
+			If wsUsers.Exists(LCase(Cmd.Argument("user"))) Then
+				wsUsers.Item(LCase(Cmd.Argument("user"))).Exempt = 0
+				Cmd.Respond Cmd.Argument("user") & " Removed from the safelist database"
+			Else
+				Cmd.Respond "Error: That user doesn't have an entry in the database"
+			End If
+		Case "usetimeban"
+			If GetSettingsEntry("usetimeban") = 0 Then
+				WriteSettingsEntry "usetimeban", 1
+				Cmd.Respond "Timeban Settings enabled"
+			Else
+				WriteSettingsEntry "usetimeban", 0
+				Cmd.Respond "Timeban Settings disabled"
+			End If
+		Case "timebantime"
+			If Cmd.Argument("time") <> vbNullString Then
+				WriteSettingsEntry "timebantime", Cmd.Argument("time")
+				Cmd.Respond "Timeban time set to " & Cmd.Argument("time")
+			Else
+				Cmd.Respond "Timeban time is set to " & GetSettingsEntry("timebantime")
+			End If
+	End Select
+End Sub
+
+Sub checkWarnStatus(Username)
+	If Channel.Self.IsOperator Then
+		'AddChat vbRed, "[WS] ", vbGreen, "Is Op passed"
+		If wsUsers.Exists(LCase(Username)) Then
+			'AddChat vbRed, "[WS] ", vbGreen, LCase(Username) & " Is in db"
+			If wsUsers.Item(LCase(Username)).Warn > wsMaxWarn Then
+				'AddChat vbRed, "[WS] ", vbGreen, "Max Warns: " & wsMaxWarn+1 & " User's warns: " & wsUsers.Item(LCase(Username)).Warn
+				AddQ StringFormat("/ban {0} Warns Exceeded. Last warn: {1}", Username, wsUsers.Item(LCase(Username)).Reason)
+			End If
+		End If
+	End If
+End Sub
+
+Sub Settings(action)
+	Dim arrLine
+	If action = "get" Then
+		'// Settings Entries
+		If GetSettingsEntry("maxWarn") <> vbNullString Then
+			wsMaxWarn = GetSettingsEntry("maxWarn")
+		Else
+			wsMaxWarn = 2
+			WriteSettingsEntry "maxWarn",2
+		End If
+		If GetSettingsEntry("emailEnabled") <> vbNullString Then
+			wsEmail = GetSettingsEntry("emailEnabled")
+		Else
+			wsEmail = False
+			WriteSettingsEntry "emailEnabled", False
+		End If
+		If GetSettingsEntry("emailFlag") <> vbNullString Then
+			wsEmailFlag = GetSettingsEntry("emailFlag")
+		Else
+			wsEmailFlag = "N"
+			WriteSettingsEntry "emailFlag", "N"
+		End If
+		If GetSettingsEntry("emailAccess") <> vbNullString Then
+			wsEmailAccess = GetSettingsEntry("emailAccess")
+		Else
+			wsEmailAccess = 100
+			WriteSettingsEntry "emailAccess", 100
+		End If
+		If GetSettingsEntry("usetimeban") = vbNullString Then
+			WriteSettingsEntry "usetimeban", 0
+		End If
+		If GetSettingsEntry("timebantime") = vbNullString Then
+			WriteSettingsEntry "timebantime", "h/1"
+		End If
+	Elseif action = "save" Then
+		'// Write user data to data file
+		Set wsFileW = wsFSO.OpenTextFile(BotPath & "warns\warns.txt", 2, True)
+		wsFileW.WriteLine "Username:Warn:Exempt:Reason"
+		For Each Key in wsUsers.Keys
+			wsFileW.WriteLine StringFormat("{0}:{1}:{2}:{3}", Key, wsUsers.Item(Key).Warn, wsUsers.Item(Key).Exempt, wsUsers.Item(Key).Reason)
+		Next
+		wsFileW.close '// Free up memory
+		WriteSettingsEntry "emailEnabled", wsEmail
+		Set wsFileW = Nothing
+	ElseIf action = "load" Then
+		'// Read data file into an array and set the dictonary and user class info
+		Set wsFileR = wsFSO.OpenTextFile(BotPath & "warns\warns.txt", 1)  
+		If wsFileR.AtEndofStream = False Then
+			wsLines = Split(wsFileR.ReadAll, vbCrLf)  
+			For Each wsLine in wsLines
+				'//Ignore first line and empty lines/file
+				If wsLine <> "" and NOT wsLine = "Username:Warn:Exempt:Reason" Then
+					arrLine = Split(wsLine, ":")
+					wsUsers.Add arrLine(0), new wsUser
+					'// Class values
+					With wsUsers.Item(arrLine(0))
+						.Reason = arrLine(3)
+						.Warn = arrLine(1)
+						.Exempt = arrLine(2)
+					End With
+				End If
+			Next  
+		End If
+		wsFileR.Close '// Close stream (free memory)
+		Set wsFileR = Nothing
+	End If
+End Sub
+
+Sub wsTimer_Timer()
+	wsFSO.DeleteFile(BotPath & "warns\warns.txt")
+	Set wsFile = wsFSO.CreateTextFile(BotPath & "warns\warns.txt", 2)
+	wsFile.WriteLine "Username:Warn:Exempt:Reason"
+	For Each Key in wsUsers.Keys
+		wsFile.WriteLine StringFormat("{0}:{1}:{2}:{3}", Key, wsUsers.Item(Key).Warn, wsUsers.Item(Key).Exempt, wsUsers.Item(Key).Reason)
+	Next
+	wsFile.close '// Free up memory
+End Sub
+
+Class wsUser
+	Public Reason, Warn, Exempt
+	Sub Class_Initialize()
+		Reason = ""
+		Warn = 1
+		Exempt = 0
+	End Sub
+End Class

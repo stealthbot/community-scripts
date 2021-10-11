@@ -1,0 +1,188 @@
+Script("Name")           = "Mute"
+Script("Author")         = "LoCoFtW"
+Script("Major")          = 1
+Script("Minor")          = 0
+Script("Revision")       = 0
+Script("Description")    = "Mute Command @ Battle.Net Channel"
+
+
+'/////////////
+' FILE PATHS
+
+clanDataBase             = BotPath & "database.mdb"
+
+'///////////////
+' MISCELLANEOUS
+
+Private dbConn           '// Holds the database connection
+Set clanFSO              = CreateObject("Scripting.FileSystemObject")
+
+
+
+'///////////////
+'    SUBS
+
+Sub Event_Command(Command)
+     Dim Username : Username = Command.Username
+    
+     Select Case LCase(Command.Name)
+          Case "mute"              : Call mute_cmd(Username, Command)
+          Case "unmute"            : Call unmute_cmd(Username, Command)
+          Case "checkmute"         : Call checkmute_cmd(Username, Command)
+     End Select
+End Sub
+
+Sub Event_Load()
+    '// The database does not exist
+     If NOT clanFSO.FileExists(clanDataBase) Then
+          AddChat vbRed, "[Mute Script] Database was not found! Creating now..."
+          Call createDB()
+     End If
+
+    '// Create commands if nessesary
+     Call createCommands
+End Sub
+
+Private Sub dbConnect
+     Set dbConn = CreateObject("ADODB.Connection")
+     dbConnStringProperty = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & clanDataBase
+     dbConn.ConnectionString = dbConnStringProperty
+     dbConn.Open
+End Sub
+
+Private Sub dbDisconnect
+     dbConn.Close
+End Sub
+
+Sub Event_Usertalk(Username, Flags, Message, Ping)
+ If IsMuted(Username) Then
+  AddQ "/kick " & Username & " You're Not allowed to talk while muted!"
+ End If
+End Sub
+
+'///////////////
+' COMMAND SUBS
+
+Private Sub Unmute_cmd(Username, Command)
+ If NOT UserExists(Command.Argument("user")) Then
+  AddQ "[" & Command.Argument("user") & "] is Not muted!"
+ Else
+  dbConnect
+   Set rs = dbConn.Execute("UPDATE `mutes` SET `muted` = 'N', `mute_reason` = 'Unmuted By', `muted_by` = '" & Username & "' WHERE `user_name` = '" & Command.Argument("user") & "'")
+   AddQ "UnMuted player [" & Command.Argument("user") & "] by player [" & Username & "]"
+  dbDisconnect
+ End If
+End Sub
+
+
+Private Sub Mute_cmd(Username, Command)
+  If NOT UserExists(Command.Argument("user")) Then
+dbConnect
+   Set rs = dbConn.Execute("INSERT INTO `mutes` (`muted`, `user_name`, `mute_reason`, `muted_by`) VALUES ('" & "Y" & "', '" & Command.Argument("user") & "', '" & Command.Argument("reason") & "', '" & Username & "')")
+   AddQ "Muted player [" & Command.Argument("user") & "] by player [" & Username & "] | Reason: [" & Command.Argument("reason") & "]"
+dbDisconnect
+  Else
+dbConnect
+   Set rs = dbConn.Execute("UPDATE `mutes` SET `muted` = 'Y', `mute_reason` = '" & Command.Argument("reason") & "', `muted_by` = '" & Username & "' WHERE `user_name` = '" & Command.Argument("user") & "'")
+   AddQ "Muted player [" & Command.Argument("user") & "] by player [" & Username & "] | Reason: [" & Command.Argument("reason") & "]"
+dbDisconnect
+  End If
+End Sub
+
+
+Private Sub Checkmute_cmd(Username, Command)
+ If NOT UserExists(Command.Argument("user")) Then Exit Sub
+If Command.Argument("User") = "" OR Command.Argument("User") = " " OR Command.Argument("User") = "  " Then
+ AddQ "Please spesify a username!"
+Else
+dbConnect
+ Set rs = dbConn.Execute("SELECT `muted`, `mute_reason`, `muted_by` FROM `mutes` WHERE `user_name` = '" & Command.Argument("user") & "'")
+  If rs.fields(0) = "Y" Then
+  AddQ "[" & Command.Argument("user") & "] is muted by [" & rs.fields(2) & "] because [" & rs.fields(1) & "]"
+ Else
+  AddQ "[" & Command.Argument("user") & "] is Not muted!"
+dbDisconnect
+  End If
+End If
+End Sub
+
+
+'///////////////
+'   FUNCTIONS
+
+Private Function UserExists(Username)
+     dbConnect
+          Set rs = dbConn.Execute("SELECT * FROM `mutes` WHERE `user_name` = '" & Username & "'")
+          If NOT (rs.BOF) AND NOT (rs.EOF) Then
+               UserExists = True
+          Else
+               UserExists = False
+          End If
+     dbDisconnect
+End Function
+
+Private Function IsMuted(Username)
+          If UserExists(Username) Then
+     dbConnect
+               Set rs = dbConn.Execute("SELECT `muted` FROM `mutes` WHERE `user_name` = '" & Username & "'")
+                    If rs.Fields(0) = "Y" Then
+                         IsMuted = True
+                    Else
+                         IsMuted = False
+                    End If
+          End If
+     dbDisconnect
+End Function
+
+
+'// ====================================================================================
+Private Sub createDB()
+     Set dbCatalog = CreateObject("ADOX.Catalog")
+     dbCatalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & clanDataBase   
+     
+     dbConnect
+          dbConn.Execute("CREATE TABLE `mutes` (`muted` varchar(1), `user_name` varchar(20), `mute_reason` varchar(200), `muted_by` varchar(20))")
+     dbDisconnect
+End Sub
+
+Private Sub createCommands()
+     Dim Command, Parameter
+
+     If OpenCommand("mute") Is Nothing Then
+          With CreateCommand("mute")
+               .Description = "Mutes a User" 
+               .RequiredRank = 100
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("reason", True, "Word")
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+     
+
+     If OpenCommand("unmute") Is Nothing Then
+          With CreateCommand("unmute")
+               .Description = "Unmutes a User" 
+               .RequiredRank = 100
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+
+
+     If OpenCommand("checkmute") Is Nothing Then
+          With CreateCommand("checkmute")
+               .Description = "Checks if a User is Muted" 
+               .RequiredRank = 100
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+
+
+     Set Command = Nothing
+     Set Parameter = Nothing
+End Sub

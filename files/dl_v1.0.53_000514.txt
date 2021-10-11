@@ -1,0 +1,1012 @@
+Script("Name") = "dl"
+Script("Author") = "Tuck"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 53
+Script("Description") = "DotA League."
+
+Public dlConn, dbPath
+Private gameID, gameState, gameUser(9), gameMode, Command_Bool, Command_Int, Command_Origin, gameTimeOut
+
+Sub Event_Load()
+    Call CreateSettings()
+    Call CreateCommands()
+    dbPath = BotPath() & "scripts\DotA League.mdb"
+    gameID = 0
+    If (CreateObject("Scripting.FileSystemObject").FileExists(dbPath)) Then
+        Call Connect()
+    Else
+        CreateObject("ADOX.Catalog").Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & dbPath
+        Call Connect()
+        dlConn.Execute("Create Table `Users` (`Username` Varchar(25) Not Null, `Wins` Int, `Draws` Int, `Losses` Int, `Experience` Int, `LastGameId` Int, `Vouch` Varchar(25), `Left` Int, `Dropped` Int, `Traunted` Int, `Created` TIMESTAMP NOT NULL, `Modified` Timestamp Not Null)")
+        dlConn.Execute("Create Table `Games` (`ID` Int Not Null, `GameState` VarChar(125) Not Null, `Sentinel` Varchar(145), `Scourge` Varchar(145), `Creator` Varchar(25) Not Null, `Left` Text Null, `Drop` Text Null, `Traunt` Text Null, `Mode` Varchar(20), `Start` Timestamp Not Null, `End` Timestamp Null)")
+        dlConn.Execute("Create Table `Bans` (`Username` Varchar(25) Not Null, `By` Varchar(25) Not Null, `Reason` Varchar(100) Null, `Created` Timestamp Not Null, `Modified` Timestamp Not Null)")
+    End If
+    CreateObj("Menu", "MenuOpenConfig").Caption = "Open Dota League.ini (Config File)"
+    CreateObj("Menu", "MenuOpenDatabase").Caption = "Open Dota League.mdb (Database File)"
+    CreateObj("Menu", "MenuDash").Caption = "-"
+    CreateObj("Menu", "MenuLink").Caption = "Open Dota League Topic (StealthBot Topic)"
+    Command_Origin = GConfig("Other", "Command_Origin")
+    Command_Bool = True
+    Command_Int = GConfig("Other", "Command_Spam")
+    If (Int(Command_Int) > 0) Then
+        CreateObj "Timer", "Command_Spam"
+        Command_Spam.Interval = Command_Int
+    End If
+    gameTimeOut = GConfig("Other", "Game_TimeOut")
+    If (Int(gameTimeOut) > 0) Then
+        CreateObj "LongTimer", "Game_TimeOut"
+        Game_TimeOut.Interval = gameTimeOut
+    End If
+End sub
+
+Sub MenuOpenConfig_Click()
+    CreateObject("Shell.Application").Open BotPath() & "scripts\Dota League.ini"
+End Sub
+
+Sub MenuOpenDatabase_Click()
+    CreateObject("Shell.Application").Open dbPath
+End Sub
+
+Sub MenuLink_Click()
+    CreateObject("Shell.Application").Open "http://www.stealthbot.net/forum/index.php?/topic/2656-dota-league"
+End Sub
+
+Sub Event_Close()
+    On Error Resume Next
+    dlConn.Close
+    Set dlConn = Nothing
+End Sub
+
+Private Sub CreateSettings()
+    WConfig "Command", "Clear", "Cleared %tables.", False
+    WConfig "Command", "Transfer", "Data from %username(1) successfully transferred to %username(2).", False
+    WConfig "Command", "Remove", "Deleted %username from %tables table(s).", False
+    WConfig "Command", "Punish", "Removed %amount experience from %username.", False
+    WConfig "Command", "Refund", "Added %amount experience to %username.", False
+    WConfig "Command", "Game", "Game %id: %gamestate", False
+    WConfig "Command", "Vouched", "%user was vouched by %voucher.", False
+    WConfig "Command", "Ban", "%user have been banned.", False
+    WConfig "Command", "Unban", "%user have been unbanned.", False
+    WConfig "Command", "Playing", "Currently playing (%count): %users", False
+    WConfig "Command", "Left", "%user is now marked as a leaver for game %id", False
+    WConfig "Command", "Drop", "%user is now marked as dropped for game %id", False
+    WConfig "Command", "Traunt", "%user is now marked as traunt for game %id", False
+    WConfig "Command", "Vouch", "%user have been vouched by %username.", False
+    WConfig "Command", "UnVouch", "%user was unvouched by %username.", False
+    WConfig "Command", "Abort", "Game %id was aborted by %username.", False
+    WConfig "Command", "Create", "Game %id have been created by %username, (%gamestate).", False
+    WConfig "Command", "Confirm", "%gamename :: Sentinel: %sentinel Vs Scourge: %scourge.", False
+    WConfig "Command", "Mode", "Game %id mode have been changed to %mode.", False
+    WConfig "Command", "Sign_In", "%username signed in, %gamestate.", False
+    WConfig "Command", "Sign_Out", "%username signed out, %gamestate.", False
+    WConfig "Command", "Signed", "Currently %signed player(s): %players.", False
+    WConfig "Command", "Teams", "Sentinel: %sentinel Vs Scourge: %scourge", False
+    WConfig "Command_Error", "Transfer", "%username(1) does not exists.", False
+    WConfig "Command_Error", "Remove", "%username does not exists.", False
+    WConfig "Command_Error", "Punish", "%username does not exists.", False
+    WConfig "Command_Error", "Refund", "%username does not exists.", False
+    WConfig "Command_Error", "Game", "%id does not exists.", False
+    WConfig "Command_Error", "Game_2", "%id have already been ended.", False
+    WConfig "Command_Error", "Vouched", "%user is not vouched.", False
+    WConfig "Command_Error", "Ban", "%user is already banned.", False
+    WConfig "Command_Error", "Unban", "%user is not banned.", False
+    WConfig "Command_Error", "Playing", "No users are currently playing.", False
+    WConfig "Command_Error", "Left", "%user have never played a game.", False
+    WConfig "Command_Error", "Left_2", "%user is already on leaver list in game %id.", False
+    WConfig "Command_Error", "Left_3", "%user is marked as dropped in game %id.", False
+    WConfig "Command_Error", "Left_4", "%user is marked as Traunt in game %id.", False
+    WConfig "Command_Error", "Drop", "%user have never played a game.", False
+    WConfig "Command_Error", "Drop_2", "%user is already on leaver list in game %id.", False
+    WConfig "Command_Error", "Drop_3", "%user is marked as dropped in game %id.", False
+    WConfig "Command_Error", "Drop_4", "%user is marked as Traunt in game %id.", False
+    WConfig "Command_Error", "Traunt", "%user have never played a game.", False
+    WConfig "Command_Error", "Traunt_2", "%user is already on leaver list in game %id.", False
+    WConfig "Command_Error", "Traunt_3", "%user is marked as dropped in game %id.", False
+    WConfig "Command_Error", "Traunt_4", "%user is marked as Traunt in game %id.", False
+    WConfig "Command_Error", "Vouch", "%user have already been vouched by %voucher.", False
+    WConfig "Command_Error", "UnVouch", "%user have not been vouched.", False
+    WConfig "Command_Error", "Abort", "Unable to abort game %id.", False
+    WConfig "Command_Error", "Create", "Game %id is already created and waiting for %slots more players.", False
+    WConfig "Command_Error", "Confirm", "Game %id, need %slots more players.", False
+    WConfig "Command_Error", "Sign_In", "Your already signed in.", False
+    WConfig "Command_Error", "Sign_Out", "Your not signed in.", False
+    WConfig "Command_Error", "Teams", "Teams have not been assigned for game %id.", False
+    WConfig "GameState", "Aborted", "Game aborted.", False
+    WConfig "GameState", "TimeOut", "Game %id has timed out.", False
+    WConfig "GameState", "Waiting", "waiting for %slots more players.", False
+    WConfig "GameState", "Start", "waiting for start.", False
+    WConfig "GameState", "Playing", "Game have already been started.", False
+    WConfig "GameState", "1", "Sentinel won.", False
+    WConfig "GameState", "2", "Scourge won.", False
+    WConfig "GameState", "3", "Game was a draw.", False
+    WConfig "Other", "GameName", "prefix %mode %id", False
+    WConfig "Other", "User_Leaves", True, False
+    WConfig "Other", "User_Left", "%username was signed out, after leaving channel.", False
+    WConfig "Other", "Command_Spam", 3000, False
+    WConfig "Other", "Command_Origin", 1, False
+    WConfig "Other", "Game_TimeOut", 600, False
+    WConfig "Other", "Ghost_Unavailable", "No hosting bot(s) where able to host the game.", False
+    WConfig "Other", "Experience", "1-5", False
+    WConfig "Other", "Experience_Win", "100", False
+    WConfig "Other", "Experience_Loose", "-25", False
+    WConfig "Other", "Experience_Draw", "25", False
+    WConfig "Other", "Experience_Left", "-100", False
+    WConfig "Other", "Experience_Drop", "-25", False
+    WConfig "Other", "Experience_Traunt", "-15", False
+    WConfig "Ghost1", "Username", BotVars.BotOwner, False
+    WConfig "Ghost1", "Format", "!privby %creator %gamename", False
+End Sub
+
+Private Sub CreateCommands()
+    If (OpenCommand("dlclear") Is Nothing) Then
+        With CreateCommand("dlclear")
+            .RequiredRank = -1
+            .Description = "Clears all stats, bans or all."
+            .SpecialNotes = "Can only be used inside bot."
+            .Parameters.Add .NewParameter("Stats/Bans/All", False, "Word")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dltransfer") Is Nothing) Then
+        With CreateCommand("dltransfer")
+            .RequiredRank = 25
+            .Description = "Transfer data from <Username(1)> to <Username(2)>."
+            .SpecialNotes = "Includes all data."
+            .Parameters.Add .NewParameter("Username(1)", False, "Word")
+            .Parameters.Add .NewParameter("Username(2)", False, "Word")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlremove") Is Nothing) Then
+        With CreateCommand("dlremove")
+            .RequiredRank = 25
+            .Description = "Removes all data from <Username>."
+            .Parameters.Add .NewParameter("Username", False, "Word")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlpunish") Is Nothing) Then
+        With CreateCommand("dlpunish")
+            .RequiredRank = 25
+            .Description = "Punishes <UserName> with removing [Amount] from his/her experience."
+            .SpecialNotes = "[Amount] is default 25"
+            .Parameters.Add .NewParameter("Username", False, "Word")
+            .Parameters.Add .NewParameter("Amount", True, "Numeric")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlrefund") Is Nothing) Then
+        With CreateCommand("dlrefund")
+            .RequiredRank = 25
+            .Description = "Refunds <UserName> with [Amount] to his/her experience."
+            .SpecialNotes = "[Amount] is default 25"
+            .Parameters.Add .NewParameter("Username", False, "Word")
+            .Parameters.Add .NewParameter("Amount", True, "Numeric")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlgame") Is Nothing) Then
+        With CreateCommand("dlgame")
+            .RequiredRank = 20
+            .Description = "Overwrite or creates the result for exact GameID."
+            .Parameters.Add .NewParameter("State", False, "Word")
+            .Parameters.Add .NewParameter("ID", True, "Numeric")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlvouched") Is Nothing) Then
+        With CreateCommand("dlvouched")
+            .RequiredRank = 20
+            .Description = "Tells you if <Username> is Vouched."
+            .Parameters.Add .NewParameter("Username", False, "Word")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlban") Is Nothing) Then
+        With CreateCommand("dlban")
+            .RequiredRank = 20
+            .Description = "Bans <UserName> from the league."
+            .Parameters.Add .NewParameter("Username", False, "Word")
+            .Parameters.Add .NewParameter("Reason", True, "String")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlunban") Is Nothing) Then
+        With CreateCommand("dlunban")
+            .RequiredRank = 20
+            .Description = "Unbans <UserName> from the league."
+            .Parameters.Add .NewParameter("Username", False, "Word")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlplaying") Is Nothing) Then
+        With CreateCommand("dlplaying")
+            .RequiredRank = 20
+            .Description = "List of players playing."
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlleaver") Is Nothing) Then
+        With CreateCommand("dlleaver")
+            .RequiredRank = 20
+            .Description = "Adds a user on to the leaver list."
+            .Parameters.Add .NewParameter("Username", False, "Word")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dldropped") Is Nothing) Then
+        With CreateCommand("dldropped")
+            .RequiredRank = 20
+            .Description = "Adds a user on to the drop list."
+            .Parameters.Add .NewParameter("Username", False, "Word")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dltraunt") Is Nothing) Then
+        With CreateCommand("dltraunt")
+            .RequiredRank = 20
+            .Description = "Adds a user on to the traunt list."
+            .Parameters.Add .NewParameter("Username", False, "Word")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlvouch") Is Nothing) Then
+        With CreateCommand("dlvouch")
+            .RequiredRank = 15
+            .Description = "Vouches <UserName>."
+            .Parameters.Add .NewParameter("Username", False, "Word")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlunvouch") Is Nothing) Then
+        With CreateCommand("dlunvouch")
+            .RequiredRank = 15
+            .Description = "Unvouches <UserName>."
+            .Parameters.Add .NewParameter("Username", False, "Word")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlabort") Is Nothing) Then
+        With CreateCommand("dlabort")
+            .RequiredRank = 5
+            .Description = "Aborts the current game."
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlcreate") Is Nothing) Then
+        With CreateCommand("dlcreate")
+            .RequiredRank = 5
+            .Description = "Creates a game for users to play <Mode>."
+            .SpecialNotes = "Times out default after 8 minutes."
+            .Parameters.Add .NewParameter("Mode", False, "String")
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlgo") Is Nothing) Then
+        With CreateCommand("dlgo")
+            .RequiredRank = 5
+            .Description = "Starts current game."
+            .SpecialNotes = "Must be 10 players signed."
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlmode") Is Nothing) Then
+        With CreateCommand("dlmode")
+            .RequiredRank = 5
+            .Description = "Changes the current game mode to <Mode>."
+            .Parameters.Add .NewParameter("Mode", False, "String")
+            .Save
+        End With
+    End If
+    If (OpenCommand("sign") Is Nothing) Then
+        With CreateCommand("sign")
+            .RequiredRank = 0
+            .Description = "Sign triggering user <In/Out> for current game."
+            .Parameters.Add .NewParameter("In/Out", False, "Word")
+            .Save
+        End With
+    End If
+    If (OpenCommand("signed") Is Nothing) Then
+        With CreateCommand("signed")
+            .RequiredRank = 0
+            .Description = "Displays current signed players."
+            .Save
+        End With
+    End If
+    If (OpenCommand("dlteams") Is Nothing) Then
+        With CreateCommand("dlteams")
+            .RequiredRank = 0
+            .Description = "Displays current teams for [ID]."
+            .Parameters.Add .NewParameter("ID", True, "Numeric")
+            .Save
+        End With
+    End If
+End Sub
+
+Private Sub Connect()
+    Set dlConn = CreateObject("ADODB.connection")
+    dlConn.ConnectionString = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & dbPath
+    dlConn.Open
+End Sub
+
+Sub Event_Command(Command)
+    If (Not Command.HasAccess Or Not Command.IsValid Or Not Command_Bool) Then Exit Sub
+    If Not dlConn.Execute("Select Count(*) From `Bans` Where `Username`='" & Escape_String(Command.Username) & "'").Fields(0) = 0 Then Exit Sub
+    If (Command.IsLocal And Not IsOnline()) Then Command.Username = BotVars.Username
+    Select Case LCase(Command.Name)
+        Case "dlclear" : Call Clear(Command)
+        Case "dltransfer" : Call Transfer(Command)
+        Case "dlremove" : Call Remove(Command)
+        Case "dlpunish" : Call Punish_Refund(Command)
+        Case "dlrefund" : Call Punish_Refund(Command)
+        Case "dlgame" : Call Game(Command)
+        Case "dlvouched" : Call Vouched(Command)
+        Case "dlban" : Call Ban(Command)
+        Case "dlunban" : Call Unban(Command)
+        Case "dlplaying" : Call Playing(Command)
+        Case "dlleaver" : Call Left(Command)
+        Case "dldropped" : Call Drop(Command)
+        Case "dltraunt" : Call Traunt(Command)
+        Case "dlvouch" : Call Vouch(Command)
+        Case "dlunvouch" : Call UnVouch(Command)
+        Case "dlabort" : Call Abort(Command)
+        Case "dlcreate" : Call Create(Command)
+        Case "dlgo" : Call Confirm(Command)
+        Case "dlmode" : Call Mode(Command)
+        Case "sign" : Call Sign(Command)
+        Case "signed" : Call Signed(Command)
+        Case "dlteams" : Call Teams(Command)
+        Case Else : Exit Sub
+    End Select
+    If Command_Int > 0 Then
+        Command_Bool = False
+        Command_Spam.Enabled = True
+    End If
+End Sub
+
+Private Sub Clear(Command)
+    Select Case LCase(Command.Argument("Stats/Bans/All"))
+        Case "stats"
+            dlConn.Execute("DELETE * FROM `Users`")
+            dlConn.Execute("DELETE * FROM `Games`")
+            Respond Replace(GConfig("Command", "Clear"), "%tables", "stats"), Command
+        Case "bans"
+            dlConn.Execute("DELETE * FROM `Bans`")
+            Respond Replace(GConfig("Command", "Clear"), "%tables", "bans"), Command
+        Case "all"
+            Temp_Array = Array("`Users`", "`Games`", "`Bans`")
+            For X = 0 To 3
+                dlConn.Execute("DELETE * FROM " & Temp_Array(X))
+            Next
+            Respond Replace(GConfig("Command", "Clear"), "%tables", "stats and bans"), Command
+    End Select
+End Sub
+
+Private Sub Transfer(Command)
+    If (dlConn.Execute("Select Count(*) From `Users` Where `Username`='" & Escape_String(Command.Argument("Username(1)")) & "'").Fields(0) = 0) Then
+        Temp_Response = Replace(GConfig("Command_Error", "Transfer"), "%username(1)", Escape_String(Command.Argument("Username(1)")))
+        Temp_Response = Replace(Temp_Response, "%username(2)", Escape_String(Command.Argument("Username(2)")))
+    Else
+        Temp_Array = Array("`Sentinel`", "`Scourge`", "`Creator`", "`Left`", "`Drop`", "`Traunt`")
+        If (Not dlConn.Execute("Select Count(*) From `Users` Where `Username`='" & Escape_String(Command.Argument("Username(2)")) & "'").Fields(0) = 0) Then dlConn.Execute("Delete From `Users` Where `Username`='" & Escape_String(Command.Argument("Username(2)")) & "'")
+        dlConn.Execute("Update `Users` Set `Modified`='" & Now() & "', `Username`='" & Escape_String(Command.Argument("Username(2)")) & "' Where `Username`='" & Escape_String(Command.Argument("Username(1)")) & "'")
+        Set Data = dlConn.Execute("Select `Sentinel`, `Scourge`, `Creator`, `Left`, `Drop`, `Traunt` From `Games`")
+        If (Not (Data.BOF Or Data.EOF)) Then
+            Do Until Data.EOF
+                For X = 0 To 5
+                    Temp_Str = Data.Fields(X)
+                    If (InStr(LCase(Temp_Str), LCase(Escape_String(Command.Argument("Username(1)")))) > 0) Then
+                        Temp_Str = Split(Temp_Str, ", ")
+                        New_Str = VbNullString
+                        For X2 = 0 To UBound(Temp_Str)
+                            If LCase(Temp_Str(X2)) = LCase(Escape_String(Command.Argument("Username(1)"))) Then
+                                New_Str = New_Str & Escape_String(Command.Argument("Username(2)")) & ", "
+                            Else
+                                New_Str = New_Str & Temp_Str(X2) & ", "
+                            End If
+                        Next
+                        dlConn.Execute("Update `Games` Set " & Temp_Array(X) & "='" & Left(New_Str, (Len(New_Str) - 2)) & "' Where " & Temp_Array(X) & "='" & Data.Fields(X) & "'")
+                    End If
+                Next
+                Data.MoveNext
+            Loop
+        End If
+        Set Data = Nothing
+        If (Not dlConn.Execute("Select Count(*) From `Bans` Where `Username`='" & Escape_String(Command.Argument("Username(1)")) & "'").Fields(0) = 0) Then
+            If (Not dlConn.Execute("Select Count(*) From `Bans` Where `Username`='" & Escape_String(Command.Argument("Username(2)")) & "'").Fields(0) = 0) Then dlConn.Execute("Delete From `Bans` Where `Username`='" & Escape_String(Command.Argument("Username(2)")) & "'")
+            dlConn.Execute("Update `Bans` Set `Modified`='" & Now() & "', `Username`='" & Escape_String(Command.Argument("Username(2)")) & "' Where `Username`='" & Escape_String(Command.Argument("Username(1)")) & "'")
+            dlConn.Execute("Update `Bans` Set `Modified`='" & Now() & "', `By`='" & Escape_String(Command.Argument("Username(2)")) & "' Where `By`='" & Escape_String(Command.Argument("Username(1)")) & "'")
+        End If
+        Temp_Response = Replace(GConfig("Command", "Transfer"), "%username(1)", Escape_String(Command.Argument("Username(1)")))
+        Temp_Response = Replace(Temp_Response, "%username(2)", Escape_String(Command.Argument("Username(2)")))
+    End If
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub Remove(Command)
+    Temp_Array = Array("Users", "Bans")
+    Temp_Str = VbNullString
+    For X = 0 To 2
+        If (Not dlConn.Execute("Select Count(*) From `" & Temp_Array(X) & "` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'").Fields(0) = 0) Then
+            Temp_Str = Temp_Str & Temp_Array(X) &", "
+            dlConn.Execute("Delete From `" & Temp_Array(X) & "` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'")
+        End If
+    Next
+    Temp_Response = Replace(GConfig("Command_Error", "Remove"), "%username", Escape_String(Command.Argument("Username")))
+    If (Len(Temp_Str) > 0) Then Temp_Response = Replace(Temp_Response, "%tables", Left(Temp_Str, (Len(Temp_Str) - 2)))
+    RespondTemp_Response, Command
+End Sub
+
+Private Sub Punish_Refund(Command)
+    If (Not dlConn.Execute("Select Count(*) From `Users` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'").Fields(0) = 0) Then
+        If (Len(Command.Argument("Amount")) > 0) Then
+            Amount = CInt(Command.Argument("Amount"))
+        Else
+            Amount = 25
+        End If
+        If LCase(Command.Name) = "dlpunish" Then
+            InAll = (dlConn.Execute("Select * From `Users` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'").Fields(4) - Amount)
+            Temp_Response = Replace(GConfig("Command", "Punish"), "%username", Escape_String(Command.Argument("Username")))
+        Else
+            InAll = (dlConn.Execute("Select * From `Users` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'").Fields(4) + Amount)
+            Temp_Response = Replace(GConfig("Command", "Refund"), "%username", Escape_String(Command.Argument("Username")))
+        End If
+        Temp_Response = Replace(Temp_Response, "%amount", Amount)
+        Temp_Response = Replace(Temp_Response, "%before", (InAll + Amount))
+        Temp_Response = Replace(Temp_Response, "%after", InAll)
+        dlConn.Execute("Update `Users` Set `Modified`='" & Now() & "', `Experience`='" & InAll & "' Where `Username`='" & Escape_String(Command.Argument("Username")) & "'")
+    Else
+        If LCase(Command.Name) = "dlpunish" Then
+            Temp_Response = Replace(GConfig("Command_Error", "Punish"), "%username", Escape_String(Command.Argument("Username")))
+        Else
+            Temp_Response = Replace(GConfig("Command_Error", "Refund"), "%username", Escape_String(Command.Argument("Username")))
+        End If
+    End If
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub Ban(Command)
+    If LCase(Command.Username) = LCase(Command.Argument("Username")) Then Exit Sub
+    If (dlConn.Execute("Select Count(*) From `Bans` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'").Fields(0) = 0) Then
+        dlConn.Execute("Insert Into `Bans` (`Username`, `By`, `Reason`, `Created`, `Modified`) Values ('" & Escape_String(Command.Argument("Username")) & "', '" & Escape_String(Command.Name) & "', '" & Escape_String(Command.Argument("Reason")) & "', '" & Now() & "', '" & Now() & "')")
+        Temp_Response = Replace(Replace(GConfig("Command", "Ban"), "%user", Escape_String(Command.Argument("Username"))), "%username",  Escape_String(Command.Name))
+        Temp_Response = Replace(Temp_Response, "%reason", Escape_String(Command.Argument("Reason")))
+    Else
+        Temp_Response = Replace(Replace(GConfig("Command_Error", "Ban"), "%user", Escape_String(Command.Argument("Username"))), "%username",  Escape_String(Command.Name))
+        Set Data = dlConn.Execute("Select * From `Bans` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'")
+        Temp_Response = Replace(Temp_Response, "%by", Data.Fields(1))
+        Temp_Response = Replace(Temp_Response, "%reason", Data.Fields(2))
+        Temp_Response = Replace(Temp_Response, "%created", Data.Fields(3))
+        Set Data = Nothing
+    End If
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub Unban(Command)
+    If LCase(Command.Username) = LCase(Command.Argument("Username")) Then Exit Sub
+    If (Not dlConn.Execute("Select Count(*) From `Bans` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'").Fields(0) = 0) Then
+        dlConn.Execute("Delete From `Bans` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'")
+        Temp_Response = Replace(Replace(GConfig("Command", "Unban"), "%user", Escape_String(Command.Argument("Username"))), "%username",  Escape_String(Command.Name))
+    Else
+        Temp_Response = Replace(Replace(GConfig("Command_Error", "Unban"), "%user", Escape_String(Command.Argument("Username"))), "%username",  Escape_String(Command.Name))
+    End If
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub Abort(Command)
+    If (gameState = Process_Str(GConfig("GameState", "Waiting"), Command.Username) Or gameState = Process_Str(GConfig("GameState", "Start"), Command.Username)) Then
+        Game_TimeOut.Enabled = False
+        gameState = Process_Str(GConfig("GameState", "Aborted"), Command.Username)
+        Temp_Response = Process_Str(GConfig("Command", "Abort"), Command.Username)
+        For X = 0 To 9
+            gameUser(X) = VbNullString
+        Next
+        gameMode = VbNullString
+        gameID = 0
+    Else
+        Temp_Response = Process_Str(GConfig("Command_Error", "Abort"), Command.Username)
+    End If
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub Create(Command)
+    If (Not gameState = Process_Str(GConfig("GameState", "Waiting"), Command.Username) And Not gameState = Process_Str(GConfig("GameState", "Start"), Command.Username)) Then
+        Set Data = dlConn.Execute("Select * From `Games` Order By `ID` DESC")
+        If (Not (Data.BOF Or Data.EOF)) Then gameID = (Data.Fields(0) + 1) Else gameID = 1
+        Set Data = Nothing
+        gameUser(0) = Escape_String(Command.Username)
+        gameMode = Escape_String(Command.Argument("Mode"))
+        For X = 1 To 9
+            gameUser(X) = VbNullString
+        Next
+        gameState = Process_Str(GConfig("GameState", "Waiting"), Command.Username)
+        Temp_Response = Process_Str(GConfig("Command", "Create"), Command.Username)
+        If (gameTimeOut > 0) Then Game_TimeOut.Enabled = True
+    Else
+        Temp_Response = Process_Str(GConfig("Command_Error", "Create"), Command.Username)
+    End If
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub Confirm(Command)
+    If (Not Escape_String(Command.Username) = gameUser(0)) Then Exit Sub
+    If (gameState = Process_Str(GConfig("GameState", "Start"), Command.Username)) Then
+        X = 1
+        Do
+            Temp_StrX = GConfig("Ghost" & X, "Username")
+            If Len(Temp_StrX) > 0 Then
+                If LenB(Channel.GetUser(Temp_StrX).Name) > 0 Then
+                    Temp_UsernameX = Temp_StrX
+                    Temp_ResponseX = Process_Str(GConfig("Ghost" & X, "Format"), Command.Username)
+                    Game_TimeOut.Enabled = False
+                    Team = Array(VbNullString, VbNullString)
+                    For X = 0 To 9
+                        Y = Int(2 * Rnd + 1)
+                        If (UBound(Split(Team(Y - 1), ", ")) > 4) Then
+                            If Y = 2 Then Y = 1 Else Y = 2
+                        End If
+                        Team(Y - 1) = Team(Y - 1) & gameUser(X) & ", "
+                        If (dlConn.Execute("Select Count(*) From `Users` Where `Username`='" & gameUser(X) & "'").Fields(0) = 0) Then
+                            dlConn.Execute("Insert Into `Users` (`Username`, `Wins`, `Draws`, `Losses`, `Experience`, `LastGameId`, `Left`, `Dropped`, `Traunted`, `Created`, `Modified`) Values ('" & gameUser(X) & "', '0', '0', '0', '0', '" & gameID & "', '0', '0', '0', '" & Now() & "', '" & Now() & "')")
+                        Else
+                            dlConn.Execute("Update `Users` Set `LastGameId`='" & gameID & "', `Modified`='" & Now() & "' Where `Username`='" & gameUser(X) & "'")
+                        End If
+                    Next
+                    dlConn.Execute("Insert Into `Games` (`ID`, `GameState`, `Sentinel`, `Scourge`, `Start`, `Creator`, `Mode`) Values ('" & gameID & "', '" & GConfig("GameState", "Playing") & "', '" & Left(Team(0), (Len(Team(0)) - 2)) & "', '" & Left(Team(1), (Len(Team(1)) - 2)) & "', '" & Now() & "', '" & gameUser(0) & "', '" & gameMode & "')")
+                    Temp_Response = Process_Str(GConfig("Command", "Confirm"), Command.Username)
+                    Temp_Response = Replace(Temp_Response, "%sentinel", Left(Team(0), (Len(Team(0)) - 2)))
+                    Temp_Response = Replace(Temp_Response, "%scourge", Left(Team(1), (Len(Team(1)) - 2)))
+                    Respond Temp_Response, Command
+                    Dsp 3, Temp_ResponseX, Temp_UsernameX, RGB(0, 204, 153)
+                    For X = 0 To 9
+                        gameUser(X) = VbNullString
+                    Next
+                    gameState = GConfig("GameState", "Playing")
+                    gameMode = VbNullString
+                    gameID = 0
+                    Exit Do
+                End If
+                X = X + 1
+            Else
+                Temp_ResponseX = Process_Str(GConfig("Other", "Ghost_Unavailable"), Command.Username)
+                Respond Temp_ResponseX, Command
+                Exit Do
+            End If
+        Loop
+    Else
+        Temp_Response = Process_Str(GConfig("Command_Error", "Confirm"), Command.Username)
+        Respond Temp_Response, Command
+    End If
+End Sub
+
+Private Sub Sign(Command)
+    If (Escape_String(Command.Username) = gameUser(0) Or Command.Source > 2) Then Exit Sub
+    Select Case LCase(Command.Argument("In/Out"))
+        Case "in"
+            If (gameState = Process_Str(GConfig("GameState", "Waiting"), Command.Username)) Then
+                If (Sign_Check(Escape_String(Command.Username)) = -1) Then
+                    For X = 1 To 9
+                        If (gameUser(X) = VbNullString) Then
+                            gameUser(X) = Escape_String(Command.Username)
+                            Exit For
+                        End If
+                    Next
+                    If Sign_Count(gameUser) = 0 Then gameState = Process_Str(GConfig("GameState", "Start"), Command.Username) Else gameState = Process_Str(GConfig("GameState", "Waiting"), Command.Username)
+                    Temp_Response = Process_Str(GConfig("Command", "Sign_In"), Command.Username)
+                Else
+                    Temp_Response = Process_Str(GConfig("Command_Error", "Sign_In"), Command.Username)
+                End If
+            End If
+        Case "out"
+            If (gameState = Process_Str(GConfig("GameState", "Waiting"), Command.Username) Or gameState = Process_Str(GConfig("GameState", "Start"), Command.Username)) Then
+                Temp_Int = Sign_Check(Escape_String(Command.Username))
+                If (Temp_Int > 0) Then
+                    gameUser(Temp_Int) = VbNullString
+                    If Sign_Count(gameUser) = 0 Then gameState = Process_Str(GConfig("GameState", "Start"), Command.Username) Else gameState = Process_Str(GConfig("GameState", "Waiting"), Command.Username)
+                    Temp_Response = Process_Str(GConfig("Command", "Sign_Out"), Command.Username)
+                Else
+                    Temp_Response = Process_Str(GConfig("Command_Error", "Sign_Out"), Command.Username)
+                End If
+            End If
+    End Select
+    Respond Temp_Response, Command
+End Sub
+
+Private Function Sign_Check(Username)
+    Sign_Check = -1
+    For X = 0 To 9
+        If (LCase(gameUser(X)) = LCase(Username)) Then
+            Sign_Check = X
+            Exit For
+        End If
+    Next
+End Function
+
+Private Function Sign_Count(Temp_Array)
+    Sign_Count = 0
+    For X = 0 To 9
+        If (Not Temp_Array(X) = VbNullString) Then Sign_Count = Sign_Count + 1
+    Next
+    Sign_Count = 10 - Sign_Count
+End Function
+
+Private Function GConfig(Section, Str)
+    GConfig = GetConfigEntry(Section, Str, BotPath() & "scripts\Dota League.ini")
+End Function
+
+Private Sub WConfig(Section, Str, Value, Overwrite)
+    If (Overwrite Or Len(GConfig(Section, Str)) = 0) Then WriteConfigEntry Section, Str, Value, BotPath() & "scripts\Dota League.ini"
+End Sub
+
+Sub Command_Spam_Timer()
+    Command_Bool = True
+    Command_Spam.Enabled = False
+End Sub
+
+Sub Game_TimeOut_Timer()
+    If Command_Origin = 2 Then Temp_Response = "/me " & Process_Str(GConfig("GameState", "TimeOut"), VbNullString) Else Temp_Response = Process_Str(GConfig("GameState", "TimeOut"), VbNullString)
+    gameState = Temp_Response
+    For X = 0 To 9
+        gameUser(X) = VbNullString
+    Next
+    gameMode = VbNullString
+    gameID = 0
+    AddQ Temp_Response
+    Game_TimeOut.Enabled = False
+End Sub
+
+Sub Event_UserLeaves(Username, Flags)
+    If Not GConfig("Other", "User_Leaves") Then Exit Sub
+    Temp_Int = Sign_Check(Escape_String(Username))
+    If (Temp_Int > 0) Then
+        gameUser(Temp_Int) = VbNullString
+        If Sign_Count(gameUser) = 0 Then gameState = Process_Str(GConfig("GameState", "Start"), Username) Else gameState = Process_Str(GConfig("GameState", "Waiting"), Username)
+        If Command_Origin = 2 Then Temp_Response = "/me " & Process_Str(GConfig("Other", "User_Left"), Username) Else Temp_Response = Process_Str(GConfig("Other", "User_Left"), Username)
+        AddQ Temp_Response
+    End If
+End Sub
+
+Private Function Process_Str(Str, Username)
+    Process_Str = Replace(Str, "%id", gameID)
+    Process_Str = Replace(Process_Str, "%username", Username)
+    Process_Str = Replace(Process_Str, "%gamename", Replace(Replace(Replace(GConfig("Other", "GameName"), "%mode", gameMode), "%id", gameID), "%creator", gameUser(0)))
+    Process_Str = Replace(Process_Str, "%mode", gameMode)
+    Process_Str = Replace(Process_Str, "%slots", Sign_Count(gameUser))
+    Process_Str = Replace(Process_Str, "%signed", (10 - Sign_Count(gameUser)))
+    Process_Str = Replace(Process_Str, "%gamestate", gameState)
+    Process_Str = Replace(Process_Str, "%creator", gameUser(0))
+    Process_Str = Replace(Process_Str, "%timeout", gameTimeOut)
+End Function
+
+Private Sub Mode(Command)
+    If Not Escape_String(Command.Username) = gameUser(0) Then Exit Sub
+    If (gameState = Process_Str(GConfig("GameState", "Waiting"), Command.Username) Or gameState = Process_Str(GConfig("GameState", "Start"), Command.Username)) Then
+        gameMode = Command.Argument("Mode")
+        Temp_Response = Process_Str(GConfig("Command", "Mode"), Command.Username)
+        Respond Temp_Response, Command
+    End If
+End Sub
+
+Private Sub Signed(Command)
+    If (gameState = Process_Str(GConfig("GameState", "Waiting"), Command.Username) Or gameState = Process_Str(GConfig("GameState", "Start"), Command.Username)) Then
+        Temp_Str = VbNullString
+        For X = 0 To 9
+            If Not gameUser(X) = VbNullString Then Temp_Str = Temp_Str & gameUser(X) & ", "
+        Next
+        Temp_Response = Process_Str(GConfig("Command", "Signed"), Command.Username)
+        Temp_Response = Replace(Temp_Response, "%players", Left(Temp_Str, (Len(Temp_Str) - 2)))
+        Respond Temp_Response, Command
+    End If
+End Sub
+
+Private Sub Teams(Command)
+    Temp_Response = VbNullString
+    If Len(Command.Argument("ID")) > 0 Then
+        If (Not dlConn.Execute("Select Count(*) From `Games` Where `ID`=" & Escape_String(Command.Argument("ID"))).Fields(0) = 0) Then
+            Temp_Response = Process_Games(GConfig("Command", "Teams"), Command.Username, dlConn.Execute("Select * From `Games` Where `ID`=" & Escape_String(Command.Argument("ID"))))
+        Else
+            Temp_Response = Replace(GConfig("Command_Error", "Teams"), "%id", Command.Argument("ID"))
+        End If
+    Else
+        Set Data = dlConn.Execute("Select * From `Games` Order By `ID` DESC")
+        If (Not (Data.BOF Or Data.EOF)) Then
+            Temp_Response = Process_Games(GConfig("Command", "Teams"), Command.Username, Data)
+        Else
+            Temp_Response = Replace(GConfig("Command_Error", "Teams"), "%id", "0")
+        End If
+        Set Data = Nothing
+    End If
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub Respond(Response, Command)
+    If (Len(Response) > 0) Then
+        If (Command_Origin = 2 And Command.Source = 1) Or (Command.PublicOutPut And Command_Origin = 2 And (Command.Source = 1 Or Command.Source = 4)) Then Response =  "/me " & Response
+        Command.Respond(Response)
+    End If
+End Sub
+
+Private Function Process_Games(Str, Username, Data)
+    Process_Games = Replace(Process_Games, "%id", Data.Fields(0))
+    Process_Games = Replace(Process_Games, "%username", Username)
+    Process_Games = Replace(Process_Games, "%gamename", Replace(Replace(Replace(GConfig("Other", "GameName"), "%mode", gameMode), "%id", Data.Fields(0)), "%creator", Data.Fields(4)))
+    Process_Games = Replace(Process_Games, "%mode", Data.Fields(8))
+    Process_Games = Replace(Process_Games, "%slots", "10")
+    Process_Games = Replace(Process_Games, "%signed", UBound(Split(Data.Fields(2) & ", " & Data.Fields(3), ", ")))
+    Process_Games = Replace(Process_Games, "%gamestate", Data.Fields(1))
+    Process_Games = Replace(Process_Games, "%creator", Data.Fields(4))
+    Process_Games = Replace(Process_Games, "%timeout", gameTimeOut)
+    Process_Games = Replace(Process_Games, "%sentinel", Data.Fields(2))
+    Process_Games = Replace(Process_Games, "%scourge", Data.Fields(3))
+End Function
+
+Private Sub Vouched(Command)
+    If (dlConn.Execute("Select Count(*) From `Users` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'").Fields(0) = 0) Then
+        Temp_Response = GConfig("Command_Error", "Vouched")
+    Else
+        Set Data = dlConn.Execute("Select * From `Users` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'")
+        If (Len(Data.Fields(6)) > 0) Then
+            Temp_Response = Replace(GConfig("Command", "Vouched"), "%voucher", Data.Fields(6))
+        Else
+            Temp_Response = GConfig("Command_Error", "Vouched")
+        End If
+        Set Data = Nothing
+    End If
+    Temp_Response = Replace(Temp_Response, "%username", Escape_String(Command.Username))
+    Temp_Response = Replace(Temp_Response, "%user", Escape_String(Command.Argument("Username")))
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub Vouch(Command)
+    If (dlConn.Execute("Select Count(*) From `Users` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'").Fields(0) = 0) Then
+        dlConn.Execute("Insert Into `Users` (`Username`, `Wins`, `Draws`, `Losses`, `Experience`, `LastGameId`, `Vouch`, `Left`, `Dropped`, `Traunted`, `Created`, `Modified`) Values ('" & Escape_String(Command.Argument("Username")) & "', '0', '0', '0', '0', '0', '" & Escape_String(Command.Username) & "', '0', '0', '0', '" & Now() & "', '" & Now() & "')")
+        Temp_Response = GConfig("Command", "Vouch")
+    Else
+        Set Data = dlConn.Execute("Select * From `Users` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'")
+        If (Len(Data.Fields(6)) > 0) Then
+            Temp_Response = Replace(GConfig("Command_Error", "Vouch"), "%voucher", Data.Fields(6))
+        Else
+            dlConn.Execute("Update `Users` Set `Vouch`='" & Escape_String(Command.Username) & "', `Modified`='" & Now() & "' Where `Username`='" & Escape_String(Command.Argument("Username")) & "'")
+            Temp_Response = Replace(GConfig("Command", "Vouch"), "%voucher", Escape_String(Command.Username))
+        End If
+        Set Data = Nothing
+    End If
+    Temp_Response = Replace(Temp_Response, "%username", Escape_String(Command.Username))
+    Temp_Response = Replace(Temp_Response, "%user", Escape_String(Command.Argument("Username")))
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub UnVouch(Command)
+    If (dlConn.Execute("Select Count(*) From `Users` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'").Fields(0) = 0) Then
+        Temp_Response = GConfig("Command_Error", "UnVouch")
+    Else
+        Set Data = dlConn.Execute("Select * From `Users` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'")
+        If (Len(Data.Fields(6)) > 0) Then
+            Temp_Response = Replace(GConfig("Command", "UnVouch"), "%voucher", Data.Fields(6))
+            dlConn.Execute("Update `Users` Set `Vouch`='', `Modified`='" & Now() & "' Where `Username`='" & Escape_String(Command.Argument("Username")) & "'")
+        Else
+            Temp_Response = GConfig("Command_Error", "UnVouch")
+        End If
+        Set Data = Nothing
+    End If
+    Temp_Response = Replace(Temp_Response, "%username", Escape_String(Command.Username))
+    Temp_Response = Replace(Temp_Response, "%user", Escape_String(Command.Argument("Username")))
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub Game(Command)
+    State = LCase(Command.Argument("State"))
+    Select Case State
+        Case "1", "2", "3"
+        Case "sentinel" : State = 1
+        Case "scourge" : State = 2
+        Case "draw" : State = 3
+        Case Else : Exit Sub
+    End Select
+    Argument = Command.Argument("ID")
+    If Len(Argument) <= 0 Then
+        Set Data = dlConn.Execute("Select * From `Games` Order By `ID` DESC")
+        If (Not (Data.BOF Or Data.EOF)) Then
+            Argument = Data.Fields(0)
+        Else
+            Argument = 1
+        End If
+        Set Data = Nothing
+    End If
+    If Argument > 0 Then
+        If dlConn.Execute("Select Count(*) From `Games` Where `ID`=" & Escape_String(Argument)).Fields(0) = 0 Then
+            Temp_Response = GConfig("Command_Error", "Game")
+        Else
+            Set Data = dlConn.Execute("Select * From `Games` Where `ID`=" & Escape_String(Argument))
+            If Data.Fields(1) = GConfig("GameState", "Playing") Then
+                Teams = Array(Split(Data.Fields(2), ", "), Split(Data.Fields(3), ", "))
+                Team = Array(2, 2)
+                Select Case State
+                    Case "1" : Team = Array(1, 3)
+                    Case "2" : Team = Array(3, 1)
+                End Select
+                For X = 0 To UBound(Teams)
+                    For X2 = 0 To UBound(Teams(X))
+                        If (Not dlConn.Execute("Select Count(*) From `Users` Where `Username`='" & Teams(X)(X2) & "'").Fields(0) = 0) Then
+                            Set Data2 = dlConn.Execute("Select * From `Users` Where `Username`='" & Teams(X)(X2) & "'")
+                            Sql_Str = VbNullString
+                            If Team(X) = 1 Then
+                                Sql_Str = "`Wins`='" & (Data2.Fields(1) + 1) & "'"
+                            ElseIf Team(X) = 4 Then
+                                Sql_Str = "`Draws`='" & (Data2.Fields(2) + 1) & "'"
+                            Else
+                                Sql_Str = "`Losses`='" & (Data2.Fields(3) + 1) & "'"
+                            End If
+                            dlConn.Execute("Update `Users` Set `Experience`='" & Experience_Algo(Data2.Fields(4), Team(X), 0) & "', " & Sql_Str & ", `Modified`='" & Now() & "' Where `Username`='" & Teams(X)(X2) & "'")
+                            Set Data2 = Nothing
+                        End If
+                    Next
+                Next
+                Temp_Response = Replace(GConfig("Command", "Game"), "%gamestate", GConfig("GameState", State))
+                dlConn.Execute("Update `Games` Set `GameState`='" & GConfig("GameState", State) & "', `Modified`='" & Now() & "' Where `ID`=" & Data.Fields(0))
+            Else
+                Temp_Response = GConfig("Command_Error", "Game_2")
+            End If
+            Set Data = Nothing
+        End If
+    Else
+        Temp_Response = GConfig("Command_Error", "Game")
+    End If
+    Temp_Response = Replace(Temp_Response, "%id", Argument)
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub Playing(Command)
+    Set Data = dlConn.Execute("Select * From `Games` Where `GameState`='" & Escape_String(GConfig("GameState", "Playing")) & "'")
+    Temp_Response = vbNullString
+    If (Not (Data.BOF Or Data.EOF)) Then
+        Do Until Data.EOF
+            Temp_Response = Temp_Response & Data.Fields(2) & ", " & Data.Fields(3) & ", "
+            Data.MoveNext
+        Loop
+    End If
+    Set Data = Nothing
+    If Len(Temp_Response) > 0 Then
+        Count = UBound(Split(Temp_Response, ", "))
+        Temp_Response = Replace(GConfig("Command", "Playing"), "%users", Left(Temp_Response, Len(Temp_Response) - 2))
+        Temp_Response = Replace(Temp_Response, "%count", Count)
+    Else
+        Temp_Response = GConfig("Command_Error", "Playing")
+    End If
+    Respond Temp_Response, Command
+End Sub
+
+Private Sub Left(Command)
+    Move Command, "Left"
+End Sub
+
+Private Sub Drop(Command)
+    Move Command, "Drop"
+End Sub
+
+Private Sub Traunt(Command)
+    Move Command, "Traunt"
+End Sub
+
+Private Sub Move(Command, Name)
+    If (dlConn.Execute("Select Count(*) From `Users` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'").Fields(0) = 0) Then
+        Temp_Response = Replace(GConfig("Command_Error", Name), "%username", Command.Username)
+        Temp_Response = Replace(Temp_Response, "%user", Command.Argument("Username"))
+    Else
+        Set Data = dlConn.Execute("Select * From `Users` Where `Username`='" & Escape_String(Command.Argument("Username")) & "'")
+        If Len(Data.Fields(5)) > 0 Then
+            If (Not dlConn.Execute("Select Count(*) From `Games` Where `ID`=" & Data.Fields(5)).Fields(0) = 0) Then
+                With dlConn.Execute("Select * From `Games` Where `ID`=" & Data.Fields(5))
+                    If .Fields(0) = GConfig("GameState", "1") Or .Fields(0) = GConfig("GameState", "2") Or .Fields(0) = GConfig("GameState", "3") Then
+                        Dim Sentinel, Scourge, Left, Drop, Traunt, NID, SQL, myState
+                        Sentinel = .Fields(2)
+                        Scourge = .Fields(3)
+                        If (.Fields(5) Is Nothing) Then Left = vbNullString Else Left = .Fields(5)
+                        If (.Fields(6) Is Nothing) Then Drop = vbNullString Else Drop = .Fields(6)
+                        If (.Fields(7) Is Nothing) Then Traunt = vbNullString Else Traunt = .Fields(7)
+                        If InArray(Split(Sentinel, ", "), Command.Argument("Username")) Then
+                            Temp_Response = Replace(GConfig("Command", Name), "%id", .Fields(0))
+                            If (InStr(LCase(Sentinel), LCase(Command.Argument("Username")) & ", ") > 0) Then
+                                Sentinel = Replace(Sentinel, Command.Argument("Username") & ", ", vbNullString, 1, -1, vbTextCompare)
+                            ElseIf (InStr(LCase(Sentinel), LCase(", " & Command.Argument("Username"))) > 0) Then
+                                Sentinel = Replace(Sentinel, ", " & Command.Argument("Username"), vbNullString, 1, -1, vbTextCompare)
+                            Else
+                                Sentinel = Replace(Sentinel, Command.Argument("Username"), vbNullString, 1, -1, vbTextCompare)
+                            End If
+                            Select Case Name
+                                Case "Left" : If (Len(Left) > 0) Then Left = Left & ", " & Command.Argument("Username") Else Left = Command.Argument("Username") : NID = 7
+                                Case "Drop" : If Len(Drop) > 0 Then Drop = Drop & ", " & Command.Argument("Username") Else Drop = Command.Argument("Username") : NID = 8
+                                Case "Traunt" : If Len(Traunt) > 0 Then Traunt = Traunt & ", " & Command.Argument("Username") Else Traunt = Command.Argument("Username") : NID = 9
+                            End Select
+                            Select Case .Fields(0)
+                                Case GConfig("GameState", "1") : SQL = ", `Wins`='" & Data.Fields(1) - 1 & "'" : myState = 1
+                                Case GConfig("GameState", "2") : SQL = ", `Looses`='" & Data.Fields(3) - 1 & "'" : myState = 2
+                                Case GConfig("GameState", "3") : SQL = ", `Draws`='" & Data.Fields(2) - 1 & "'" : myState = 3
+                            End Select
+                            dlConn.Execute(StringFormat("UPDATE `Games` SET `{0}`='{1}', `Sentinel`='{2}' WHERE `ID`={3}", _
+                            Name, Eval(Name), Sentinel, .Fields(0)))
+                            dlConn.Execute(StringFormat("Update `Users` Set `Modified`='{0}', `Experience`='{1}', `{2}`='{3}'{5} Where `Username`='{4}'", _
+                            Now(), Experience_Algo(Data.Fields(4), NID, .Fields(0)), Name, NID, Escape_String(Command.Argument("Username")), SQL))
+                        ElseIf InArray(Split(Scourge, ", "), Command.Argument("Username")) Then
+                            Temp_Response = Replace(GConfig("Command", Name), "%id", .Fields(0))
+                            If (InStr(LCase(Scourge), LCase(Command.Argument("Username")) & ", ") > 0) Then
+                                Scourge = Replace(Scourge, Command.Argument("Username") & ", ", vbNullString, 1, -1, vbTextCompare)
+                            ElseIf (InStr(LCase(Scourge), LCase(", " & Command.Argument("Username"))) > 0) Then
+                                Scourge = Replace(Scourge, ", " & Command.Argument("Username"), vbNullString, 1, -1, vbTextCompare)
+                            Else
+                                Scourge = Replace(Scourge, Command.Argument("Username"), vbNullString, 1, -1, vbTextCompare)
+                            End If
+                            Select Case Name
+                                Case "Left" : If (Len(Left) > 0) Then Left = Left & ", " & Command.Argument("Username") Else Left = Command.Argument("Username") : NID = 7
+                                Case "Drop" : If Len(Drop) > 0 Then Drop = Drop & ", " & Command.Argument("Username") Else Drop = Command.Argument("Username") : NID = 8
+                                Case "Traunt" : If Len(Traunt) > 0 Then Traunt = Traunt & ", " & Command.Argument("Username") Else Traunt = Command.Argument("Username") : NID = 9
+                            End Select
+                            Select Case .Fields(0)
+                                Case GConfig("GameState", "2") : SQL = ", `Wins`='" & Data.Fields(1) - 1 & "'" : myState = 1
+                                Case GConfig("GameState", "1") : SQL = ", `Looses`='" & Data.Fields(3) - 1 & "'" : myState = 2
+                                Case GConfig("GameState", "3") : SQL = ", `Draws`='" & Data.Fields(2) - 1 & "'" : myState = 3
+                            End Select
+                            dlConn.Execute(StringFormat("UPDATE `Games` SET `{0}`='{1}', `Scourge`='{2}' WHERE `ID`={3}", _
+                            Name, Eval(Name), Scourge, .Fields(0)))
+                            dlConn.Execute(StringFormat("Update `Users` Set `Modified`='{0}', `Experience`='{1}', `{2}`='{3}'{5} Where `Username`='{4}'", _
+                            Now(), Experience_Algo(Data.Fields(4), NID, myState), Name, NID, Escape_String(Command.Argument("Username")), SQL))
+                        ElseIf InArray(Split(Left, ", "), Command.Argument("Username")) Then
+                            Temp_Response = Replace(GConfig("Command_Error", Name & "_2"), "%id", .Fields(0))
+                        ElseIf InArray(Split(Drop, ", "), Command.Argument("Username")) Then
+                            Temp_Response = Replace(GConfig("Command_Error", Name & "_3"), "%id", .Fields(0))
+                        ElseIf InArray(Split(Traunt, ", "), Command.Argument("Username")) Then
+                            Temp_Response = Replace(GConfig("Command_Error", Name & "_4"), "%id", .Fields(0))
+                        Else
+                            Temp_Response = GConfig("Command_Error", Name)
+                        End If
+                    Else
+                        'game not done
+                    End If
+                End With
+            End If
+        Else
+            Temp_Response = GConfig("Command_Error", Name)
+        End If
+        Set Data = Nothing
+    End If
+    Temp_Response = Replace(Temp_Response, "%username", Command.Username)
+    Temp_Response = Replace(Temp_Response, "%user", Command.Argument("Username"))
+    Respond Temp_Response, Command
+End Sub
+
+Private Function InArray(Arr, User)
+    For X = 0 To UBound(Arr)
+        If LCase(Arr(X)) = LCase(User) Then
+            InArray = True
+            Exit Function
+        End If
+    Next
+    InArray = False
+End Function
+
+Private Function Experience_Algo(EXP, Val, ByVal Val2)
+    Select Case Val
+        Case 1
+            Experience_Algo = (EXP + Int(GConfig("Other","Experience_Win")))
+        Case 2
+            Experience_Algo = (EXP + Int(GConfig("Other","Experience_Loose")))
+        Case 3
+            Experience_Algo = (EXP + Int(GConfig("Other","Experience_Draw")))
+        Case 7
+            Select Case Val2
+                Case 1 : If Left(GConfig("Other","Experience_Win"), 1) = "-" Then Val2 = Mid(GConfig("Other","Experience_Win"), 2) Else Val2 = "-" & GConfig("Other","Experience_Win")
+                Case 2 : If Left(GConfig("Other","Experience_Loose"), 1) = "-" Then Val2 = Mid(GConfig("Other","Experience_Loose"), 2) Else Val2 = "-" & GConfig("Other","Experience_Loose")
+                Case 3 : If Left(GConfig("Other","Experience_Draw"), 1) = "-" Then Val2 = Mid(GConfig("Other","Experience_Draw"), 2) Else Val2 = "-" & GConfig("Other","Experience_Draw")
+            End Select
+            Experience_Algo = ((EXP + Int(GConfig8("Other", "Experience_Left"))) - Val2)
+        Case 8
+            Experience_Algo = ((EXP + Int(GConfig8("Other", "Experience_Left"))) - Val2)
+        Case 9
+            Experience_Algo = ((EXP + Int(GConfig8("Other", "Experience_Left"))) - Val2)
+    End Select
+End Function
+
+Private Function Escape_String(Str)
+    Escape_String = Replace(Str, "'", """")
+End Function

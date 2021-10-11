@@ -1,0 +1,375 @@
+'// **************\\
+'// Acknowledgements
+'//
+'// Testers: Tanxs
+'// Helpers: Ribose, Pyro, Jack
+'// **************\\
+
+Script("Name") = "AutoAccess"
+Script("Author") = "The-Black-Ninja"
+Script("Major") = 1
+Script("Minor") = 8
+Script("Revision") = 1
+Script("Description") = "Auto Access: Automatically gives access and flags to certain clan members."
+Script("UpdateLocation") = vbNullString
+Script("shelp") = "All settings can be altered inside the /scripts/scripts.ini file under the [aa] heading."
+
+Private aaCookies, aaLastJoinTime, aaDoRequest
+
+
+Sub Event_Load()
+
+   '// Write the intial settings into the script.ini
+   If GetSettingsEntry("Clans") = vbNullString Then
+      WriteSettingsEntry "'// Clans that will get access/flags. Add more clans by following the format: Clan1|Clan2|Clan3", vbNullString
+      WriteSettingsEntry "Clans", "Clan1"
+      WriteSettingsEntry "'// If users have this flag, their access and flags will not be changed. Add more flags like so: FSNT", vbNullString
+      WriteSettingsEntry "Exempt", "F"
+      WriteSettingsEntry "'// If users are a part of this group, their access and flags will not be changed. Add more groups by following the format: Group1|Group2|Group3", vbNullString
+      WriteSettingsEntry "ExemptGroup", "Group1"
+      WriteSettingsEntry "'// If set to False, users will keep their existing flags and will have the Flag_* added to their existing flags.", vbNullString
+      WriteSettingsEntry "'// If set to True, users will lose their existing flags and will have the Flag_* as their only flag.", vbNullString
+      WriteSettingsEntry "Overwrite_Flag", False
+      WriteSettingsEntry "'// Chief flag", vbNullString
+      WriteSettingsEntry "Flag_Chief", ""
+      WriteSettingsEntry "'// Shaman flag", vbNullString
+      WriteSettingsEntry "Flag_Sham", ""
+      WriteSettingsEntry "'// Grunt flag", vbNullString
+      WriteSettingsEntry "Flag_Grunt", ""
+      WriteSettingsEntry "'// Peon flag", vbNullString
+      WriteSettingsEntry "Flag_Peon", ""
+      WriteSettingsEntry "'// Chief access (max is 200)", vbNullString
+      WriteSettingsEntry "Access_Chief", 5
+      WriteSettingsEntry "'// Shaman access", vbNullString
+      WriteSettingsEntry "Access_Sham", 5
+      WriteSettingsEntry "'// Grunt access", vbNullString
+      WriteSettingsEntry "Access_Grunt", 5
+      WriteSettingsEntry "'// Peon access", vbNullString
+      WriteSettingsEntry "Access_Peon", 5
+      WriteSettingsEntry "'// Probation access", vbNullString
+      WriteSettingsEntry "Access_Probation", 5      
+      
+      CleanINI  '// Remove the annoying " = " after the above explanations in the scripts.ini file      
+   End If
+   
+   Set aaCookies = CreateObject("Scripting.Dictionary") '// Holds cookie information as items with the clan and username as its item, as an array, when packets need to be sent
+
+   aaLastJoinTime = Now -1 '// Set last join time to a date in the past so the script has something initial to compare to
+   
+   '// When a backlog of packet requests occur, packets will be sent oldest to newest every X seconds
+   Call CreateObj("LongTimer", "aaRequestTimer")
+   aaRequestTimer.Interval = 8
+   aaRequestTimer.Enabled = True
+   
+   aaDoRequest = False '// Boolean for when a packet request occurs
+End Sub
+
+
+Sub Event_Userjoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+
+   CT = GetInternalDataByUsername(Username, 0)
+    
+  '// Check if they're in a clan that is supposed to get access OR if they're in a safe group
+   If NOT (GetClan(CT) OR GetGroup(Username)) Then
+     '// Check if they have a safe flag. If they don't and they are in the DB, remove them
+      If NOT GetDBEntry(Username).HasFlag(UCase(GetSettingsEntry("Exempt"))) AND GetDBEntry(Username).Name <> vbNullString Then Command BotVars.Username, "/del " & Username, True
+      Exit Sub
+   End If
+
+  '// Not in a clan,,,
+   If Lcase(CT) = vbNullString Then
+     '// Not in a safe group and in the DB = remove
+      If NOT (GetDBEntry(Username).HasFlag(UCase(GetSettingsEntry("Exempt"))) OR GetGroup(Username)) AND GetDBEntry(Username).Name <> vbNullString Then Command BotVars.Username, "/del " & Username, True
+   Else
+     '// In a different clan than the bot's
+      If LCase(CT) <> LCase(BotVars.Clan) Then
+        '// Has a safe flag or in a safe group = exit sub
+         If GetDBEntry(Username).HasFlag(UCase(GetSettingsEntry("Exempt"))) OR GetGroup(Username) Then Exit Sub
+
+        '// If they joined more than 5 seconds than the last person, use packets to get their clan rank
+         If ABS(INT(DateDiff("s", Now, aaLastJoinTime))) > 5 Then
+            cookie = GenerateNewCookie
+            aaCookies.Item(cookie) = Array(Username, CT)
+            
+            For i = Len(CT)+1 To 4
+               CT = CT & chr(0)
+            Next
+            
+            GetMemberRank cookie, Username, CT
+         Else
+           '// Joined too soon, set them to a backlog and assign access later
+            cookie = GenerateNewCookie
+            aaCookies.Item(cookie) = Array(Username, CT)
+         End If
+        '// Reset the last join time
+         aaLastJoinTime = Now         
+
+     '// Part of the bot's clan
+      ElseIf LCase(CT) = LCase(BotVars.Clan) Then
+         If GetDBEntry(Username).HasFlag(UCase(GetSettingsEntry("Exempt"))) OR GetGroup(Username) Then Exit Sub
+        '// Call the giveAccessFlags sub based on their numerical clan rank
+         GiveAccessFlags Clan.Members(Clan.GetUserIndex(Username)).Rank, Username
+      Else
+         If NOT (GetDBEntry(Username).HasFlag(UCase(GetSettingsEntry("Exempt"))) OR GetGroup(Username)) AND GetDBEntry(Username).Name <> vbNullString Then Command BotVars.Username, "/del " & Username, True
+      End If
+   End If
+End Sub
+
+
+Sub aaRequestTimer_Timer()
+
+  '// If the backlog has someone in there...
+   If UBound(aaCookies.Keys) > -1 Then
+      cookie = LBound(aaCookies.Keys)
+      user = aaCookies.Item(Int(cookie))(0)
+      tag = aaCookies.Item(cookie)(1)
+      
+      For i = Len(tag)+1 To 4
+         tag = tag & chr(0)
+      Next
+      
+      GetMemberRank cookie, user, tag
+      
+      AddChat 33023, "Auto-Access script:: Users on the foreign clan back log:",33023, GetBackLog
+   Else '// Back log is empty: if there isn't a request in progress, reset the cookies to keep them from adding up too high
+      If NOT aaDoRequest Then aaCookies.RemoveAll
+   End If      
+End Sub
+
+
+Sub GetMemberRank(cookie, user, tag)  '// Sends the 0x82 packet to Bnet
+
+   DataBuffer.InsertDWord cookie
+   DataBuffer.InsertNonNTString StrReverse(tag)
+   DataBuffer.InsertNTString CStr(user) 
+   aaDoRequest = True   
+   DataBuffer.SendPacket &H82
+End Sub
+
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)
+
+   If NOT aaDoRequest Then Exit Sub
+   If Protocol = "BNCS" Then
+      If ID = &H82 Then
+         Set pak = DataBufferEx()
+         pak.Data = Data
+         pak.position = 4
+         cookie = pak.GetDWORD
+         
+         If NOT aaCookies.Exists(cookie) Then Exit Sub
+         
+         status = pak.GetByte
+         tag = pak.GetString
+         rank = pak.GetByte
+         
+         If status = 0 Then         
+            GiveAccessFlags rank, aaCookies.Item(cookie)(0)
+            aaCookies.Remove cookie
+            aaDoRequest = False
+         Else
+            AddChat vbRed, "Auto-Access script error: Could not retrieve " & aaCookies.Item(cookie)(0) & "'s clan rank from clan " & aaCookies.Item(cookie)(1)
+            aaCookies.Remove cookie
+            aaDoRequest = False
+         End If
+      End If
+   End If
+End Sub
+
+
+Private Sub CleanINI  '// Removes the " = " after the commented out lines that this script makes
+
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 1, True)
+      data = Split(File.ReadAll, vbNewLine)
+   File.Close
+   
+   
+   tMatch = False
+   For i = 0 To UBound(data) -1
+      If tMatch Then
+         If Left(data(i), 3) = "'//" Then
+            line = line & Split(data(i), "=")(0) & vbNewLine
+         ElseIf InStr(data(i), "[") > 0 AND InStr(data(i), "]") > 0 Then
+            tMatch = False
+            line = line & data(i) & vbNewLine                
+         Else
+            line = line & data(i) & vbNewLine            
+         End If
+      Else
+         If data(i) = "[AutoAccess]" Then
+            tMatch = True
+            line = line & data(i) & vbNewLine            
+         Else
+            line = line & data(i) & vbNewLine
+         End If      
+      End If
+   Next
+   
+   fso.DeleteFile(BotPath & "scripts\scripts.ini")   
+   temp = Split(line, vbNewLine)
+   For i = 0 To Ubound(temp) -1
+      Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 8, True)
+         File.WriteLine temp(i)
+      File.Close   
+   Next
+End Sub
+
+
+Private Sub GiveAccessFlags(rank, user)  '// Gives Access/Flags to users
+
+  '// If a user exists, get their existing flags in case we don't want to overwrite them
+   If GetDBEntry(user).Name <> vbNullString Then
+      GetStdDBEntry user, Access, Flags
+   Else
+      Access = 0
+      Flags = vbNullString
+   End If
+   
+   Select Case rank  '// 4 = Chief, 3 = Shaman, 2 = Grunt, 1 = Peon, 0 = Probation
+      Case 4 
+        '// If we want to overwrite the flags...
+         If GetSettingsEntry("Overwrite_Flag") Then
+            Command BotVars.Username, "/set " & user & " " & GetSettingsEntry("Access_Chief") & " " & GetSettingsEntry("Flag_Chief"), True
+         Else
+           '// Check to see if their flags or access needs changing first
+            If Access <> Int(GetSettingsEntry("Access_Chief")) OR InStr(Flags, GetSettingsEntry("Flag_Chief")) < 1 Then
+               Command BotVars.Username, "/set " & user & " " & GetSettingsEntry("Access_Chief") & " " & Flags & GetSettingsEntry("Flag_Chief"), True
+            End If
+         End If
+      Case 3
+         If GetSettingsEntry("Overwrite_Flag") Then         
+            Command BotVars.Username, "/set " & user & " " & GetSettingsEntry("Access_Sham") & " " & GetSettingsEntry("Flag_Sham"), True         
+         Else  
+            If Access <> Int(GetSettingsEntry("Access_Sham")) OR InStr(Flags, GetSettingsEntry("Flag_Sham")) < 1 Then     
+               Command BotVars.Username, "/set " & user & " " & GetSettingsEntry("Access_Sham") & " " & Flags & GetSettingsEntry("Flag_Sham"), True    
+            End If              
+         End If
+      Case 2
+         If GetSettingsEntry("Overwrite_Flag") Then          
+            Command BotVars.Username, "/set " & user & " " & GetSettingsEntry("Access_Grunt") & " " & GetSettingsEntry("Flag_Grunt"), True
+         Else     
+            If Access <> Int(GetSettingsEntry("Access_Grunt")) OR InStr(Flags, GetSettingsEntry("Flag_Grunt")) < 1 Then
+               Command BotVars.Username, "/set " & user & " " & GetSettingsEntry("Access_Grunt") & " " & Flags & GetSettingsEntry("Flag_Grunt"), True
+            End If                     
+         End If
+      Case 1
+         If GetSettingsEntry("Overwrite_Flag") Then 
+            Command BotVars.Username, "/set " & user & " " & GetSettingsEntry("Access_Peon") & " " & GetSettingsEntry("Flag_Peon"), True         
+         Else
+            If Access <> Int(GetSettingsEntry("Access_Peon")) OR InStr(Flags, GetSettingsEntry("Flag_Peon")) < 1 Then
+               Command BotVars.Username, "/set " & user & " " & GetSettingsEntry("Access_Peon") & " " & Flags & GetSettingsEntry("Flag_Peon"), True 
+            End If                                
+         End If
+      Case 0
+         If GetSettingsEntry("Overwrite_Flag") Then      
+            Command BotVars.Username, "/set " & user & " " & GetSettingsEntry("Access_Probation") & " " & GetSettingsEntry("Flag_Probation"), True
+         Else
+            If Access <> Int(GetSettingsEntry("Access_Probation")) OR InStr(Flags, GetSettingsEntry("Flag_Probation")) < 1 Then
+               Command BotVars.Username, "/set " & user & " " & GetSettingsEntry("Access_Probation") & " " & Flags & GetSettingsEntry("Flag_Probation"), True
+            End If                     
+         End If
+   End Select  
+End Sub
+
+
+Private Function GetClan(CT)  '// Returns True = in a clan that gets access, False = their clan does not get access
+
+   clanNames = GetSettingsEntry("Clans")
+   If InStr(clanNames, "|") > 1 Then
+      clanArr = Split(clanNames, "|")
+      For i = 0 To Ubound(clanArr)
+         If Lcase(CT) = Lcase(clanArr(i)) Then
+            GetClan = True
+            Exit Function
+         End If
+      Next
+   Else
+      If Lcase(CT) = Lcase(clanNames) Then
+         GetClan = True
+         Exit Function
+      End If
+   End If
+   
+   GetClan = False
+End Function
+
+
+Private Function GenerateNewCookie  '// Returns a random number between 1 and 1000
+
+   key = aaCookies.Keys
+   item = aaCookies.Items
+
+   cookieFound = False
+
+  '// Check to see if the cookie is in use or not. If it is, re-do the loop and use another number.
+   Do Until cookieFound
+      tMatch = False   
+      num = Int(((1000 + 1) - (1)) * Rnd + (1))
+      
+      For i = 0 To Ubound(key)
+         If num = CInt(key(i)) Then
+            tMatch = True
+            Exit For
+         End If
+      Next
+      
+      If NOT tMatch Then cookieFound = True
+   Loop
+   
+   GetNewCookie = num
+End Function
+
+
+Private Function GetGroup(user)  '// Returns True = user is in a safe group, False = user isn't in a safe group
+
+   ubGroup = GetDBEntry(user).Groups.Count
+   sGroup = GetSettingsEntry("ExemptGroup")
+
+   If ubGroup = 0 Then
+      GetGroup = False
+      Exit Function
+   Else
+      If InStr(sGroup, "|") > 0 Then
+         groupArr = Split(sGroup, "|")
+         For i = 1 To ubGroup
+            For j = 0 To Ubound(groupArr)
+               tGroup = Trim(Split(GetDBEntry(user).Groups(i).Name, "(group)")(0))
+               If Lcase(tGroup) = Lcase(groupArr(j)) Then
+                  GetGroup = True
+                  Exit Function
+               End If
+            Next
+         Next
+      Else
+         For i = 1 To ubGroup
+            tGroup = Trim(Split(GetDBEntry(user).Groups(i).Name, "(group)")(0))     
+            If Lcase(tGroup) = Lcase(sGroup) Then
+               GetGroup = True
+               Exit Function
+            End If
+         Next
+      End If
+   End If
+   
+   GetGroup = False   
+End Function
+
+
+Private Function GetBackLog  '// Returns how many users need access that are in different clans
+
+   cookies = aaCookies.Keys
+   items = aaCookies.Items
+   
+   For i = 0 To Ubound(cookies)
+      temp = temp & items(i)(0) & ", "
+   Next
+   
+   If temp <> vbNullString Then
+      GetBackLog = Left(temp, Len(temp) -2)
+   Else
+      GetBackLog = 0
+   End If
+End Function
+
+

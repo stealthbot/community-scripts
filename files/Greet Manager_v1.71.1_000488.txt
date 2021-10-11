@@ -1,0 +1,1981 @@
+Script("Name") = "Greet Manager"
+Script("Author") = "The-Black-Ninja"
+Script("Major") = 1
+Script("Minor") = 71
+Script("Revision") = 1
+
+
+'// ChangeLog
+
+'// 1.6 R1 -> 1.7 R1
+'//  -Fixed error in detecting greet for clan rank - Thanks Evilorc
+'// 1.5 R1 -> 1.6
+'//  -Fixed error in detecting greet; possGreets was not checked if it was Null as it was sorting through greets - Thanks Eldritch
+'// 1.4 -> 1.5 R1
+'//  -Fixed bugs in allowing duplicate greets to be made with the same criteria
+'//  -Fixed bugs in allowing duplicate greets to be made having a single field
+'//  -Fixed bugs in detecting which greet to use when greeting a user
+'//  -Minor cosmetic changes
+'// 1.3 -> 1.4
+'//  -Added a menu item to enable the greet form instead of always typing the command
+'//  -Fixed bug when updating greets with fields being removed
+'// 1.2 -> 1.3
+'//  -Fixed bug with not greeting
+'//  -Fixed bug with not saving greets when finished editing
+'//  -Fixed some sanity checks when editing greets
+'// 1.1 -> 1.2
+'//  -Fixed greet when username is involved. Thanks Eldritch
+
+
+Private afgUsers, afgLastGreet, afgConn
+Private afgNewGreet, afgGreetText
+Private afgListboxPlaceHolder, afgCurrentScreen, afgScreenValues
+Private LastGreet, greetUsers
+
+
+Public Sub Event_Load()
+
+   afgDBPath = BotPath & "User Greets.mdb"
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If fso.FileExists(afgDBPath) Then
+      Call afg_connect(afgDBPath)
+   Else
+      Call create_database(afgDBPath)
+   End If
+
+   Set fso = Nothing
+
+   Call CreateCmds()
+   Set greetUsers = CreateObject("Scripting.Dictionary")
+   LastGreet = Now-1
+   
+   If (GetConfigEntry("Other", "UseGreets", BotPath & "config.ini")="Y") Then
+      WriteConfigEntry "Other", "UseGreets", "N", BotPath & "config.ini"
+      AddChat vbGreen, "Greet Manager has disabled your built-in greet option."
+   End If
+   
+   Call CreateObj("Form", "GreetForm")
+   CreateObj "Menu", "UION"
+   UION.Caption = "Show Greet UI"
+End Sub
+
+Public Sub Event_Command(Command)
+
+   If Command.IsLocal Then
+      Select Case Command.Argument("on/off")
+         Case "on"
+            Call OpenHomeForm("home")
+            GreetForm.SetFocus
+         Case "off"
+            GreetForm.Visible = False
+      End Select
+   End If
+End Sub
+
+Public Sub Event_Userjoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+
+   If (CInt(GetSettingsEntry("greet_qabort")) <= GetQueueSize) Then Exit Sub
+   If (DateDiff("s", LastGreet, Now) < CInt(GetSettingsEntry("greet_buffer"))) Then Exit Sub
+   If greetUsers.Exists(Username) Then
+      If (DateDiff("n", greetUsers.Item(Username), Now) < CInt(GetSettingsEntry("greet_wait"))) Then 
+         Exit Sub
+      Else
+         greetUsers.Remove Username
+      End If
+   End If   
+   
+   sGreet = GetGreet(Username)
+   If (LenB(sGreet)>0) Then
+      Dsp CInt(GetSettingsEntry("greet_dsp")), ParseGreet(Username, Product, sGreet), Username, vbGreen      
+      greetUsers.Item(Username) = Now
+      LastGreet = Now
+   End If
+End Sub
+
+
+Private Function GetGreet(Username)
+
+   Set rs = afgConn.Execute("SELECT COUNT(`name`) FROM `Greets` WHERE `name` ='" & Username & "'")
+   If rs.Fields(0) = 1 Then
+      tempGreet = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `name` ='" & Username & "'").Fields(0)
+      GetGreet = tempGreet
+      Set rs = Nothing
+      Exit Function
+   End If
+   
+   '// Get all the user's information
+   sAccess = GetDBEntry(Username).Rank
+   sFlags = GetDBEntry(Username).Flags
+   sProd = Channel.GetUser(Username).Game
+   sClan = Channel.GetUser(Username).Clan
+   If (LenB(sClan)>0) AND (sClan = BotVars.Clan) Then sRank = Clan.GetUser(Username).Rank
+   
+   '// Check the basic greet possibilities, starting with tag in name
+   tempTag = vbNullString
+   Set rs = afgConn.Execute("SELECT `tag_in_name`, `greet` FROM `Greets`")
+   Do Until rs.EOF
+      If (LenB(rs.Fields(0))>0) Then
+         If (InStr(Username, rs.Fields(0))>0) Then
+            GetGreet = rs.Fields(1)
+            Set rs = Nothing
+            Exit Function
+         End If
+      End If
+      rs.MoveNext
+   Loop
+   
+   possGreets = vbNullString
+   '// greet -> name -> access -> flags -> product -> tag -> clantag -> clanrank
+   
+   '// First filter by access
+   Set rs = afgConn.Execute("SELECT COUNT(`access`) FROM `Greets`")
+   If (rs.Fields(0)>0) Then
+      Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `access`=" & sAccess & " AND `name` IS NULL")
+      temp = vbNullString
+      Do Until rs.EOF
+         temp = temp & rs.Fields(0) & CHR(156)
+         rs.MoveNext
+      Loop
+      
+      If (LenB(temp)=0) Then
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `access` IS NULL AND `name` IS NULL")      
+         temp = vbNullString
+         Do Until rs.EOF
+            temp = temp & rs.Fields(0) & CHR(156)
+            rs.MoveNext
+         Loop
+         possGreets = possGreets & temp         
+      Else
+         possGreets = possGreets & temp
+      End If
+   End If
+   greetArr = Split(possGreets, CHR(156)) 
+   temp = vbNullString
+   
+   '// Filter by flags
+   If (LenB(sFlags)>0) Then
+      If (LenB(possGreets)>0) Then
+         For Each greet In greetArr           
+            Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `greet`='" & greet & "' AND `flags`='" & sFlags & "'")
+            Do Until rs.EOF
+               temp = temp & rs.Fields(0) & CHR(156)
+               rs.MoveNext
+            Loop
+         Next         
+         possGreets = temp         
+      Else
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `flags`='" & sFlags & "' AND `name` IS NULL")
+         Do Until rs.EOF
+            temp = temp & rs.Fields(0) & CHR(156)
+            rs.MoveNext
+         Loop         
+         possGreets = temp             
+      End If
+   Else
+      If (LenB(possGreets)>0) Then   
+         For Each greet In greetArr           
+            Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `greet`='" & greet & "' AND `flags` IS NULL")
+            Do Until rs.EOF
+               temp = temp & rs.Fields(0) & CHR(156)
+               rs.MoveNext
+            Loop
+         Next         
+         possGreets = temp
+      Else
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `flags` IS NULL AND `name` IS NULL")
+         Do Until rs.EOF
+            temp = temp & rs.Fields(0) & CHR(156)
+            rs.MoveNext
+         Loop         
+         possGreets = temp             
+      End If         
+   End If
+   greetArr = Split(possGreets, CHR(156)) 
+   temp = vbNullString
+   
+   '// Filter possible greets by clan
+   inClan = False
+   If (LenB(sClan)>0) Then
+      inClan = True
+      If (LenB(possGreets)>0) Then   
+         For Each greet In greetArr
+            Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `greet`='" & greet & "' AND `clantag`='" & sClan & "'")
+            Do Until rs.EOF
+               temp = temp & rs.Fields(0) & CHR(156)
+               rs.MoveNext
+            Loop
+         Next   
+         possGreets = temp
+      Else
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `clantag`='" & sClan & "' AND `name` IS NULL")
+         Do Until rs.EOF
+            temp = temp & rs.Fields(0) & CHR(156)
+            rs.MoveNext
+         Loop         
+         possGreets = temp            
+      End If
+   Else
+      If (LenB(possGreets)>0) Then         
+         For Each greet In greetArr
+            Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `greet`='" & greet & "' AND `clantag` IS NULL")
+            Do Until rs.EOF
+               temp = temp & rs.Fields(0) & CHR(156)
+               rs.MoveNext
+            Loop
+         Next   
+         possGreets = temp         
+      Else
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `clantag` IS NULL AND `name` IS NULL")
+         Do Until rs.EOF
+            temp = temp & rs.Fields(0) & CHR(156)
+            rs.MoveNext
+         Loop      
+         possGreets = temp                     
+      End If
+   End If 
+   temp = vbNullString
+   greetArr = Split(possGreets, CHR(156))
+   
+   If inClan Then      
+      If (sClan = BotVars.Clan) Then
+         '// Filter by clan rank
+         If (afgConn.Execute("SELECT COUNT(`greet`) FROM `Greets` WHERE `clantag`='" & sClan & "' AND `clanrank`=" & sRank).Fields(0)>0) Then
+            For Each greet In greetArr
+               Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `greet`='" & greet & "' AND `clanrank`=" & sRank)
+               Do Until rs.EOF
+                  temp = temp & rs.Fields(0) & CHR(156)
+                  rs.MoveNext
+               Loop
+            Next   
+            possGreets = temp            
+         Else
+            For Each greet In greetArr
+               Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `greet`='" & greet & "' AND `clanrank` IS NULL")
+               Do Until rs.EOF
+                  temp = temp & rs.Fields(0) & CHR(156)
+                  rs.MoveNext
+               Loop
+            Next
+            possGreets = temp            
+         End If
+      End If  
+   End If
+   
+   temp = vbNullString
+   '// More than 1 greet? Filter by product
+   If (UBound(Split(possGreets, CHR(156)))>1) Then     
+      For Each greet In greetArr           
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `greet`='" & greet & "' AND `product`='" & sProd & "'")
+         Do Until rs.EOF
+            temp = temp & rs.Fields(0) & CHR(156)
+            rs.MoveNext
+         Loop
+      Next
+      possGreets = temp
+   End If 
+         
+   If (LenB(possGreets)=0) Then
+      '// Still no greet, check for the "All users" username
+      If (afgConn.Execute("SELECT COUNT(*) FROM `Greets` WHERE `name`='all users'").Fields(0)>0) Then GetGreet = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `name`='all users'").Fields(0)
+   Else
+      GetGreet = possGreets
+   End If
+   If (LenB(GetGreet)>0) Then GetGreet = Replace(GetGreet, CHR(156), vbNullString)
+   Set rs = Nothing
+End Function
+
+
+Private Function ParseGreet(Username, tempProd, tempGreet)
+ 
+   x = Replace(tempGreet, CHR(154), "'")
+ 
+   x = Replace(x, "%0", Username)
+   x = Replace(x, "%c", myChannel)
+   x = Replace(x, "%1", BotVars.Username)
+   x = Replace(x, "%p", Channel.GetUser(Username).Ping)
+   x = Replace(x, "%v", GetBotVersion)
+   x = Replace(x, "%a", GetDBEntry(Username).Rank)
+   x = Replace(x, "%f", GetDBEntry(Username).Flags)
+   x = Replace(x, "%d", Date)
+   x = Replace(x, "%t", Time)
+   x = Replace(x, "%icocode", Channel.GetUser(Username).Stats.IconCode)
+   x = Replace(x, "%icon", Channel.GetUser(Username).Stats.Icon)
+   x = Replace(x, "%game", Channel.GetUser(Username).Stats.Game)
+ 
+   Select Case LCase(tempProd)
+      Case "STAR"
+         x = Replace(x, "%scrank", Channel.GetUser(Username).Stats.LadderRank)
+         x = Replace(x, "%scrating", Channel.GetUser(Username).Stats.LadderRating)
+         x = Replace(x, "%scwins", Channel.GetUser(Username).Stats.Wins)
+      Case "SEXP"
+         x = Replace(x, "%scrank", Channel.GetUser(Username).Stats.LadderRank)
+         x = Replace(x, "%scrating", Channel.GetUser(Username).Stats.LadderRating)
+         x = Replace(x, "%scwins", Channel.GetUser(Username).Stats.Wins)      
+      Case "D2DV"
+         x = Replace(x, "%acts", Channel.GetUser(Username).Stats.ActsCompleted)
+         x = Replace(x, "%d2class", Channel.GetUser(Username).Stats.CharacterClass)
+         x = Replace(x, "%d2classid", Channel.GetUser(Username).Stats.CharacterClassID)
+         x = Replace(x, "%cflags", Channel.GetUser(Username).Stats.CharacterFlags)
+         x = Replace(x, "%cname", Channel.GetUser(Username).Stats.CharacterName)
+         x = Replace(x, "%ctitle", Channel.GetUser(Username).Stats.CharacterTitle)
+         x = Replace(x, "%act", Channel.GetUser(Username).Stats.CurrentAct)
+         x = Replace(x, "%difficulty", Channel.GetUser(Username).Stats.CurrentDifficulty)
+         x = Replace(x, "%difficultyid", Channel.GetUser(Username).Stats.CurrentDifficultyID)
+         x = Replace(x, "%d2level", Channel.GetUser(Username).Stats.Level)
+         x = Replace(x, "%drealm", Channel.GetUser(Username).Stats.Realm)  
+      Case "D2XP"
+         x = Replace(x, "%acts", Channel.GetUser(Username).Stats.ActsCompleted)
+         x = Replace(x, "%d2class", Channel.GetUser(Username).Stats.CharacterClass)
+         x = Replace(x, "%d2classid", Channel.GetUser(Username).Stats.CharacterClassID)
+         x = Replace(x, "%cflags", Channel.GetUser(Username).Stats.CharacterFlags)
+         x = Replace(x, "%cname", Channel.GetUser(Username).Stats.CharacterName)
+         x = Replace(x, "%ctitle", Channel.GetUser(Username).Stats.CharacterTitle)
+         x = Replace(x, "%act", Channel.GetUser(Username).Stats.CurrentAct)
+         x = Replace(x, "%difficulty", Channel.GetUser(Username).Stats.CurrentDifficulty)
+         x = Replace(x, "%difficultyid", Channel.GetUser(Username).Stats.CurrentDifficultyID)
+         x = Replace(x, "%d2level", Channel.GetUser(Username).Stats.Level)
+         x = Replace(x, "%drealm", Channel.GetUser(Username).Stats.Realm)        
+      Case "W2BN"
+         x = Replace(x, "%scrank", Channel.GetUser(Username).Stats.LadderRank)
+         x = Replace(x, "%scrating", Channel.GetUser(Username).Stats.LadderRating)
+         x = Replace(x, "%scwins", Channel.GetUser(Username).Stats.Wins)      
+      Case "WAR3"
+         x = Replace(x, "%clan", Channel.GetUser(Username).Stats.Clan)
+         x = Replace(x, "%iconame", Channel.GetUser(Username).Stats.IconName)
+         x = Replace(x, "%icotier", Channel.GetUser(Username).Stats.IconTier)
+         x = Replace(x, "%wclevel", Channel.GetUser(Username).Stats.Level)
+         x = Replace(x, "%clanrank", Clan.GetUser(Username).Stats.Rank)    
+      Case "W3XP"
+         x = Replace(x, "%clan", Channel.GetUser(Username).Stats.Clan)
+         x = Replace(x, "%iconame", Channel.GetUser(Username).Stats.IconName)
+         x = Replace(x, "%icotier", Channel.GetUser(Username).Stats.IconTier)
+         x = Replace(x, "%wclevel", Channel.GetUser(Username).Stats.Level)      
+         x = Replace(x, "%clanrank", Clan.GetUser(Username).Stats.Rank)      
+      Case Else
+         x = Replace(x, "%clan", Channel.GetUser(Username).Stats.Clan)
+         x = Replace(x, "%iconame", Channel.GetUser(Username).Stats.IconName)
+         x = Replace(x, "%icotier", Channel.GetUser(Username).Stats.IconTier)
+         x = Replace(x, "%wclevel", Channel.GetUser(Username).Stats.Level) 
+         x = Replace(x, "%acts", Channel.GetUser(Username).Stats.ActsCompleted)
+         x = Replace(x, "%d2class", Channel.GetUser(Username).Stats.CharacterClass)
+         x = Replace(x, "%d2classid", Channel.GetUser(Username).Stats.CharacterClassID)
+         x = Replace(x, "%cflags", Channel.GetUser(Username).Stats.CharacterFlags)
+         x = Replace(x, "%cname", Channel.GetUser(Username).Stats.CharacterName)
+         x = Replace(x, "%ctitle", Channel.GetUser(Username).Stats.CharacterTitle)
+         x = Replace(x, "%act", Channel.GetUser(Username).Stats.CurrentAct)
+         x = Replace(x, "%difficulty", Channel.GetUser(Username).Stats.CurrentDifficulty)
+         x = Replace(x, "%difficultyid", Channel.GetUser(Username).Stats.CurrentDifficultyID)
+         x = Replace(x, "%d2level", Channel.GetUser(Username).Stats.Level)
+         x = Replace(x, "%drealm", Channel.GetUser(Username).Stats.Realm)       
+         x = Replace(x, "%scrank", Channel.GetUser(Username).Stats.LadderRank)
+         x = Replace(x, "%scrating", Channel.GetUser(Username).Stats.LadderRating)
+         x = Replace(x, "%scwins", Channel.GetUser(Username).Stats.Wins)         
+   End Select
+   
+   ParseGreet = x
+End Function
+
+
+Private Sub create_database(sPath)
+
+   Set Catalog = CreateObject("ADOX.Catalog")
+   Catalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & sPath
+   Set Catalog = Nothing
+
+   Call afg_connect(sPath)
+
+   afgConn.Execute("CREATE TABLE `Greets` (`greet` TEXT, `name` varchar(30), `access` INT, `flags` TEXT, `product` varchar(4), `tag_in_name` varchar(30), `clantag` varchar(4), `clanrank` INT)")
+End Sub
+
+Public Sub afg_connect(sPath)
+
+   Set afgConn = CreateObject("ADODB.connection")
+   dsn = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & sPath
+   afgConn.ConnectionString = dsn
+
+   afgConn.Open
+End Sub
+
+Public Sub UION_Click()
+   
+   Call OpenHomeForm("home")
+End Sub
+
+Public Sub GreetForm_Home_Click()
+
+   afgNewGreet = False
+   Call OpenHomeForm("home")
+End Sub
+
+Public Sub GreetForm_CreateNew_Click()
+
+   Call CreateGreetFields_Access
+   Call Buttons_HomeForm("greetchanges")
+   afgNewGreet = True
+
+   GreetForm.GetObjByName("AccessGreetGreetings_ListBox").Visible = False
+   GreetForm.GetObjByName("AccessGreetsGreet_Textbox").Visible = True
+   GreetForm.GetObjByName("AccessGreetsGreet_Textbox").Text = vbNullString
+   GreetForm.GetObjByName("AccessGreeting_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsAccess_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsAccess_Textbox").Visible = True
+   GreetForm.GetObjByName("AccessGreetsAccess_Textbox").Text = vbNullString
+   GreetForm.GetObjByName("AccessGreetsFlags_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsFlags_Textbox").Visible = True
+   GreetForm.GetObjByName("AccessGreetsFlags_Textbox").Text = vbNullString
+   GreetForm.GetObjByName("AccessGreetsClanTag_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsClanTag_Textbox").Visible = True
+   GreetForm.GetObjByName("AccessGreetsClanTag_Textbox").Text = vbNullString
+   GreetForm.GetObjByName("AccessGreetsProduct_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsProduct_Textbox").Visible = True
+   GreetForm.GetObjByName("AccessGreetsProduct_Textbox").Text = vbNullString
+   GreetForm.GetObjByName("AccessGreetsClanRank_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsClanRank_Textbox").Visible = True
+   GreetForm.GetObjByName("AccessGreetsClanRank_Textbox").Text = vbNullString
+   GreetForm.GetObjByName("AccessGreetsUsername_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsUsername_Textbox").Visible = True
+   GreetForm.GetObjByName("AccessGreetsUsername_Textbox").Text = vbNullString
+   GreetForm.GetObjByName("AccessGreetsTagInName_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsTagInName_Textbox").Visible = True
+   GreetForm.GetObjByName("AccessGreetsTagInName_Textbox").Text = vbNullString
+   GreetForm.GetObjByName("AccessGreetsGreetVariables_ListBox").Visible = True
+   GreetForm.GetObjByName("GreetEditingNotes").Visible = True
+End Sub
+
+
+Public Sub GreetForm_AccessGreets_Button_Click()
+
+   afgCurrentScreen = "access"
+   Call OpenHomeForm("access")
+End Sub
+
+Public Sub GreetForm_ClanRankGreets_Button_Click()
+
+   afgCurrentScreen = "clanrank"
+   Call OpenHomeForm("clanrank")
+End Sub
+
+Public Sub GreetForm_ClanTagGreets_Button_Click()
+
+   afgCurrentScreen = "clantag"
+   Call OpenHomeForm("clantag")
+End Sub
+
+Public Sub GreetForm_FlagsGreets_Button_Click()
+
+   afgCurrentScreen = "flags"
+   Call OpenHomeForm("flags")
+End Sub
+
+Public Sub GreetForm_NameGreets_Button_Click()
+
+   afgCurrentScreen = "name"
+   Call OpenHomeForm("name")
+End Sub
+
+Public Sub GreetForm_ProductGreets_Button_Click()
+
+   afgCurrentScreen = "product"
+   Call OpenHomeForm("product")
+End Sub
+
+Public Sub GreetForm_TagInNameGreets_Button_Click()
+
+   afgCurrentScreen = "tag_in_name"
+   Call OpenHomeForm("tag_in_name")
+End Sub
+
+
+Public Sub GreetForm_GreetChangesCancel_Button_Click()
+
+   afgNewGreet = False
+   Call OpenHomeForm("home")
+End Sub
+
+Public Sub GreetForm_GreetChangesRemove_Button_Click()
+
+   afgNewGreet = False
+   greetRem = MsgBox("Are you sure you wish to totally remove this greet?", vbYesNo+32, "Greet Manager Notification")
+   Select Case greetRem
+      Case 6
+         sGreet = GreetForm.GetObjByName("AccessGreetsGreet_Textbox").Text:sGreet = Replace(sGreet, "'", CHR(154)):If (LenB(sGreet) > 0) Then temp = "`greet`='" & sGreet & "' AND "
+         sAccess = GreetForm.GetObjByName("AccessGreetsAccess_Textbox").Text:If (LenB(sAccess) > 0) Then temp = temp & "`access` = " &CInt(sAccess) & " AND "
+         sClan = GreetForm.GetObjByName("AccessGreetsClanTag_Textbox").Text:If (LenB(sClan) > 0) Then temp = temp & "`clantag`='" & sClan & "' AND "
+         sProd = GreetForm.GetObjByName("AccessGreetsProduct_Textbox").Text:If (LenB(sProd) > 0) Then temp = temp & "`product`='" & sProd & "' AND "
+         sRank = GreetForm.GetObjByName("AccessGreetsClanRank_Textbox").Text:If (LenB(sRank) > 0) Then temp = temp & "`clanrank`=" & sRank & " AND "
+         sUser = GreetForm.GetObjByName("AccessGreetsUsername_Textbox").Text:If (LenB(sUser) > 0) Then temp = temp & "`name` = '" & sUser & "' AND "
+         sTiG = GreetForm.GetObjByName("AccessGreetsTagInName_Textbox").Text:If (LenB(sTiG) > 0) Then temp = temp & "`tag_in_name`='" & sTiG & "' AND "
+
+         If (LenB(temp) = 0) Then
+            greetRem = MsgBox("That greet does not exist. Do not modify any fields before you click the "" Remove Greet "" button.", vbOKOnly+48, "Greet Manager Notification")
+            Exit Sub
+         End If
+
+         If afgConn.Execute("SELECT COUNT(`greet`) FROM `Greets` WHERE " & Left(temp, Len(temp) - 5)).Fields(0) > 0 Then
+            afgConn.Execute("DELETE * FROM `Greets` WHERE " & Left(temp, Len(temp) - 5))
+         Else
+            greetRem = MsgBox("That greet does not exist. Do not modify any fields before you click the "" Remove Greet "" button.", vbOKOnly+48, "Greet Manager Notification")
+         End If
+   End Select
+   Call OpenHomeForm(afgCurrentScreen)
+End Sub
+
+Public Sub GreetForm_GreetChangesApply_Button_Click()
+
+   x=0
+
+   sGreet = GreetForm.GetObjByName("AccessGreetsGreet_Textbox").Text
+   If (LenB(sGreet)=0) Then 
+      gError = "You cannot set a greet that contains an empty greeting." & vbCrLf
+   Else
+      sGreet = Replace(sGreet, "'", CHR(154))
+   End If
+
+   sAccess = GreetForm.GetObjByName("AccessGreetsAccess_Textbox").Text
+   If (LenB(sAccess)>0) Then
+      If NOT IsNumeric(sAccess) Then
+         gError = gError & "Access must be numeric." & vbCrLf
+      Else
+         sAccess = CInt(sAccess)
+         If (sAccess<0 OR sAccess>200) Then gError = gError & "Access must be between 0 and 200." & vbCrLf
+      End If
+   Else
+      x=x+1
+   End If
+
+   sFlags = GreetForm.GetObjByName("AccessGreetsFlags_Textbox").Text
+   If (LenB(sFlags)=0) Then
+      x=x+1
+   Else
+      If IsNumeric(sFlags) Then gError = gError & "Flags must be alphanumeric." & vbCrLf
+   End If
+
+   sClan = GreetForm.GetObjByName("AccessGreetsClanTag_Textbox").Text
+   If (LenB(sClan)=0) Then x=x+1
+
+   sProd = GreetForm.GetObjByName("AccessGreetsProduct_Textbox").Text
+   If (LenB(sProd)=0) Then 
+      x=x+1
+   Else
+      If NOT (Lcase(sProd)="d2xp" OR Lcase(sProd)="d2dv" OR Lcase(sProd)="star" OR Lcase(sProd)="sexp" OR Lcase(sProd)="w2bn" OR Lcase(sProd)="war3" OR Lcase(sProd)="w3xp") Then
+         gError = gError & "Invalid product." & vbCrLf
+      End If
+   End If
+
+   sRank = GreetForm.GetObjByName("AccessGreetsClanRank_Textbox").Text
+   If (LenB(sRank)=0) Then 
+      x=x+1
+   Else
+      If Not IsNumeric(sRank) Then
+         gError = gError & "Clan ranks are between 0 and 4." & vbCrLf
+      Else
+         If (sRank<0 OR sRank>4) Then gError = gError & "Clan ranks are between 0 and 4." & vbCrLf
+      End If
+   End If
+         
+
+   sUser = GreetForm.GetObjByName("AccessGreetsUsername_Textbox").Text
+   If (LenB(sUser)=0) Then x=x+1
+
+   sTiG = GreetForm.GetObjByName("AccessGreetsTagInName_Textbox").Text
+   If (LenB(sTiG)=0) Then x=x+1
+
+   If x=7 Then gError = "Too many fields were left blank." & vbCrLf
+
+   If (LenB(gError)>0) Then
+      errorBox = MsgBox("Unable to create greet because of the following:" & vbCrLf & vbCrLf & gError, vbOKOnly, "Greet Manager Notification")
+      Exit Sub
+   End If
+   
+   If afgNewGreet Then
+      If (LenB(sGreet)>0) Then
+         temp1 = temp1 & "`greet`, "
+         temp2 = temp2 & "'" & sGreet & "', "
+         temp3 = "`greet` LIKE '" & sGreet & "' AND "
+      End If
+      If (LenB(sUser)>0) Then
+         temp1 = temp1 & "`name`, "
+         temp2 = temp2 & "'" & sUser & "', "
+         temp3 = temp3 & "`name` LIKE '" & sUser & "' AND "            
+         temp4 = temp4 & "`name`='" & sUser & "' AND "
+      Else
+         temp4 = temp4 & "`name` IS NULL AND "
+      End If
+      If (LenB(sAccess)>0) Then
+         temp1 = temp1 & "`access`, "
+         temp2 = temp2 & sAccess & ", "
+         temp3 = temp3 & "`access` LIKE " & sAccess & " AND "                 
+         temp4 = temp4 & "`access`=" & sAccess & " AND "
+      Else
+         temp4 = temp4 & "`access` IS NULL AND "         
+      End If
+      If (LenB(sFlags)>0) Then
+         temp1 = temp1 & "`flags`, "
+         temp2 = temp2 & "'" & sFlags & "', "
+         temp3 = temp3 & "`flags` LIKE '" & sFlags & "' AND "        
+         temp4 = temp4 & "`flags`='" & sFlags & "' AND "
+      Else
+         temp4 = temp4 & "`flags` IS NULL AND "         
+      End If
+      If (LenB(sProd)>0) Then
+         temp1 = temp1 & "`product`, "
+         temp2 = temp2 & "'" & sProd & "', "
+         temp3 = temp3 & "`product` LIKE '" & sProd & "' AND " 
+         temp4 = temp4 & "`product`='" & sProd & "' AND "
+      Else
+         temp4 = temp4 & "`product` IS NULL AND "         
+      End If
+      If (LenB(sTiG)>0) Then
+         temp1 = temp1 & "`tag_in_name`, "
+         temp2 = temp2 & "'" & sTiG & "', "
+         temp3 = temp3 & "`tag_in_name` LIKE '" & sTiG & "' AND "      
+         temp4 = temp4 & "`tag_in_name`='" & sTiG & "' AND "
+      Else
+         temp4 = temp4 & "`tag_in_name` IS NULL AND "         
+      End If
+      If (LenB(sClan)>0) Then
+         temp1 = temp1 & "`clantag`, "
+         temp2 = temp2 & "'" & sClan & "', "
+         temp3 = temp3 & "`clantag` LIKE '" & sClan & "' AND "    
+         temp4 = temp4 & "`clantag`='" & sClan & "' AND "
+      Else
+         temp4 = temp4 & "`clantag` IS NULL AND "         
+      End If
+      If (LenB(sRank)>0) Then
+         temp1 = temp1 & "`clanrank`, "
+         temp2 = temp2 & sRank & ", "
+         temp3 = temp3 & "`clanrank` LIKE " & sRank & " AND "
+         temp4 = temp4 & "`clanrank`=" & sRank & " AND "
+      Else
+         temp4 = temp4 & "`clanrank` IS NULL AND "         
+      End If
+
+      If (afgConn.Execute("SELECT COUNT(*) FROM `Greets` WHERE " & Left(temp3, Len(temp3)-5)).Fields(0) > 0) Then
+         errorBox = MsgBox("Unable to create greet because of the following:" & vbCrLf & vbCrLf & "This setting will cause a duplicate greet in the database.", vbOKOnly, "Greet Manager Notification")
+         Exit Sub
+      End If
+      
+      a=Left(temp4, Len(temp4)-5)
+      b=Replace(a, "`", vbNullString):b=Replace(b, "=", " = "):b=Replace(b, " IS NULL", " = "):b=Replace(b, "AND ", vbCrLf):b=Replace(b, "'", vbNullString)
+      
+      If (afgConn.Execute("SELECT COUNT(*) FROM `Greets` WHERE " & a).Fields(0)>0) Then
+         errorBox = MsgBox("Unable to create greet because of the following:" & vbCrLf & vbCrLf & "There is an existing greet having the field value(s):" & vbCrLf & vbCrLf & b, vbOKOnly, "Greet Manager Notification")
+         Exit Sub
+      End If
+      
+      a=Left(temp4, Len(temp4)-5)
+      If (Ubound(Split(a, "IS NULL"))-1=5) Then
+         If (afgConn.Execute("SELECT COUNT(*) FROM `Greets` WHERE " & a).Fields(0) >0) Then      
+            b=Split(a, "IS NULL")
+            For Each c In b
+               If (InStr(c, "=") >0) Then
+                  sField = Left(c, InStr(c, "=")-1)
+                  sField = Replace(sField, " AND ", vbNullString)
+                  errorBox = MsgBox("Unable to create greet because of the following:" & vbCrLf & vbCrLf & "You may only have 1 generic greet for " & sField & " with all other fields left empty.", vbOKOnly, "Greet Manager Notification")
+                  Exit Sub            
+               End If
+            Next
+         End If
+      End If
+      
+      afgConn.Execute("INSERT INTO `Greets` (" & Left(temp1, Len(temp1)-2) & ") Values(" & Left(temp2, Len(temp2)-2) & ")")
+      sGreet = Replace(sGreet, CHR(154), "'")
+      greetBox = MsgBox("Greet created successfully." & vbCrLf & vbCrLf & "Greet: " & sGreet & vbCrLf & "Username: " & sUser & vbCrLf & "Access: " & sAccess & vbCrLf & "Flags: " & sFlags & vbCrLf & "Product: " & sProd & vbCrLf & "Tag in Username: " & sTiG & vbCrLf & "Clan Tag: " & sClan & vbCrLf & "Clan Rank: " & sRank, vbOKOnly+64, "Greet Creation Status")
+   Else
+      If (LenB(sGreet)>0) Then 
+         sGreet = Replace(sGreet, "'", CHR(154))
+         temp1 = "`greet`='" & sGreet & "',"
+         temp2 = "`greet` LIKE '" & sGreet & "' AND "
+         temp3 = "`greet`,"
+         temp4 = "'" & sGreet & "',"
+      End If
+      If (LenB(sUser)>0) Then 
+         temp1 = temp1 & "`name`='" & sUser & "',"
+         temp2 = temp2 & "`name` LIKE '" & sUser & "' AND "
+         temp3 = temp3 & "`name`,"          
+         temp4 = temp4 & "'" & sUser & "',"
+      End If
+      If (LenB(sAccess)>0) Then 
+         temp1 = temp1 & "`access`=" & sAccess & ","
+         temp2 = temp2 & "`access` LIKE '" & sAccess & "' AND " 
+         temp3 = temp3 & "`access`,"       
+         temp4 = temp4 & sAccess & ","        
+      End If
+      If (LenB(sFlags)>0) Then 
+         temp1 = temp1 & "`flags`='" & sFlags & "',"
+         temp2 = temp2 & "`flags` LIKE '" & sFlags & "' AND "
+         temp3 = temp3 & "`flags`,"            
+         temp4 = temp4 & "'" & sFlags & "',"       
+      End If
+      If (LenB(sProd)>0) Then 
+         temp1 = temp1 & "`product`='" & sProd & "',"
+         temp2 = temp2 & "`product` LIKE '" & sProd & "' AND "
+         temp3 = temp3 & "`product`,"                     
+         temp4 = temp4 & "'" & sProd & "',"         
+      End If
+      If (LenB(sTiG)>0) Then 
+         temp1 = temp1 & "`tag_in_name`='" & sTiG & "',"
+         temp2 = temp2 & "`tag_in_name` LIKE '" & sTiG & "' AND "
+         temp3 = temp3 & "`tag_in_name`,"                   
+         temp4 = temp4 & "'" & sTiG & "',"       
+      End If
+      If (LenB(sClan)>0) Then 
+         temp1 = temp1 & "`clantag`='" & sClan & "',"
+         temp2 = temp2 & "`clantag` LIKE '" & sClan & "' AND "
+         temp3 = temp3 & "`clantag`,"               
+         temp4 = temp4 & "'" & sClan & "',"         
+      End If
+      If (LenB(sRank)>0) Then 
+         temp1 = temp1 & "`clanrank`=" & sRank & ","
+         temp2 = temp2 & "`clanrank` LIKE " & sRank & " AND "            
+         temp3 = temp3 & "`clanrank`,"                      
+         temp4 = temp4 & sRank & ","        
+      End If
+      
+      If (InStr(temp2, "`name`")<1) Then temp2 = temp2 & "`name` IS NULL AND "
+      If (InStr(temp2, "`access`")<1) Then temp2 = temp2 & "`access` IS NULL AND "     
+      If (InStr(temp2, "`flags`")<1) Then temp2 = temp2 & "`flags` IS NULL AND "               
+      If (InStr(temp2, "`product`")<1) Then temp2 = temp2 & "`product` IS NULL AND "               
+      If (InStr(temp2, "`tag_in_name`")<1) Then temp2 = temp2 & "`tag_in_name` IS NULL AND "               
+      If (InStr(temp2, "`clanrank`")<1) Then temp2 = temp2 & "`clanrank` IS NULL AND "
+      
+      If (afgConn.Execute("SELECT COUNT(*) FROM `Greets` WHERE " & Left(temp2, Len(temp2)-5)).Fields(0) > 0) Then
+         errorBox = MsgBox("Unable to create greet because of the following:" & vbCrLf & vbCrLf & "This setting will cause a duplicate greet in the database." & vbCrLf & "For instance, be sure you aren't editing the greets so there will be 2 greets for 1 username.", vbOKOnly, "Greet Manager Notification")
+         Exit Sub
+      End If      
+            
+      afgConn.Execute("DELETE * FROM `Greets` WHERE " & Left(afgScreenValues, Len(afgScreenValues)-5))
+      afgConn.Execute("INSERT INTO `Greets` (" & Left(temp3, Len(temp3)-1) & ") VALUES (" & Left(temp4, Len(temp4)-1) & ")")
+      greetBox = MsgBox("Greet updated.", vbOKOnly+64, "Greet Creation Status")   
+      afgScreenValues = vbNullString
+   End If
+
+   Set rs = Nothing
+   Call OpenHomeForm(afgCurrentScreen)
+End Sub
+
+
+
+REM Public Sub GreetForm_Username_Textbox_KeyPress(stroke)
+
+   REM If (stroke=13) Then
+      REM afgUsernameTextBox = GreetForm.GetObjByName("Username_Textbox").Text
+      REM Call OpenHomeForm("manage")
+   REM End If
+   REM 'AddChat vbgreen, "x: " & stroke
+REM End Sub
+
+
+
+Public Sub GreetForm_AccessGreets_ListBox_Click()
+
+   GreetForm.GetObjByName("GreetChangesCancel_Button").Visible = False
+   GreetForm.GetObjByName("GreetChangesApply_Button").Visible = False
+   GreetForm.GetObjByName("GreetChangesRemove_Button").Visible = False
+
+   Call CreateGreetFields_Access()
+
+   GreetForm.GetObjByName("AccessGreetGreetings_ListBox").Clear
+
+   Select Case afgCurrentScreen
+      Case "access"
+         Set rs = afgConn.Execute("SELECT DISTINCT `access` FROM `Greets`")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & ","
+            rs.MoveNext
+         Loop
+      Case "clanrank"
+         Set rs = afgConn.Execute("SELECT DISTINCT `clanrank` FROM `Greets`")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & ","
+            rs.MoveNext
+         Loop
+      Case "flags"
+         Set rs = afgConn.Execute("SELECT DISTINCT `flags` FROM `Greets`")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & ","
+            rs.MoveNext
+         Loop
+      Case "name"
+         Set rs = afgConn.Execute("SELECT DISTINCT `name` FROM `Greets`")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & ","
+            rs.MoveNext
+         Loop
+      Case "product"
+         Set rs = afgConn.Execute("SELECT DISTINCT `product` FROM `Greets`")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & ","
+            rs.MoveNext
+         Loop
+      Case "tag_in_name"
+         Set rs = afgConn.Execute("SELECT DISTINCT `tag_in_name` FROM `Greets`")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & ","
+            rs.MoveNext
+         Loop
+      Case "clantag"
+         Set rs = afgConn.Execute("SELECT DISTINCT `clantag` FROM `Greets`")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & ","
+            rs.MoveNext
+         Loop
+   End Select
+
+   arrAccess = Split(temp, ",")
+   For i = 0 To UBound(arrAccess)-1
+      If GreetForm.GetObjByName("AccessGreets_ListBox").Selected(i) Then
+         afgNewGreet = False
+         afgListboxPlaceHolder = arrAccess(i)
+         If (afgCurrentScreen = "access") OR (afgCurrentScreen = "clanrank") Then
+            temp2 = arrAccess(i)
+         Else
+            temp2 = "'" & arrAccess(i) & "'"
+         End If
+
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `" & afgCurrentScreen & "` = " & temp2)
+         Do Until rs.EOF
+            sGreet = Replace(rs.Fields(0), CHR(154), "'")
+            GreetForm.GetObjByName("AccessGreetGreetings_ListBox").AddItem sGreet
+            rs.MoveNext
+         Loop
+         GreetForm.GetObjByName("AccessGreetGreetings_ListBox").Visible = True
+      End If
+   Next
+
+   Set rs = Nothing
+End Sub
+
+Public Sub GreetForm_AccessGreetGreetings_ListBox_Click()
+
+   Select Case afgCurrentScreen
+      Case "access"
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `access` = " & afgListboxPlaceHolder)
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & CHR(159)
+            rs.MoveNext
+         Loop
+      Case "clanrank"
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `clanrank` = " & afgListboxPlaceHolder)
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & CHR(159)
+            rs.MoveNext
+         Loop
+      Case "flags"
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `flags` = '" & afgListboxPlaceHolder & "'")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & CHR(159)
+            rs.MoveNext
+         Loop
+      Case "name"
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `name` = '" & afgListboxPlaceHolder & "'")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & CHR(159)
+            rs.MoveNext
+         Loop
+      Case "product"
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `product` = '" & afgListboxPlaceHolder & "'")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & CHR(159)
+            rs.MoveNext
+         Loop
+      Case "tag_in_name"
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `tag_in_name` = '" & afgListboxPlaceHolder & "'")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & CHR(159)
+            rs.MoveNext
+         Loop
+      Case "clantag"
+         Set rs = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `clantag` = '" & afgListboxPlaceHolder & "'")
+         Do Until rs.EOF
+            If (LenB(rs.Fields(0)) >0) Then temp = temp & rs.Fields(0) & CHR(159)
+            rs.MoveNext
+         Loop
+   End Select
+
+   arrGreet = Split(temp, CHR(159))
+   For i = 0 To UBound(arrGreet)-1
+      If GreetForm.GetObjByName("AccessGreetGreetings_ListBox").Selected(i) Then
+         GreetForm.GetObjByName("AccessGreetGreetings_ListBox").Clear
+         GreetForm.GetObjByName("AccessGreetGreetings_ListBox").Visible = False
+
+         With GreetForm.GetObjByName("AccessGreetsGreet_Textbox")
+            temp = afgConn.Execute("SELECT `greet` FROM `Greets` WHERE `greet` = '" & arrGreet(i) & "'").Fields(0)
+            .Text = Replace(temp, CHR(154), "'")
+            afgScreenValues = "`greet`=" & .Text & ","
+            afgGreetText = temp
+         End With
+         Exit For
+      End If
+   Next
+
+   If afgNewGreet Then GreetForm.GetObjByName("AccessGreetsGreet_Textbox").Text = vbNullString
+
+   GreetForm.GetObjByName("AccessGreetsGreet_Textbox").Visible = True
+   GreetForm.GetObjByName("AccessGreeting_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsAccess_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsFlags_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsClanTag_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsProduct_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsClanRank_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsUsername_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsTagInName_Label").Visible = True
+   GreetForm.GetObjByName("AccessGreetsTagInName_Textbox").Visible = True
+   GreetForm.GetObjByName("AccessGreetsGreetVariables_ListBox").Visible = True
+   GreetForm.GetObjByName("GreetEditingNotes").Visible = True
+
+   afgScreenValues = vbNullString
+   
+   With GreetForm.GetObjByName("AccessGreetsAccess_Textbox")
+      If (LenB(afgGreetText) > 0) Then
+         temp = afgConn.Execute("SELECT `access` FROM `Greets` WHERE `greet` = '" & afgGreetText & "'").Fields(0)
+         If (LenB(temp)>0) Then
+            .Text = temp
+            afgScreenValues = afgScreenValues & "`access`=" & .Text & " AND "
+         Else
+            .Text = vbNullString
+            afgScreenValues = afgScreenValues & "`access` IS NULL AND "            
+         End If
+      Else
+         .Text = vbNullString
+         afgScreenValues = afgScreenValues & "`access` IS NULL AND "                
+      End If
+      .Visible = True
+   End With
+
+   With GreetForm.GetObjByName("AccessGreetsFlags_Textbox")
+      Set rs = afgConn.Execute("SELECT COUNT(`flags`) FROM `Greets` WHERE `greet` = '" & afgGreetText & "'")
+      If rs.Fields(0) > 0 Then
+         temp = afgConn.Execute("SELECT `flags` FROM `Greets` WHERE `greet` = '" & afgGreetText & "'").Fields(0)
+         If (LenB(temp)>0) Then
+            .Text = temp
+            afgScreenValues = afgScreenValues & "`flags`='" & .Text & "' AND "
+         Else
+            .Text = vbNullString
+            afgScreenValues = afgScreenValues & "`flags` IS NULL AND "                   
+         End If
+      Else
+         .Text = vbNullString
+         afgScreenValues = afgScreenValues & "`flags` IS NULL AND "                
+      End If
+      .Visible = True
+   End With
+
+   With GreetForm.GetObjByName("AccessGreetsClanTag_Textbox")
+      Set rs = afgConn.Execute("SELECT COUNT(`clantag`) FROM `Greets` WHERE `greet` = '" & afgGreetText & "'")
+      If rs.Fields(0) > 0 Then
+         temp = afgConn.Execute("SELECT `clantag` FROM `Greets` WHERE `greet` = '" & afgGreetText & "'").Fields(0)
+         If (LenB(temp)>0) Then
+            .Text = temp
+            afgScreenValues = afgScreenValues & "`clantag`='" & .Text & "' AND "            
+         Else
+            .Text = vbNullString
+            afgScreenValues = afgScreenValues & "`clantag` IS NULL AND "                  
+         End If
+      Else
+         .Text = vbNullString
+         afgScreenValues = afgScreenValues & "`clantag` IS NULL AND "               
+      End If
+      .Visible = True
+   End With
+
+   With GreetForm.GetObjByName("AccessGreetsProduct_Textbox")
+      Set rs = afgConn.Execute("SELECT COUNT(`product`) FROM `Greets` WHERE `greet` = '" & afgGreetText & "'")
+      If rs.Fields(0) > 0 Then
+         temp = afgConn.Execute("SELECT `product` FROM `Greets` WHERE `greet` = '" & afgGreetText & "'").Fields(0)
+         If (LenB(temp)>0) Then
+            .Text = temp
+            afgScreenValues = afgScreenValues & "`product`='" & .Text & "' AND "        
+         Else
+            .Text = vbNullString
+            afgScreenValues = afgScreenValues & "`product` IS NULL AND "             
+         End If
+      Else
+         .Text = vbNullString
+         afgScreenValues = afgScreenValues & "`product` IS NULL AND "          
+      End If
+      .Visible = True
+   End With
+
+   With GreetForm.GetObjByName("AccessGreetsClanRank_Textbox")
+      Set rs = afgConn.Execute("SELECT COUNT(`clanrank`) FROM `Greets` WHERE `greet` = '" & afgGreetText & "'")
+      If rs.Fields(0) > 0 Then
+         temp = afgConn.Execute("SELECT `clanrank` FROM `Greets` WHERE `greet` = '" & afgGreetText & "'").Fields(0)
+         If (LenB(temp)>0) Then
+            .Text = temp
+            afgScreenValues = afgScreenValues & "`clanrank`=" & .Text & " AND "       
+         Else
+            .Text = vbNullString
+            afgScreenValues = afgScreenValues & "`clanrank` IS NULL AND "
+         End If
+      Else
+         .Text = vbNullString
+            afgScreenValues = afgScreenValues & "`clanrank` IS NULL AND "   
+      End If
+      .Visible = True
+   End With
+
+   With GreetForm.GetObjByName("AccessGreetsUsername_Textbox")
+      Set rs = afgConn.Execute("SELECT COUNT(`name`) FROM `Greets` WHERE `greet` = '" & afgGreetText & "'")
+      If rs.Fields(0) > 0 Then
+         temp = afgConn.Execute("SELECT `name` FROM `Greets` WHERE `greet` = '" & afgGreetText & "'").Fields(0)
+         If (LenB(temp)>0) Then
+            .Text = temp
+            afgScreenValues = afgScreenValues & "`name`='" & .Text & "' AND "              
+         Else
+            .Text = vbNullString
+            afgScreenValues = afgScreenValues & "`name` IS NULL AND " 
+         End If
+      Else
+         .Text = vbNullString
+         afgScreenValues = afgScreenValues & "`name` IS NULL AND "
+      End If
+      .Visible = True
+   End With
+
+   With GreetForm.GetObjByName("AccessGreetsTagInName_Textbox")
+      Set rs = afgConn.Execute("SELECT COUNT(`tag_in_name`) FROM `Greets` WHERE `greet` = '" & afgGreetText & "'")
+      If rs.Fields(0) > 0 Then
+         temp = afgConn.Execute("SELECT `tag_in_name` FROM `Greets` WHERE `greet` = '" & afgGreetText & "'").Fields(0)
+         If (LenB(temp)>0) Then
+            .Text = temp
+            afgScreenValues = afgScreenValues & "`tag_in_name`='" & .Text & "' AND "              
+         Else
+            .Text = vbNullString
+            afgScreenValues = afgScreenValues & "`tag_in_name` IS NULL AND "
+         End If
+      Else
+         .Text = vbNullString
+         afgScreenValues = afgScreenValues & "`tag_in_name` IS NULL AND "
+      End If
+      .Visible = True
+   End With
+
+   Call Buttons_HomeForm("greetchanges")
+   Set rs = Nothing
+   afgListboxPlaceHolder = vbNullString
+End Sub
+
+
+
+Private Sub OpenHomeForm(status)
+
+   Select Case status
+      Case "home"
+         With GreetForm
+            .Height = 6600
+            .Width = 6000
+            .Caption = "Greet Manager by The-Black-Ninja"
+            .Show
+         End With
+         Call Buttons_HomeForm("close")
+         Call Buttons_HomeForm("open")
+      Case "access"
+         With GreetForm
+            .Height = 6000
+            .Width = 13500
+            .Caption = "Greet Manager by The-Black-Ninja"
+            .Show
+         End With
+         Call Buttons_HomeForm("close")
+         Call Buttons_HomeForm("access")
+      Case "clanrank"
+         With GreetForm
+            .Height = 6000
+            .Width = 13500
+            .Caption = "Greet Manager by The-Black-Ninja"
+            .Show
+         End With
+         Call Buttons_HomeForm("close")
+         Call Buttons_HomeForm("clanrank")
+      Case "clantag"
+         With GreetForm
+            .Height = 6000
+            .Width = 13500
+            .Caption = "Greet Manager by The-Black-Ninja"
+            .Show
+         End With
+         Call Buttons_HomeForm("close")
+         Call Buttons_HomeForm("clantag")
+      Case "flags"
+         With GreetForm
+            .Height = 6000
+            .Width = 13500
+            .Caption = "Greet Manager by The-Black-Ninja"
+            .Show
+         End With
+         Call Buttons_HomeForm("close")
+         Call Buttons_HomeForm("flags")
+      Case "name"
+         With GreetForm
+            .Height = 6000
+            .Width = 13500
+            .Caption = "Greet Manager by The-Black-Ninja"
+            .Show
+         End With
+         Call Buttons_HomeForm("close")
+         Call Buttons_HomeForm("name")
+      Case "product"
+         With GreetForm
+            .Height = 6000
+            .Width = 13500
+            .Caption = "Greet Manager by The-Black-Ninja"
+            .Show
+         End With
+         Call Buttons_HomeForm("close")
+         Call Buttons_HomeForm("product")
+      Case "tag_in_name"
+         With GreetForm
+            .Height = 6000
+            .Width = 13500
+            .Caption = "Greet Manager by The-Black-Ninja"
+            .Show
+         End With
+         Call Buttons_HomeForm("close")
+         Call Buttons_HomeForm("tag_in_name")
+   End Select
+End Sub
+
+
+Private Sub Buttons_HomeForm(status)
+
+   Select Case status
+      Case "open"
+         Call GreetForm.CreateObj("Label", "Welcome")
+         With GreetForm.GetObjByName("Welcome")
+            .Top = 300
+            .Left = 400
+            .Height = 600
+            .Width = 5500
+            .FontSize = 12
+            .ForeColor = RGB(230, 230, 230)
+            .FontBold = True
+            .FontUnderline = False
+            .Caption = "Greet Manager for Stealthbot 2.7" & vbNewLine & "Version: " & Scripts("Greet Manager").Script("Major") & "." & Scripts("Greet Manager").Script("Minor") & " Revision " & Scripts("Greet Manager").Script("Revision")
+            .Visible = True
+         End With      
+      
+         Call GreetForm.CreateObj("Label", "Welcome2")
+         With GreetForm.GetObjByName("Welcome2")
+            .Top = 1000
+            .Left = 400
+            .Height = 300
+            .Width = 5500
+            .FontSize = 10
+            .ForeColor = RGB(100, 100, 100)
+            .FontBold = True
+            .FontItalic = True
+            .FontUnderline = False
+            .Caption = "Choose a greet category from the buttons below:"
+            .Visible = True
+         End With
+         
+         Call GreetForm.CreateObj("Label", "Notes")
+         With GreetForm.GetObjByName("Notes")
+            .Top = 1500
+            .Left = 3600
+            .Height = 5000
+            .Width = 5500
+            .FontSize = 10
+            .ForeColor = RGB(230, 230, 230)
+            .FontBold = True
+            .FontUnderline = False
+            .Caption = "Note: All anti-spam" & vbNewLine & "settings can be found" & vbNewLine & "in the Scripts.ini" & vbNewLine & _
+               "file, located in your" & vbNewLine & "scripts folder, under" & vbNewLine & "the [Greet Manager]" & vbNewLine & "section." & vbNewLine & vbNewLine & _
+               "Note: To create a new " & vbNewLine & "greet, you MUST click" & vbNewLine & "the New Greet button." & vbNewLine & vbNewLine & _
+               "Note: To alter an " & vbNewLine & "existing greet, click " & vbNewLine & "the greet, alter the" & vbNewLine & "fields, then click the" & vbNewLine & "button Apply Changes."
+            .Visible = True
+         End With               
+
+         Call GreetForm.CreateObj("Button", "AccessGreets_Button")
+         With GreetForm.GetObjByName("AccessGreets_Button")
+            .Top = 1500
+            .Left = 400
+            .Height = 390
+            .Width = 3000
+            .FontSize = 10
+            .Caption = "Greets by Access (" & GetGreetCount("access") & ")"
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Button", "ClanRankGreets_Button")
+         With GreetForm.GetObjByName("ClanRankGreets_Button")
+            .Top = 2140
+            .Left = 400
+            .Height = 390
+            .Width = 3000
+            .FontSize = 10
+            .Caption = "Greets by Clan Rank (" & GetGreetCount("clanrank") & ")"
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Button", "ClanTagGreets_Button")
+         With GreetForm.GetObjByName("ClanTagGreets_Button")
+            .Top = 2780
+            .Left = 400
+            .Height = 390
+            .Width = 3000
+            .FontSize = 10
+            .Caption = "Greets by Clan Tag (" & GetGreetCount("clantag") & ")"
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Button", "FlagsGreets_Button")
+         With GreetForm.GetObjByName("FlagsGreets_Button")
+            .Top = 3420
+            .Left = 400
+            .Height = 390
+            .Width = 3000
+            .FontSize = 10
+            .Caption = "Greets by Flags (" & GetGreetCount("flags") & ")"
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Button", "NameGreets_Button")
+         With GreetForm.GetObjByName("NameGreets_Button")
+            .Top = 4060
+            .Left = 400
+            .Height = 390
+            .Width = 3000
+            .FontSize = 10
+            .Caption = "Greets by Name (" & GetGreetCount("name") & ")"
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Button", "ProductGreets_Button")
+         With GreetForm.GetObjByName("ProductGreets_Button")
+            .Top = 4700
+            .Left = 400
+            .Height = 390
+            .Width = 3000
+            .FontSize = 10
+            .Caption = "Greets by Game Product (" & GetGreetCount("product") & ")"
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Button", "TagInNameGreets_Button")
+         With GreetForm.GetObjByName("TagInNameGreets_Button")
+            .Top = 5340
+            .Left = 400
+            .Height = 390
+            .Width = 3000
+            .FontSize = 10
+            .Caption = "Greets by Tag In Username (" & GetGreetCount("tag_in_name") & ")"
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Button", "CreateNew")
+         With GreetForm.GetObjByName("CreateNew")
+            .Top = 4000
+            .Left = 400
+            .Height = 300
+            .Width = 1500
+            .FontSize = 8
+            .Caption = "Create New Greet"
+            .Visible = False
+         End With
+
+         Call GreetForm.CreateObj("Button", "Home")
+         With GreetForm.GetObjByName("Home")
+            .Top = 4400
+            .Left = 400
+            .Height = 300
+            .Width = 1200
+            .FontSize = 8
+            .Caption = "Home Screen"
+            .Visible = False
+         End With
+
+      Case "close"
+         GreetForm.CreateObj("Label", "Welcome").Visible = False
+         GreetForm.CreateObj("Label", "Welcome2").Visible = False
+         GreetForm.CreateObj("Label", "Notes").Visible = False
+         GreetForm.CreateObj("Button", "AccessGreets_Button").Visible = False
+         GreetForm.CreateObj("Button", "ClanRankGreets_Button").Visible = False
+         GreetForm.CreateObj("Button", "ClanTagGreets_Button").Visible = False
+         GreetForm.CreateObj("Button", "FlagsGreets_Button").Visible = False
+         GreetForm.CreateObj("Button", "NameGreets_Button").Visible = False
+         GreetForm.CreateObj("Button", "ProductGreets_Button").Visible = False
+         GreetForm.CreateObj("Button", "TagInNameGreets_Button").Visible = False
+         GreetForm.CreateObj("ListBox", "AccessGreets_ListBox").Visible = False
+         GreetForm.CreateObj("Label", "AccessGreets_Label").Visible = False
+         GreetForm.CreateObj("Textbox", "AccessGreetsVars_Textbox").Visible = False
+         GreetForm.CreateObj("Label", "AccessGreeting_Label").Visible = False
+         GreetForm.CreateObj("Label", "AccessGreetsAccess_Label").Visible = False
+         GreetForm.CreateObj("Textbox", "AccessGreetsAccess_Textbox").Visible = False
+         GreetForm.CreateObj("Label", "AccessGreetsFlags_Label").Visible = False
+         GreetForm.CreateObj("Textbox", "AccessGreetsGreet_Textbox").Visible = False
+         GreetForm.CreateObj("Textbox", "AccessGreetsFlags_Textbox").Visible = False
+         GreetForm.CreateObj("Label", "AccessGreetsClanTag_Label").Visible = False
+         GreetForm.CreateObj("Textbox", "AccessGreetsClanTag_Textbox").Visible = False
+         GreetForm.CreateObj("Label", "AccessGreetsProduct_Label").Visible = False
+         GreetForm.CreateObj("Textbox", "AccessGreetsProduct_Textbox").Visible = False
+         GreetForm.CreateObj("Label", "AccessGreetsClanRank_Label").Visible = False
+         GreetForm.CreateObj("Textbox", "AccessGreetsClanRank_Textbox").Visible = False
+         GreetForm.CreateObj("Label", "AccessGreetsUsername_Label").Visible = False
+         GreetForm.CreateObj("Textbox", "AccessGreetsUsername_Textbox").Visible = False
+         GreetForm.CreateObj("Button", "GreetChangesApply_Button").Visible = False
+         GreetForm.CreateObj("Button", "GreetChangesCancel_Button").Visible = False
+         GreetForm.CreateObj("Listbox", "AccessGreetGreetings_ListBox").Visible = False
+         GreetForm.CreateObj("Button", "GreetChangesRemove_Button").Visible = False
+         GreetForm.CreateObj("Label", "AccessGreetsTagInName_Label").Visible = False
+         GreetForm.CreateObj("Textbox", "AccessGreetsTagInName_Textbox").Visible = False
+         GreetForm.CreateObj("Listbox", "AccessGreetsGreetVariables_ListBox").Visible = False
+         GreetForm.CreateObj("Label", "GreetEditingNotes").Visible = False
+
+      Case "access"
+         Call GreetForm.CreateObj("Label", "AccessGreets_Label")
+         With GreetForm.GetObjByName("AccessGreets_Label")
+            .Top = 500
+            .Left = 400
+            .Height = 300
+            .Width = 1570
+            .FontSize = 8
+            .FontUnderline = False
+            .Caption = "Access (click to view):"
+            .Visible = True
+         End With
+
+         GreetForm.CreateObj("Button", "Home").Visible = True
+         GreetForm.CreateObj("Button", "CreateNew").Visible = True
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreets_ListBox")
+         With GreetForm.GetObjByName("AccessGreets_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 400
+            .Height = 3000
+            .Width = 1000
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            Set rs = afgConn.Execute("SELECT DISTINCT `access` FROM `Greets`")
+            Do Until rs.EOF
+               If (LenB(rs.Fields(0))>0) Then .AddItem rs.Fields(0)
+               rs.MoveNext
+            Loop
+            Set rs = Nothing
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreetGreetings_ListBox")
+         With GreetForm.GetObjByName("AccessGreetGreetings_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 1650
+            .Height = 3000
+            .Width = 5750
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            .Visible = False
+         End With
+
+      Case "greetchanges"
+         Call GreetForm.CreateObj("Button", "GreetChangesApply_Button")
+         With GreetForm.GetObjByName("GreetChangesApply_Button")
+            .Top = 4000
+            .Left = 2300
+            .Height = 450
+            .Width = 1000
+            .FontSize = 8
+            .Caption = "Apply Changes"
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Button", "GreetChangesCancel_Button")
+         With GreetForm.GetObjByName("GreetChangesCancel_Button")
+            .Top = 4000
+            .Left = 3500
+            .Height = 450
+            .Width = 1000
+            .FontSize = 8
+            .Caption = "Cancel Changes"
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Button", "GreetChangesRemove_Button")
+         With GreetForm.GetObjByName("GreetChangesRemove_Button")
+            .Top = 4000
+            .Left = 4700
+            .Height = 450
+            .Width = 1000
+            .FontSize = 8
+            .Caption = "Remove Greet"
+            .Visible = True
+         End With
+      Case "clanrank"
+         Call GreetForm.CreateObj("Label", "AccessGreets_Label")
+         With GreetForm.GetObjByName("AccessGreets_Label")
+            .Top = 500
+            .Left = 400
+            .Height = 300
+            .Width = 1800
+            .FontSize = 8
+            .FontUnderline = False
+            .Caption = "Clan Rank (click to view):"
+            .Visible = True
+         End With
+
+         GreetForm.CreateObj("Button", "Home").Visible = True
+         GreetForm.CreateObj("Button", "CreateNew").Visible = True
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreets_ListBox")
+         With GreetForm.GetObjByName("AccessGreets_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 400
+            .Height = 3000
+            .Width = 1000
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            Set rs = afgConn.Execute("SELECT DISTINCT `clanrank` FROM `Greets`")
+            Do Until rs.EOF
+               If (LenB(rs.Fields(0))>0) Then .AddItem rs.Fields(0)
+               rs.MoveNext
+            Loop
+            Set rs = Nothing
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreetGreetings_ListBox")
+         With GreetForm.GetObjByName("AccessGreetGreetings_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 1650
+            .Height = 3000
+            .Width = 5750
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            .Visible = False
+         End With
+      Case "clantag"
+         Call GreetForm.CreateObj("Label", "AccessGreets_Label")
+         With GreetForm.GetObjByName("AccessGreets_Label")
+            .Top = 500
+            .Left = 400
+            .Height = 300
+            .Width = 1800
+            .FontSize = 8
+            .FontUnderline = False
+            .Caption = "Clan Tag (click to view):"
+            .Visible = True
+         End With
+
+         GreetForm.CreateObj("Button", "Home").Visible = True
+         GreetForm.CreateObj("Button", "CreateNew").Visible = True
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreets_ListBox")
+         With GreetForm.GetObjByName("AccessGreets_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 400
+            .Height = 3000
+            .Width = 1000
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            Set rs = afgConn.Execute("SELECT DISTINCT `clantag` FROM `Greets`")
+            Do Until rs.EOF
+               If (LenB(rs.Fields(0))>0) Then .AddItem rs.Fields(0)
+               rs.MoveNext
+            Loop
+            Set rs = Nothing
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreetGreetings_ListBox")
+         With GreetForm.GetObjByName("AccessGreetGreetings_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 1650
+            .Height = 3000
+            .Width = 5750
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            .Visible = False
+         End With
+      Case "flags"
+         Call GreetForm.CreateObj("Label", "AccessGreets_Label")
+         With GreetForm.GetObjByName("AccessGreets_Label")
+            .Top = 500
+            .Left = 400
+            .Height = 300
+            .Width = 1800
+            .FontSize = 8
+            .FontUnderline = False
+            .Caption = "Flags (click to view):"
+            .Visible = True
+         End With
+
+         GreetForm.CreateObj("Button", "Home").Visible = True
+         GreetForm.CreateObj("Button", "CreateNew").Visible = True
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreets_ListBox")
+         With GreetForm.GetObjByName("AccessGreets_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 400
+            .Height = 3000
+            .Width = 1000
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            Set rs = afgConn.Execute("SELECT DISTINCT `flags` FROM `Greets`")
+            Do Until rs.EOF
+               If (LenB(rs.Fields(0))>0) Then .AddItem rs.Fields(0)
+               rs.MoveNext
+            Loop
+            Set rs = Nothing
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreetGreetings_ListBox")
+         With GreetForm.GetObjByName("AccessGreetGreetings_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 1650
+            .Height = 3000
+            .Width = 5750
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            .Visible = False
+         End With
+      Case "name"
+         Call GreetForm.CreateObj("Label", "AccessGreets_Label")
+         With GreetForm.GetObjByName("AccessGreets_Label")
+            .Top = 500
+            .Left = 400
+            .Height = 300
+            .Width = 1800
+            .FontSize = 8
+            .FontUnderline = False
+            .Caption = "Username (click to view):"
+            .Visible = True
+         End With
+
+         GreetForm.CreateObj("Button", "Home").Visible = True
+         GreetForm.CreateObj("Button", "CreateNew").Visible = True
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreets_ListBox")
+         With GreetForm.GetObjByName("AccessGreets_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 400
+            .Height = 3000
+            .Width = 1800
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            Set rs = afgConn.Execute("SELECT DISTINCT `name` FROM `Greets`")
+            Do Until rs.EOF
+               If (LenB(rs.Fields(0))>0) Then .AddItem rs.Fields(0)
+               rs.MoveNext
+            Loop
+            Set rs = Nothing
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreetGreetings_ListBox")
+         With GreetForm.GetObjByName("AccessGreetGreetings_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 2400
+            .Height = 3000
+            .Width = 5750
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            .Visible = False
+         End With
+      Case "product"
+         Call GreetForm.CreateObj("Label", "AccessGreets_Label")
+         With GreetForm.GetObjByName("AccessGreets_Label")
+            .Top = 500
+            .Left = 400
+            .Height = 300
+            .Width = 1800
+            .FontSize = 8
+            .FontUnderline = False
+            .Caption = "Product (click to view):"
+            .Visible = True
+         End With
+
+         GreetForm.CreateObj("Button", "Home").Visible = True
+         GreetForm.CreateObj("Button", "CreateNew").Visible = True
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreets_ListBox")
+         With GreetForm.GetObjByName("AccessGreets_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 400
+            .Height = 3000
+            .Width = 1000
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            Set rs = afgConn.Execute("SELECT DISTINCT `product` FROM `Greets`")
+            Do Until rs.EOF
+               If (LenB(rs.Fields(0))>0) Then .AddItem rs.Fields(0)
+               rs.MoveNext
+            Loop
+            Set rs = Nothing
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreetGreetings_ListBox")
+         With GreetForm.GetObjByName("AccessGreetGreetings_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 1650
+            .Height = 3000
+            .Width = 5750
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            .Visible = False
+         End With
+      Case "tag_in_name"
+         Call GreetForm.CreateObj("Label", "AccessGreets_Label")
+         With GreetForm.GetObjByName("AccessGreets_Label")
+            .Top = 350
+            .Left = 400
+            .Height = 500
+            .Width = 1800
+            .FontSize = 8
+            .FontUnderline = False
+            .Caption = "Tag In Name " & vbCrLf & "(click to view):"
+            .Visible = True
+         End With
+
+         GreetForm.CreateObj("Button", "Home").Visible = True
+         GreetForm.CreateObj("Button", "CreateNew").Visible = True
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreets_ListBox")
+         With GreetForm.GetObjByName("AccessGreets_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 400
+            .Height = 3000
+            .Width = 1000
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            Set rs = afgConn.Execute("SELECT DISTINCT `tag_in_name` FROM `Greets`")
+            Do Until rs.EOF
+               If (LenB(rs.Fields(0))>0) Then .AddItem rs.Fields(0)
+               rs.MoveNext
+            Loop
+            Set rs = Nothing
+            .Visible = True
+         End With
+
+         Call GreetForm.CreateObj("Listbox", "AccessGreetGreetings_ListBox")
+         With GreetForm.GetObjByName("AccessGreetGreetings_ListBox")
+            .Clear
+            .Top = 800
+            .Left = 1650
+            .Height = 3000
+            .Width = 5750
+            .BackColor = RGB(0, 51, 153)
+            .ForeColor = RGB(255, 255, 255)
+            .Visible = False
+         End With
+   End Select
+End Sub
+
+Private Sub CreateGreetFields_Access()
+
+   Call GreetForm.CreateObj("Textbox", "AccessGreetsGreet_Textbox")
+   With GreetForm.GetObjByName("AccessGreetsGreet_Textbox")
+      .Top = 800
+      .Left = 2300
+      .Height = 1300
+      .Width = 6000
+      .BackColor = RGB(0, 51, 153)
+      .ForeColor = RGB(255, 255, 255)
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Label", "AccessGreeting_Label")
+   With GreetForm.GetObjByName("AccessGreeting_Label")
+      .Top = 500
+      .Left = 2300
+      .Height = 300
+      .Width = 1000
+      .FontSize = 8
+      .FontUnderline = False
+      .Caption = "Greet:"
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Label", "AccessGreetsAccess_Label")
+   With GreetForm.GetObjByName("AccessGreetsAccess_Label")
+      .Top = 2350
+      .Left = 2300
+      .Height = 300
+      .Width = 800
+      .FontSize = 8
+      .FontUnderline = False
+      .Caption = "Access:"
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Textbox", "AccessGreetsAccess_Textbox")
+   With GreetForm.GetObjByName("AccessGreetsAccess_Textbox")
+      .Top = 2600
+      .Left = 2300
+      .Height = 300
+      .Width = 1000
+      .BackColor = RGB(0, 51, 153)
+      .ForeColor = RGB(255, 255, 255)
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Label", "AccessGreetsFlags_Label")
+   With GreetForm.GetObjByName("AccessGreetsFlags_Label")
+      .Top = 2350
+      .Left = 3500
+      .Height = 300
+      .Width = 800
+      .FontSize = 8
+      .FontUnderline = False
+      .Caption = "Flags:"
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Textbox", "AccessGreetsFlags_Textbox")
+   With GreetForm.GetObjByName("AccessGreetsFlags_Textbox")
+      .Top = 2600
+      .Left = 3500
+      .Height = 300
+      .Width = 1000
+      .BackColor = RGB(0, 51, 153)
+      .ForeColor = RGB(255, 255, 255)
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Label", "AccessGreetsClanTag_Label")
+   With GreetForm.GetObjByName("AccessGreetsClanTag_Label")
+      .Top = 2350
+      .Left = 4700
+      .Height = 300
+      .Width = 800
+      .FontSize = 8
+      .FontUnderline = False
+      .Caption = "Clan Tag:"
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Textbox", "AccessGreetsClanTag_Textbox")
+   With GreetForm.GetObjByName("AccessGreetsClanTag_Textbox")
+      .Top = 2600
+      .Left = 4700
+      .Height = 300
+      .Width = 600
+      .MaxLength = 4
+      .BackColor = RGB(0, 51, 153)
+      .ForeColor = RGB(255, 255, 255)
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Label", "AccessGreetsProduct_Label")
+   With GreetForm.GetObjByName("AccessGreetsProduct_Label")
+      .Top = 2350
+      .Left = 5600
+      .Height = 300
+      .Width = 800
+      .FontSize = 8
+      .FontUnderline = False
+      .Caption = "Product:"
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Textbox", "AccessGreetsProduct_Textbox")
+   With GreetForm.GetObjByName("AccessGreetsProduct_Textbox")
+      .Top = 2600
+      .Left = 5600
+      .Height = 300
+      .Width = 600
+      .MaxLength = 4
+      .BackColor = RGB(0, 51, 153)
+      .ForeColor = RGB(255, 255, 255)
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Label", "AccessGreetsClanRank_Label")
+   With GreetForm.GetObjByName("AccessGreetsClanRank_Label")
+      .Top = 2350
+      .Left = 6400
+      .Height = 300
+      .Width = 1970
+      .FontSize = 8
+      .FontUnderline = False
+      .Caption = "Clan Rank (bot's clan only):"
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Textbox", "AccessGreetsClanRank_Textbox")
+   With GreetForm.GetObjByName("AccessGreetsClanRank_Textbox")
+      .Top = 2600
+      .Left = 6400
+      .Height = 300
+      .Width = 1000
+      .BackColor = RGB(0, 51, 153)
+      .ForeColor = RGB(255, 255, 255)
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Label", "AccessGreetsUsername_Label")
+   With GreetForm.GetObjByName("AccessGreetsUsername_Label")
+      .Top = 3000
+      .Left = 2300
+      .Height = 300
+      .Width = 1000
+      .FontSize = 8
+      .FontUnderline = False
+      .Caption = "Username:"
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Textbox", "AccessGreetsUsername_Textbox")
+   With GreetForm.GetObjByName("AccessGreetsUsername_Textbox")
+      .Top = 3250
+      .Left = 2300
+      .Height = 300
+      .Width = 2700
+      .BackColor = RGB(0, 51, 153)
+      .ForeColor = RGB(255, 255, 255)
+      .MaxLength = 26
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Label", "AccessGreetsTagInName_Label")
+   With GreetForm.GetObjByName("AccessGreetsTagInName_Label")
+      .Top = 3000
+      .Left = 5250
+      .Height = 300
+      .Width = 1000
+      .FontSize = 8
+      .FontUnderline = False
+      .Caption = "Tag In Name:"
+      .Visible = False
+   End With
+   
+   Call GreetForm.CreateObj("Label", "GreetEditingNotes")
+   With GreetForm.GetObjByName("GreetEditingNotes")
+      .Top = 4650
+      .Left = 2300
+      .Height = 800
+      .Width = 8000
+      .FontSize = 8
+      .FontUnderline = False
+      .Caption = "Notes:" & VbNewLine & """Clan Rank"" has the following properties: 0 = Probation  1 = Peon  2 = Grunt  3 = Shaman  4 = Chief" & vbNewLine & _
+         """Tag In Name"" example; Username = Black[Ninja   <-- the tag in name would be the [Ninja part" & vbNewLine & _
+         "To make a default greet for all users, type the greet and ONLY set the "" Username "" field to read: All users"
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("Textbox", "AccessGreetsTagInName_Textbox")
+   With GreetForm.GetObjByName("AccessGreetsTagInName_Textbox")
+      .Top = 3250
+      .Left = 5250
+      .Height = 300
+      .Width = 2700
+      .BackColor = RGB(0, 51, 153)
+      .ForeColor = RGB(255, 255, 255)
+      .MaxLength = 26
+      .Visible = False
+   End With
+
+   Call GreetForm.CreateObj("ListBox", "AccessGreetsGreetVariables_ListBox")
+   With GreetForm.GetObjByName("AccessGreetsGreetVariables_ListBox")
+      .Clear
+      .Top = 800
+      .Left = 9000
+      .Height = 4000
+      .Width = 4000
+      .BackColor = RGB(0, 51, 153)
+      .ForeColor = RGB(255, 255, 255)
+      .AddItem "Generic varaibles: "
+      .AddItem "-------------------"
+      .AddItem "%0 = Username of joining user"
+      .AddItem "%c = Current channel "
+      .AddItem "%1 = Bot's username"
+      .AddItem "%p = Ping of joining user"
+      .AddItem "%v = Bot's version"
+      .AddItem "%a = Access of joining user"
+      .AddItem "%f = Flags of joining user"
+      .AddItem "%t = Current time"
+      .AddItem "%d = Current date"
+      .AddItem "%icocode = User's 4-character icon image code"      
+      .AddItem "%icon = User's 4-character icon code"
+      .AddItem "%game = User's game product code"
+      .AddItem vbNullString
+      .AddItem vbNullString
+      .AddItem "Warcraft III variables: "
+      .AddItem "-------------------"
+      .AddItem "%clan = User's clan"
+      .AddItem "%iconame = User's icon name"
+      .AddItem "%icotier = User's icon tier"
+      .AddItem "%wclevel = User's ladder level"
+      .AddItem "%clanrank = User's clan rank"
+      .AddItem vbNullString
+      .AddItem vbNullString
+      .AddItem "Diablo II variables: "
+      .AddItem "-------------------"
+      .AddItem "%acts = Number of acts the user has completed"
+      .AddItem "%d2class = User's character class"
+      .AddItem "%d2classID = User's character class ID"
+      .AddItem "%cflags = User's character flags"
+      .AddItem "%cname = User's character name"
+      .AddItem "%ctitle = User's character title"
+      .AddItem "%act = User's current act"
+      .AddItem "%difficulty = User's difficulty"
+      .AddItem "%difficultyID = User's difficulty ID"
+      .AddItem "%d2level = User's level"
+      .AddItem "%drealm = User's realm"
+      .AddItem vbNullString
+      .AddItem vbNullString
+      .AddItem "Starcraft / Warcraft II variables: "
+      .AddItem "-------------------"
+      .AddItem "%scrank = User's ladder rank"
+      .AddItem "%scrating = User's ladder rating"
+      .AddItem "%scwins = User's wins"
+      .Visible = False
+   End With
+End Sub
+
+
+Private Sub CreateCmds()
+
+   If (LenB(GetSettingsEntry("greet_buffer"))=0) Then
+      WriteSettingsEntry "'//  If users join these seconds of the last greeted user, they will not be greeted.", vbNullString
+      WriteSettingsEntry "greet_buffer", 7
+      WriteSettingsEntry "'//  Minutes users will need to wait before they can be greeted again.", vbNullString
+      WriteSettingsEntry "greet_wait", 60
+      WriteSettingsEntry "'//  If the bot's queue reaches this level, greets will stop until the queue load decreases.", vbNullString
+      WriteSettingsEntry "greet_qabort", 7
+      WriteSettingsEntry "'//  How the bot will greet users. 1 - All Chat, 2 - Emote, 3 - Whisper", vbNullString
+      WriteSettingsEntry "greet_dsp", 3
+   End If
+
+   Set cmd = OpenCommand("greetui")
+   If cmd Is Nothing Then
+      Set cmd = CreateCommand("greetui")
+      With cmd
+         Set Parameter = .NewParameter("on/off", False, "Word")
+         .Parameters.Add Parameter
+         .Description = "Displays or hides the Greet UI. Bot console only."
+         .RequiredRank = -1
+         .Save
+      End With
+   End If
+
+   Set cmd = Nothing
+   Set Parameter = Nothing
+End Sub
+
+
+Private Function GetGreetCount(sGreet)
+
+   x=0
+   Set rs = afgConn.Execute("SELECT `" & sGreet & "` FROM `Greets`")
+   Do Until rs.EOF
+      If (LenB(rs.Fields(0))>0) Then x=x+1
+      rs.movenext
+   Loop
+   Set rs = nothing
+   GetGreetCount = x
+End Function

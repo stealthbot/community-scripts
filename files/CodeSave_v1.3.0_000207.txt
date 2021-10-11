@@ -1,0 +1,397 @@
+
+Script("Name") = "CodeSave"
+Script("Author") = "oblivious"
+Script("Major") = 1
+Script("Minor") = 3
+Script("Revision") = 0
+
+'==========================='
+'Code Save Settings         '
+'==========================='
+'Command Access Requirements'
+'==========================='
+'User specific commands     '
+Private Const ADD_ACCESS = 10 	' The add command lets a user add a code to their list'
+								' UPDATES THE FILE
+Private Const DEL_ACCESS = 10 	' The del (delete) command lets a user delete the most recent'
+								' Or select a specific code to delete' DOES NOT UPDATE THE FILE
+Private Const ALL_ACCESS = 10 	' The all command gets the bot to whipser all recorded codes'
+								' of a user'
+Private Const GET_ACCESS = 10	' The get command returns the most recent saved code'
+Private Const COUNT_ACCESS = 10 ' Returns the number of codes
+Private Const EXISTS_ACCESS = 10 ' Checks if a user exists.
+Private Const REMOVE_ACCESS = 100 ' Removes a particular user.
+'Global Commands (these affect everyone)'
+Private Const LOAD_ACCESS = 100	' The load command refreshes the dictionary from the txt file'
+Private Const SAVE_ACCESS = 100	' The save command saves the dictionary to the txt file'
+Private Const RESET_ACCESS = 100	' The reset command deletes the ENTIRE dictionary, but not the file. The file
+								' can only be deleted manually, or by using the next command
+Private Const CLEAR_ACCESS = 100 ' Clears the file, does not delete it, just empties it (by deleting it..)
+'Debug Commands
+Private Const SPIT_ACCESS = 100 	' Forces the bot to reveal the string of the user of the command's codes
+								' Similar to all but does not filter separation character
+								' Output is only to the console.
+Private Const READ_ACCESS = 100  ' Forces the bot to read out the file into the console
+'==========================='
+'Other Settings             '
+'==========================='
+Private Const SEPARATION_CHARACTER = 162 ' Sets the separation character to one of your choice. Avoid letters
+										 ' and numbers and spaces. If you change it you must SAVE the dictionary BEFORE
+										 ' changing and then LOAD it after you change the character. This will update
+										 ' the characters. 162 is ¢
+'==========================='
+'Editing below here is not a'
+'wise idea unless you know  '
+'what you're doing          '
+'==========================='
+
+
+Private codeList
+Private fso
+Private file
+Private LoadingCodes
+
+Sub Event_Load()
+	'Creates the dictionary and the FileSystemObject used to store codes and write to files'
+	LoadingCodes = False
+	Set codeList = CreateObject("Scripting.Dictionary")
+	Set fso = CreateObject("Scripting.FileSystemObject")
+	'Dictionary is NOT set to compare mode => CODES ARE CASE SENSITIVE'
+	If fso.FileExists(BotPath & "CodeSave.txt") Then
+	Else
+		Set file = fso.OpenTextFile(BotPath & "CodeSave.txt", 8, True)
+		file.Close
+	End If
+
+	Load_Dictionary 'Loads the dictionary from its previous setting
+
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+' Occurs when a user whispers the bot a message.'
+
+Dim CodeCommands
+Dim fileStream
+Username = LCase(Username)
+'makes the username lower case for fun reasons'
+Dim UserAccess
+UserAccess = GetDBEntry(Username).Rank
+If Flags = CHR(SEPARATION_CHARACTER) & "thebot" Then
+UserAccess = 200
+End If
+'gets the user access for the commands'
+
+Dim x ' for the loops'
+CodeCommands = Split(Message)
+'splits up ALL of the arguments, even separates spaces in codes (they get
+'put back together later when required)'
+
+If CodeCommands(0) = BotVars.Trigger & "codes" Then
+	'Readys the file so we can add codes to it and the dictioanry.
+	If fso.FileExists(BotPath & "CodeSave.txt") Then
+		Set file = fso.GetFile(BotPath & "CodeSave.txt")
+	Else
+		Set file = fso.OpenTextFile(BotPath & "CodeSave.txt",8,-2)
+		file.Close
+		Set file = fso.GetFile(BotPath & "CodeSave.txt")
+	End If
+	If UBound(CodeCommands) = 0 Then
+	Exit Sub
+	End If
+	
+	If LCase(CodeCommands(1)) = "save" And SAVE_ACCESS <= UserAccess Then
+		Save_Dictionary
+	End If
+		
+	If LCase(CodeCommands(1)) = "load" And LOAD_ACCESS <= UserAccess Then
+		Load_Dictionary
+	End If
+	
+	If LCase(CodeCommands(1)) = "count" And COUNT_ACCESS <= UserAccess Then
+		If codeList.Exists(LCase(Username)) Then
+			UsersCodes = codeList.Item(Username)
+			CodeCount = 0
+			For x = 1 to Len(UsersCodes) 
+				If Mid(UsersCodes,x,1) = CHR(SEPARATION_CHARACTER) Then
+					CodeCount = CodeCount + 1
+				End If
+			Next
+			Send_Message Username, "You have " & CodeCount & " codes.", Flags
+		Else
+			Send_Message Username, "You do not exist in the database.", Flags
+		End If
+	End If
+	
+	If UBound(CodeCommands) > 1 Then
+	'used to separate no-argument commands from argument commands'
+		
+		
+		If LCase(CodeCommands(1)) = "add" And ADD_ACCESS <= UserAccess  Then
+			Set fileStream = file.OpenAsTextStream(8, -2)
+			'compact rest of arguments
+		
+			For x = 3 To UBound(CodeCommands) 
+				CodeCommands(2) = CodeCommands(2) & " " & CodeCommands(x)
+			Next
+			fileStream.WriteLine Username & " " & CodeCommands(2)
+			Add_Code Username, CodeCommands(2)
+			fileStream.Close
+			
+		End If
+		
+		If LCase(CodeCommands(1)) = "exists" And EXISTS_ACCESS <=UserAccess Then
+			
+			If codeList.Exists(LCase(CodeCommands(2))) Then
+				Send_Message Username, CodeCommands(2) & " exists in the database.", Flags
+			Else
+				Send_Message Username, CodeCommands(2) & " does not exist in the database.", Flags
+			End If
+			
+		End If
+		
+		If LCase(CodeCommands(1)) = "remove" And REMOVE_ACCESS <= UserAccess Then
+			If codeList.Exists(LCase(CodeCommands(2))) Then
+			codeList.Remove(LCase(CodeCommands(2)))
+			End If
+		End If
+		
+		If LCase(CodeCommands(1)) = "del" And DEL_ACCESS <= UserAccess  Then
+			'compact rest of arguments
+		
+			For x = 3 To UBound(CodeCommands) 
+				CodeCommands(2) = CodeCommands(2) & " " & CodeCommands(x)
+			Next
+			
+			Delete_Code Username, CodeCommands(2) 
+			
+		End If
+		
+		Exit Sub
+	End If	
+
+	
+	If LCase(CodeCommands(1)) = "all" And ALL_ACCESS <= UserAccess Then
+		Dim UserCodes
+		UserCodes = Mid(codeList.Item(Username),2,Len(codeList.Item(Username))-1)
+		UserCodes = Replace(UserCodes, CHR(SEPARATION_CHARACTER),", ") & "." 'filters out the separation characters'
+		  
+		Send_Message Username, UserCodes, Flags
+		
+	End If
+
+	If LCase(CodeCommands(1)) = "get" And GET_ACCESS <= UserAccess Then
+		Send_Message Username, Get_Code(Username), Flags
+		
+	End If
+	
+	If LCase(CodeCommands(1)) = "spit" And SPIT_ACCESS <= UserAccess  Then
+		AddChat vbMagenta, codeList.Item(Username) 'does not filter, does not whisper, outputs to console'
+	End If
+	
+	If LCase(CodeCommands(1)) = "del" And DEL_ACCESS <= UserAccess Then
+		
+		DeleteCode(Username)
+		
+	End If
+		
+	If LCase(CodeCommands(1)) = "reset" And RESET_ACCESS <= UserAccess Then
+			codeList.RemoveAll
+			'fso.DeleteFile(BotPath & "CodeSave.txt")
+			'Set fileStream = fso.OpenTextFile(BotPath & "CodeSave.txt",8,True)
+			'fileStream.Close
+			
+	End If
+	
+	If LCase(CodeCommands(1)) = "clear" And CLEAR_ACCESS <= UserAccess Then
+		fso.DeleteFile(BotPath & "CodeSave.txt")
+		fso.CreateTextFile(BotPath & "CodeSave.txt")
+	End If
+
+	If LCase(CodeCommands(1)) = "read" And READ_ACCESS <= UserAccess Then
+		Set fileRead = fso.OpenTextFile(BotPath & "CodeSave.txt",1,True)
+		
+		AddChat vbBlue, "[CODE] Reading from file", vbGreen, vbNewLine & fileRead.ReadAll
+	End If
+	
+	
+
+End If
+
+
+
+
+End Sub
+
+Sub Add_Code(Username, Code)
+Username = LCase(Username)
+	If codeList.Exists(LCase(Username)) Then
+		If LoadingCodes = False Then
+			If codeList.Item(Username) = Replace(codeList.Item(Username),Code,vbNullString)  Then
+				codeList.Item(Username) = codeList.Item(Username) & CHR(SEPARATION_CHARACTER) & Code
+			Else
+				Delete_Code Username,Code 'delete the code before adding it, i.e. sends the code to the end.
+				Add_Code Username, Code 
+			End If
+		Else
+			codeList.Item(Username) = codeList.Item(Username) & CHR(SEPARATION_CHARACTER) & Code
+		End If
+	Else
+		codeList.Item(Username) = CHR(SEPARATION_CHARACTER) & Code
+	End If
+	
+End Sub
+
+Sub DeleteCode(Username)
+'deletes most recent added code for <Username>'
+'checks if the User is added'
+Username = LCase(Username)
+	If codeList.Exists(LCase(Username)) Then
+		codeList.Item(Username) = Replace(codeList.Item(Username),CHR(SEPARATION_CHARACTER) & Get_Code(Username),vbNullString)
+	Else
+		Send_Message Username, "You do not exist in the database."
+	End If
+'Note: the code is NOT removed from the file until the bot is shutdown,
+'To remove the code permanently the bot must be shut down.
+'The file exists to 1) backup dictionary in case of unexpected
+'shutdown and 2) remember dictionary after shutdown
+End Sub
+
+Sub Delete_Code(Username, Code)
+	Username = LCase(Username)
+	If codeList.Exists(LCase(Username)) Then		
+		codeList.Item(Username) = Replace(codeList.Item(Username),CHR(SEPARATION_CHARACTER) & Code,vbNullString)
+	Else
+		Send_Message Username, "You do not exist in the database."
+	End If
+'Note: the code is NOT removed from the file until the bot is shutdown,
+'To remove the code permanently the bot must be shut down.
+'The file exists to 1) backup dictionary in case of unexpected
+'shutdown and 2) remember dictionary after shutdown
+End Sub
+
+Function Get_Code(Username)
+Username = LCase(Username)
+If codeList.Exists(LCase(Username)) Then
+	
+	For x = 1 To Len(codeList.Item(Username))
+		If Left(Right(codeList.Item(Username),x),1) = CHR(SEPARATION_CHARACTER) Then
+		'goes through from the right checking for the separation character'
+			AddChat Right(codeList.Item(Username),x-1)
+			Get_Code = Right(codeList.Item(Username),x-1)
+			Exit Function
+			'adjusts the loop counter in order to take the code and not the character'
+		End If
+	Next
+	
+	
+	
+Else
+	Get_Code = "You do not exist in the database."
+End If
+
+End Function
+
+Sub Load_Dictionary()
+		LoadingCodes = True
+	Dim Code
+	Dim fileStream
+	'checks if file exists without using checking boolean for the lols'
+	Set file = fso.OpenTextFile(BotPath & "CodeSave.txt",8,True) 
+	file.Close
+	'grabs the file and opens it as a text stream in order to write to it'
+	Set file = fso.GetFile(BotPath & "CodeSave.txt")
+	Set fileStream = file.OpenAsTextStream(1, -2)
+		'reset the dictioanry
+	codeList.RemoveAll
+		Do While fileStream.AtEndOfStream <> True
+			Code = Split(fileStream.ReadLine," ",2)
+			'separates the USER from the CODE
+			Add_Code Code(0), Code(1)
+			'converts the format of the txt file to the format of the dictionary'
+		Loop
+		fileStream.Close
+	'closes the fileStream to prevent runtime errors
+		LoadingCodes = False
+
+End Sub
+
+Sub Save_Dictionary()
+
+   userList = codeList.Keys
+   
+Set file = fso.OpenTextFile(BotPath & "CodeSave.txt",2,True) 
+   For i = 0 To UBound(userList)
+	  userItem = codeList.Item(userList(i))
+      usersCodes = Split(userItem, CHR(SEPARATION_CHARACTER))
+      For j = 1 To UBound(usersCodes)
+         file.WriteLine userList(i) & " " & usersCodes(j)
+      Next
+   Next
+
+   file.Close
+
+
+End Sub
+
+Sub Event_Shutdown()
+	Save_Dictionary 'backs up dictionary'
+End Sub
+
+Sub Event_Close()
+	Save_Dictionary 'backs up dictionary'
+End Sub
+
+Sub Event_PressedEnter(text)
+If Left(text,Len("/codes ")) = "/codes " Then
+		ConsoleArgs = Split(text)
+		If UBound(ConsoleArgs) = 0 Then
+			Exit Sub
+		End If
+		If UBound(ConsoleArgs) = 1 Then
+			Call Event_WhisperFromUser (BotVars.Username,CHR(SEPARATION_CHARACTER) & "thebot",".codes " & ConsoleArgs(1),vbNullString)
+			Exit Sub
+		End If
+	
+	If codeList.Exists(LCase(ConsoleArgs(1))) = False And Left(ConsoleArgs(2),3) = "add" Then
+		'compact rest of arguments
+		If UBound(ConsoleArgs) > 3 Then
+			For x = 4 To UBound(ConsoleArgs) 
+				ConsoleArgs(3) = ConsoleArgs(3) & " " & ConsoleArgs(x)
+			Next
+		End If
+		Call Event_WhisperFromUser (ConsoleArgs(1),CHR(SEPARATION_CHARACTER) & "thebot", ".codes add " & ConsoleArgs(3), vbNullString)
+		Exit Sub
+	End If
+	
+	If codeList.Exists(LCase(ConsoleArgs(1))) Then
+	
+		If UBound(ConsoleArgs) > 2 Then
+			For x = 3 To UBound(ConsoleArgs) 
+				ConsoleArgs(2) = ConsoleArgs(2) & " " & ConsoleArgs(x)
+			Next
+		End If
+		Call Event_WhisperFromUser (ConsoleArgs(1),CHR(SEPARATION_CHARACTER) & "thebot", ".codes " & ConsoleArgs(2), vbNullString)
+	Else
+		If UBound(ConsoleArgs) > 2 Then
+			For x = 3 To UBound(ConsoleArgs) 
+				ConsoleArgs(2) = ConsoleArgs(2) & " " & ConsoleArgs(x)
+			Next
+		End If
+		Call Event_WhisperFromUser (BotVars.Username,CHR(SEPARATION_CHARACTER) & "thebot",".codes " & ConsoleArgs(1) & " " & ConsoleArgs(2),vbNullString)
+	End If
+	
+	
+	
+End If
+
+End Sub
+
+Sub Send_Message(Username, Message, Flags)
+	If Username = BotVars.Username Then
+		AddChat vbYellow, "[CODE] ", vbGreen, Message
+	ElseIf Flags = CHR(SEPARATION_CHARACTER) & "thebot" Then
+		AddChat vbYellow, "[CODE-" & Username & "] ", vbGreen, Message
+	Else
+		AddQ "/m " & Username & " " & Message
+	End If
+End Sub

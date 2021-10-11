@@ -1,0 +1,124 @@
+Script("Name") = "Stalk"
+Script("Author") = "The-Black-Ninja"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 0
+Script("Description") = "Allows your bot to follow you throughout bnet channels."
+
+
+Sub Event_Load()
+
+   Call CreateCmds()
+   WriteSettingsEntry "stalk_enabled", "False"
+End Sub
+
+
+Sub Event_Command(cmd)
+   
+   Select Case LCase(cmd.Name)
+      Case "stalk" :  Call stalkCmd(cmd, cmd.Username, cmd.Source, cmd.Argument("On/Off/Username"))
+   End Select
+End Sub
+
+
+Sub Event_Userleaves(Username, Flags)
+
+   If ((LCase(Username) = Lcase(GetSettingsEntry("user"))) AND GetSettingsEntry("stalk_enabled") = "True") Then DataBuffer.SendPacket &H65      
+End Sub
+
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)
+
+   If (GetSettingsEntry("stalk_enabled") = "True") Then
+      If (Protocol = "BNCS") Then
+         Select Case ID 
+            Case &H65
+               Set pak = DataBufferEx()
+               pak.Data = Data
+               pak.position = 4         
+               friendNum = pak.GetByte
+
+               For i=0 To friendNum
+                  account = pak.GetString
+                  status = pak.GetByte
+                  location = pak.GetByte
+                  product = pak.GetDWord
+                  locationName = pak.GetString
+                  
+                  If (LCase(account) = GetSettingsEntry("user")) AND (myChannel <> locationname) Then                   
+                     AddQ "/j " & locationname       
+                     Exit Sub            
+                  End If
+               Next                  
+         End Select
+      End If
+   End If
+End Sub
+
+
+Private Sub stalkCmd(cmd, user, dspID, args)
+
+   If NOT (cmd.IsValid AND cmd.HasAccess) Then Exit Sub
+
+   Select Case Lcase(args)
+      Case "on"   
+         For Each sFriend In Friends          
+            If (Lcase(sFriend.Name) = GetSettingsEntry("user")) Then
+               If sFriend.IsOnline Then
+                  WriteSettingsEntry "stalk_enabled", "True"                     
+                  Dsp dspID, "Now stalking: " & GetSettingsEntry("user"), user, vbGreen
+                  AddQ "/j " & sFriend.Location
+                  Exit Sub
+               Else
+                  WriteSettingsEntry "stalk_enabled", "False"                     
+                  Dsp dspID, GetSettingsEntry("user") & " is offline and cannot be stalked.", user, vbGreen
+                  Exit Sub
+               End If
+            End If
+         Next             
+
+      Case "off"
+         WriteSettingsEntry "stalk_enabled", "False"
+         Dsp dspID, "Stalking of " & GetSettingsEntry("user") & " has ended.", user, vbGreen
+         Command BotVars.Username, "/home", True         
+         
+      Case Else
+         For Each sFriend In Friends
+            If (LCase(sFriend.Name) = LCase(args)) Then
+               If sFriend.IsMutual Then
+                  WriteSettingsEntry "user", args               
+                  Dsp dspID, "Stalk target set to "" " & GetSettingsEntry("user") & " "". User is a valid target.", user, vbGreen
+               Else
+                  Dsp dspID, """ " & LCase(args) & " "" is an invalid target - not a mutual friend.", user, vbGreen
+               End If
+               Exit Sub
+            End If            
+         Next
+         Dsp dspID, """ " & LCase(args) & " "" is an invalid target - not a mutual friend.", user, vbGreen
+   End Select      
+End Sub
+
+
+Private Sub CreateCmds()
+
+   Set cmd = OpenCommand("stalk")
+   If cmd Is Nothing Then
+      Set cmd = CreateCommand("stalk")
+      With cmd
+         .Description = "Enables or disables stalking, or sets the username of the user to be stalked."
+         .RequiredRank = 200
+         Set Parameter = .NewParameter("On/Off/Username", False, "Word")
+         With Parameter
+            .Description = "Enables or disables stalking, or sets the username of the user to be stalked"
+         End With
+         .Parameters.Add Parameter
+         .Save         
+      End With
+   End If
+   
+   If (LenB(GetSettingsEntry("user")) = 0) Then WriteSettingsEntry "user", "SomeUser"
+   If (LenB(GetSettingsEntry("stalk_enabled")) = 0) Then WriteSettingsEntry "stalk_enabled", "False"
+   
+   Set Parameter = Nothing
+   Set cmd = Nothing
+End Sub

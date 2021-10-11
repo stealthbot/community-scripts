@@ -1,0 +1,243 @@
+
+Option Explicit
+
+Script("Name")        = "Sign Up"
+Script("Author")      = "RosieSuckedMe"
+Script("Major")       = 1
+Script("Minor")       = 0
+Script("Revision")    = 4
+Script("Description") = "Adds users to a text file upon signing up"
+
+'// Changelog:
+'//// v1.00 -> v1.01:
+'//   Added command "signed" and command "reset"
+'//
+'//// v1.01 -> v1.02:
+'//   Added a sign limit
+'//
+'//// v1.02 -> v1.03:
+'//   Added the commands "check <user>" and "checkme"
+'//   Fixed an error with using double variables
+'//
+'//// v1.03 -> v1.04:
+'//
+'//   Added the command "confirm"
+'//   "confirm" adds the signed users into teams
+'//   This script now only(!) supports 1v1 tournaments with 16 players
+
+Private FSO
+
+Sub Event_Load()
+     If GetSettingsEntry("sign_limit") = vbNullString Then
+          WriteSettingsEntry "sign_limit", InputBox("Please enter the limit of players being able to sign in", Script("Name") & " by " & Script("Author"), "16")
+     End If
+     
+     If GetSettingsEntry("total_teams") = vbNullString Then
+          WriteSettingsEntry "total_teams", InputBox("Please enter the amount of teams you will use", Script("Name") & " by " & Script("Author"), "16")
+     End If
+
+     Set FSO = CreateObject("Scripting.FileSystemObject")
+        
+     Call CreateCommands()
+     
+     AddChat &HFFCC33, Script("Name") & " - by " & Script("Author") & ". Version: v" & Script("Major") & "." & Script("Minor") & Script("Revision")
+End Sub
+
+Sub Event_Command(Command)
+     Dim File, isSigned, matchFound
+     Dim response, count
+     
+     With Command
+          Select Case LCase(.Name)
+               Case "signup"
+                    Set File = FSO.OpenTextFile(BotPath & "SignUp.txt", 1, True)
+                    matchFound = False
+                    Do Until File.AtEndOfStream Or matchFound
+                         count = count + 1
+                         If LCase(.Username) = LCase(File.ReadLine) Then matchFound = True
+                    Loop
+
+                    If Not count >= Int(GetSettingsEntry("sign_limit")) Then
+                         If matchFound Then
+                              .Respond StringFormat("/w {0} You are already count up!", .Username)
+                         Else
+                              Set File = FSO.OpenTextFile(BotPath & "SignUp.txt", 8, True)
+                              File.WriteLine .Username
+                              .Respond StringFormat("/w {0} You have been successfully signed!", .Username)
+                         End If
+                    Else
+                         .Respond StringFormat("/w {0} Sorry, but there already are {1} of {2} signed players!", .Username, count, Int(GetSettingsEntry("sign_limit")))
+                    End If
+
+                    File.Close
+               Case "signed"
+                    If FSO.FileExists(BotPath & "SignUp.txt") Then
+                         Set File = FSO.OpenTextFile(BotPath & "SignUp.txt", 1, True)
+                         Do Until File.AtEndOfStream
+                              count = count + 1
+                              response = response & File.ReadLine & ", "
+                         Loop
+
+                         .Respond StringFormat("/w {0} Signed players ({1}): {2}", .Username, count, Left(response, Len(response) - 2))
+                         File.Close
+                    Else
+                         .Respond StringFormat("/w {0} There are no signed players!", .Username)
+                    End If
+               Case "reset"
+                    If FSO.FileExists(BotPath & "SignUp.txt") Then
+                         FSO.DeleteFile(BotPath & "SignUp.txt")
+                         .Respond StringFormat("/w {0} Successfully removed all signed players!", .Username)
+                    Else
+                         .Respond StringFormat("/w {0} There are no signed players!", .Username)
+                    End If
+               Case "check"
+                    If .IsValid Then
+                         If FSO.FileExists(BotPath & "SignUp.txt") Then
+                              isSigned = False
+                              Set File = FSO.OpenTextFile(BotPath & "SignUp.txt", 1, True)
+                              Do Until File.AtEndOfStream Or isSigned = True
+                                   If LCase(.Argument("user")) = LCase(File.ReadLine) Then isSigned = True
+                              Loop
+                              
+                              If isSigned Then
+                                   .Respond StringFormat("/w {0} {1} is signed up!", .Username, .Argument("user"))
+                              Else
+                                   .Respond StringFormat("/w {0} {1} is not signed up!", .Username, .Argument("user"))
+                              End If
+                              
+                              File.Close
+                         Else
+                              .Respond StringFormat("/w {0} There are no signed players!", .Username)
+                         End If
+                    Else
+                         .Respond StringFormat("/w {0} Please specify a user!", .Username)
+                    End If
+               Case "checkme"
+                    If FSO.FileExists(BotPath & "SignUp.txt") Then
+                         isSigned = False
+                         Set File = FSO.OpenTextFile(BotPath & "SignUp.txt", 1, True)
+                         Do Until File.AtEndOfStream Or isSigned = True
+                              If LCase(.Username) = LCase(File.ReadLine) Then isSigned = True
+                         Loop
+                              
+                         If isSigned Then
+                              .Respond StringFormat("/w {0} You are signed up!", .Username)
+                         Else
+                              .Respond StringFormat("/w {0} You are not signed up!", .Username)
+                         End If
+                         
+                         File.Close
+                    Else
+                         .Respond StringFormat("/w {0} There are no signed players!", .Username)
+                    End If
+               Case "confirm"     
+                    If FSO.FileExists(BotPath & "SignUp.txt") Then
+                         Set File = FSO.OpenTextFile(BotPath & "SignUp.txt", 1, True)
+                         Do Until File.AtEndOfStream
+                              File.ReadLine
+                              count = count + 1
+                         Loop
+
+                         If count = Int(GetSettingsEntry("sign_limit")) Then
+                              .Respond StringFormat("/w {0} Confirmed! Players: {1} | Teams: {2} | Players per team: {3}", .Username, count, Int(GetSettingsEntry("total_teams")), count / Int(GetSettingsEntry("total_teams")))
+                              Call CreateTeams()
+                         Else
+                              .Respond StringFormat("/w {0} There are not enough signed players! {+{1}}", .Username, Int(GetSettingsEntry("sign_limit")) - count)
+                         End If
+                         
+                         File.Close
+                    Else
+                         .Respond StringFormat("/w {0} There are no signed players!", .Username)
+                    End If
+          End Select
+          
+          Set File = Nothing
+     End With
+End Sub
+
+Private Sub CreateTeams()
+     Dim File, I, String1, String2
+     Dim player(15), teams(15)
+     
+     Set File = FSO.OpenTextFile(BotPath & "SignUp.txt", 1, True)
+     For I = 0 To Int(GetSettingsEntry("sign_limit")) - 1
+          player(I) = File.ReadLine
+     Next
+     
+     For I = 0 To UBound(player)
+          teams(I) = player(I)
+          If Not I > 7 Then
+               If String1 = vbNullString Then
+                    String1 = "Team " & I + 1 & ": " & player(I)
+               Else
+                    String1 = String1 & " | Team " & I + 1 & ": " & player(I)
+               End If
+          Else
+               If String2 = vbNullString Then
+                    String2 = "Team " & I + 1 & ": " & player(I)
+               Else
+                    String2 = String2 & " | Team " & I + 1 & ": " & player(I)
+               End If
+          End If
+     Next
+          
+     AddQ StringFormat("Teams: [ {0} ]", String1)
+     AddQ StringFormat("Teams: [ {0} ]", String2)
+End Sub
+
+Private Sub CreateCommands()
+     Dim Command, Parameter
+
+     If OpenCommand("signup") Is Nothing Then
+          With CreateCommand("signup")
+               .Description = "Adds a user to a text file" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("signed") Is Nothing Then
+          With CreateCommand("signed")
+               .Description = "Displays signed users" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("reset") Is Nothing Then
+          With CreateCommand("reset")
+               .Description = "Resets the textfile which will remove all signed in users" 
+               .RequiredRank = 60
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("check") Is Nothing Then
+          With CreateCommand("check")
+               .Description = "Checks wether a specified user is signed or not" 
+               .RequiredRank = 50
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("checkme") Is Nothing Then
+          With CreateCommand("checkme")
+               .Description = "Checks wether the user issuing the command is signed or not" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("confirm") Is Nothing Then
+          With CreateCommand("confirm")
+               .Description = "Adds the signed users into teams" 
+               .RequiredRank = 60
+               .Save
+          End With
+     End If
+     
+     Set Command = Nothing
+     Set Parameter = Nothing
+End Sub

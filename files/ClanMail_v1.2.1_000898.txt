@@ -1,0 +1,753 @@
+Option Explicit
+Script("Name") = "ClanMail"
+Script("Author") = "WataBoy7"
+Script("Major") = 1
+Script("Minor") = 2
+Script("Revision") = 1
+Script("Description") = "Clan Mail script: Sends out a mass-mail to all listed clan members of a specific clan."
+Script("UpdateLocation") = vbNullString
+Script("SHelp") = vbNullString
+'Clan Mail, AKA Group Mail
+'NOTE: You can edit settings in the ClanMail settings file 
+'(check your scripts folder)
+' ______________________________________________________________________________________________
+'|												|
+'| Commands:											|
+'|    .clanmail <clantag> <message> - Mails all users listed under the clan.			|
+'|    .clantag <clantag> -  Modifies the case for a Clan Tag. Ex.: pure changed to 'PuRe'       |
+'|    .addclan <clantag> - You can add a clan name, or even create a custom group. Ex: n00bs	|
+'|    .listmem <clantag> - Lists the members of a specified group or clan.			|
+'|    .addmem <clantag> <user> - Adds a user to a specified group or clan.			|									
+'|    .delmem <clantag> <user> - Removes a user from a specified group or clan.			|
+'|______________________________________________________________________________________________|
+
+'// PUB VARS
+   Public ShowList
+   Public MemLine
+   Public u, i, j
+
+'// PRIV VARS
+   Private recFSO
+   Private CM_Path
+   Private recRequests
+   Private recLastRequest
+
+'____________________________
+'| |      EVENT LOAD      | |
+'============================
+Sub Event_Load()
+
+   CM_Path  = BotPath & "scripts\ClanMail_settings.ini"
+   Set recFSO = CreateObject("Scripting.FileSystemObject")
+   Set recRequests = CreateObject("Scripting.Dictionary") 
+
+   If NOT recFSO.FileExists(CM_Path) Then
+      AddChat 16759296, "Clan Mail Script:. ", 10682112, "Creating settings file for first time use at location: ", 7077375, CM_Path
+      writeSetting "firstrun", 0, 0, 0
+   End If
+
+   If IsOnline And Clan.Name <> vbNullString And readSetting("Settings", "Clan_AutoUpdate") Then Call Update_Clan_Entry
+
+End Sub
+
+
+Public Sub Event_Command(Command)  '// Detects if a command for this script is being used
+  
+   Select Case LCase(Command.Name)
+      Case "addclan":             Call addclan_cmd(Command, Command.Username) 
+      Case "clanmail":            Call clanmail_cmd(Command, Command.Username) 
+      Case "clantag":             Call clantag_cmd(Command, Command.Username) 
+      Case "listmem":             Call listmem_cmd(Command, Command.Username) 
+      Case "addmem":              Call addmem_cmd(Command, Command.Username) 
+      Case "delmem":              Call delmem_cmd(Command, Command.Username) 
+   End Select
+
+End Sub
+
+'/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+'///////////////////////////////												     /////////////////////
+'///////////////////////////////  This is arguably the most IMPORTANT function in this script. It manages the Database Entry for     /////////////////////
+'///////////////////////////////  our Clan (i.e. your Stealthbot Username's clan). Say if you have two accounts, and both of them    /////////////////////
+'///////////////////////////////  belong to two different clans, then if you log in with both users on Stealthbot (after reloading   /////////////////////
+'///                         ///  the scripts) then this function will add both your clans to the database, complete with all their  /////////////////////
+'///    UPDATE CLAN ENTRY    ///  clan members. Also, you can later send [.clanmail] to all members of ANY Clan listed in your       /////////////////////
+'///                         ///  database, even if you don't belong to that Clan. However, the main reason this function is so      /////////////////////
+'///////////////////////////////  awesome is because it updates the database entry for your clan to adjust for any non-members       /////////////////////
+'///////////////////////////////  (members that might have left or abandoned the Clan) and any new recruits to the Clan who were     /////////////////////
+'///////////////////////////////  added recently.										     /////////////////////
+'///////////////////////////////												     /////////////////////
+'/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Function Update_Clan_Entry()
+
+   Dim text, MemLine, members, UserFound, j, i, u
+
+   '_________________________________________________________
+   '| |    CREATE THE CLAN ENTRY (IF IT DOESN'T EXIST)    | |
+   '=========================================================
+   If readSetting(LCase(Clan.Name), "clan_members_1") = vbNullString Then
+
+      AddChat 7077375, "Clan Auto-Update: ", 10682112, "Adding Clan to Database..."
+      Command BotVars.Username, "/addclan "&Clan.Name, True
+      AddChat 7077375, "Clan Auto-Update: ", 10682112, "Clan entry successfully created!"
+      AddChat 7077375, "Clan Auto-Update: ", 10682112, "Adding Clan Members..."
+      For u = 1 to Clan.Members.Count
+         Command BotVars.Username, "/addmem "&LCase(Clan.Name)& " " &Clan.GetUser(u).Name, True
+      Next
+     AddChat 7077375, "Clan Auto-Update: ", 10682112, "Success! All " &Clan.Members.Count& " members of Clan " &Clan.Name& " were added to the database."
+
+   Else
+
+      AddChat 7077375, "Clan Auto-Update: ", 10682112, "Updating the list of Clan " &Clan.Name& " members in database."
+      AddChat 7077375, "Clan Auto-Update: ", 10682112, "Please wait..."
+      '\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+      '\\\\\\																    \\\\\\
+      '\\\\\\   Checks if a Clan Member already exists in the Member List. I agree, the simplest way to do this would be to use the InStr   \\\\\\
+      '\\\\\\   function (to check if the member's line in the settings file contains the user's name), but this does not check if the      \\\\\\
+      '\\\\\\   user's name that is found is not a part of another user's name. For instance, consider two clan members, one named N00B     \\\\\\
+      '\\\\\\   and the other named N00B_Slayer1337. If N00B's name was somehow deleted from the database, it would not add him back to     \\\\\\
+      '\\\\\\   to the database, even though he is an actual clan member. If you were to use Instr(), then you would find an occurrence     \\\\\\
+      '\\\\\\   of 'N00B' in the other user's name, 'N00B_Slayer1337. Thus, N00B would never get re-added to the database. For this         \\\\\\
+      '\\\\\\   purpose I tried splitting each line and then comparing every whole 'name' in the line to every Clan Member, but this        \\\\\\
+      '\\\\\\   drastically increased my load time (by ~22 seconds). For the duration of that time, my window was frozen. Finally, I        \\\\\\
+      '\\\\\\   realized that the only remaining option was to create my own function that 'split' the lines. This function had MANY        \\\\\\
+      '\\\\\\   more lines than a normal 'split' or 'InStr' check would need, but the result is that it drastically reduced my load         \\\\\\
+      '\\\\\\   by ~16 seconds (actual load time: 6 seconds).						   			            \\\\\\
+      '\\\\\\																    \\\\\\
+      '\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+      '__________________________________________________________
+      '| |    ADD NEW MEMBERS (IF THEY AREN'T ON THE LIST)    | |
+      '==========================================================
+      For u = 1 to Clan.Members.Count
+         UserFound = False
+         For i = 1 to 5
+            text = "clan_members_" &i
+            MemLine = readSetting(LCase(Clan.Name), text)
+            If InStr(LCase(MemLine), LCase(Clan.GetUser(u).Name)) > 0 Then
+               If NOT Split(LCase(MemLine), LCase(Clan.GetUser(u).Name))(0) = vbNullString And NOT Split(LCase(MemLine), LCase(Clan.GetUser(u).Name))(1) = vbNullString Then
+                 If Right(Split(LCase(MemLine), LCase(Clan.GetUser(u).Name))(0), 1) = "," And Left(Split(LCase(MemLine), LCase(Clan.GetUser(u).Name))(1), 1) = "," Then
+                     UserFound = True
+                  End If
+               Else
+                  If Right(Split(LCase(MemLine), LCase(Clan.GetUser(u).Name))(0), 1) = "," Or Left(Split(LCase(MemLine), LCase(Clan.GetUser(u).Name))(1), 1) = "," Then
+                     UserFound = True
+                 End If
+               End If
+            End If
+         Next
+         If UserFound = False Then
+            Command BotVars.Username, "/addmem "&LCase(Clan.Name)& " " &Clan.GetUser(u).Name, True
+         End If
+      Next
+
+     '________________________________
+     '| |    DELETE NON-MEMBERS    | |
+     '================================
+      For i = 1 to 5
+         text = "clan_members_" &i
+         MemLine = readSetting(LCase(Clan.Name), text)
+         If InStr(MemLine, ",") Then
+            members = Split(MemLine, ",")
+            For j = 0 To UBound(members)
+  	       If Clan.GetUserIndex(members(j)) = 0 Then
+                  Command BotVars.Username, "/delmem "&LCase(Clan.Name)& " " &members(j), True
+               End If
+            Next
+         Else
+            If MemLine <> "n/a" And MemLine <> vbNullString Then
+               If Clan.GetUserIndex(MemLine) = 0 Then
+                  Command BotVars.Username, "/delmem "&LCase(Clan.Name)& " " &MemLine, True
+               End If
+            End If
+         End If
+      Next
+
+      AddChat 7077375, "Clan Auto-Update: ", 10682112, "Member List successfully updated!"
+   End If
+
+End Function
+
+
+'____________________________________
+'| |    ADD A CLAN TO DATABASE    | |
+'====================================
+Private Sub addclan_cmd(Command, user)
+
+   Dim ClanTag, CM_File
+
+   If Ubound(Split(Command.Args)) < 0 Or NOT Command.HasAccess Then
+      Command.Respond "Command syntax: .addclan <clantag>"
+      Exit Sub
+   End If
+
+   ClanTag = Split(Command.Args)(0)
+
+   If readSetting(LCase(ClanTag), "clan_members_1") <> vbNullString Then
+      Command.Respond "ERROR: Clan Name already exists in database!"
+      Exit Sub
+   End If
+
+   If (Len(ClanTag) = 1) Then
+      Command.Respond "ERROR: Invalid Clan Tag specified!"
+   Else
+      Set CM_File = recFSO.OpenTextFile(CM_Path, 8, True)
+      With CM_File
+         .WriteLine vbNullString
+         .WriteLine vbNullString
+         .WriteLine "=-=-=-="
+         .WriteLine "[" &ClanTag& "]"
+         .WriteLine "=-=-=-="
+    	 .WriteLine vbNullString
+         .WriteLine "clan_members_1=n/a"
+         .WriteLine "clan_members_2=n/a"
+         .WriteLine "clan_members_3=n/a"
+         .WriteLine "clan_members_4=n/a"
+         .WriteLine "clan_members_5=n/a"
+         .Close
+      End With
+      Command.Respond "Clan " &ClanTag& " was successfully added to the database!"
+   End If
+
+End Sub
+
+
+'______________________________
+'| |    ADD A CLANTAG :)    | |
+'==============================
+Private Sub clantag_cmd(Command, user)
+
+   Dim MemCount, Message, members, ClanTag, Temp
+
+   If Ubound(Split(Command.Args)) < 0 Or NOT Command.HasAccess Then
+      Command.Respond "Description: Choose how you want your clan tag capitalized."
+      Command.Respond "Command syntax: .clantag <clantag>"
+      Exit Sub
+   End If
+
+   ClanTag = Split(Command.Args)(0)
+   If readSetting(LCase(ClanTag), "clan_members_1") <> vbNullString Then
+
+      If InStr(readSetting("Settings", "Clan_Tags"), ",") > 0 Then
+         Temp = Split(readSetting("Settings", "Clan_Tags"), ",")
+         For i = 0 to UBound(Temp)
+            If LCase(Temp(i)) = LCase(ClanTag) Then
+               Call writeSetting("Settings", "Clan_Tags", Temp(i), "del") 
+            End If
+         Next
+      End If
+      Call writeSetting("Settings", "Clan_Tags", ClanTag, "add")
+      Command.Respond "Clan tag '" &ClanTag& "' saved."
+   Else
+      Command.Respond "Clan " &ClanTag& " does not have a database entry."
+   End If
+
+End Sub
+
+
+'____________________________
+'| |      CLAN MAIL       | |
+'============================
+Private Sub clanmail_cmd(Command, user)
+
+   Dim MemCount, Message, members, ClanTag, text, temp
+
+   If Ubound(Split(Command.Args)) < 1 Or NOT Command.HasAccess Then
+      Command.Respond "/me =-=- Clan Mail Script by WataBoy7 -=-="
+      Command.Respond "/me Description: Sends out a mass-mail to all members of a Clan."
+      Command.Respond "/me Supported Clans: PuRe, GG, OOC"
+      Command.Respond "/me Command syntax: .clanmail <clantag> <message>"
+      Exit Sub
+   End If
+
+   ClanTag = Split(Command.Args)(0)
+   ClanTag = ModifyCase(ClanTag)
+
+   For i = 1 to Ubound(Split(Command.Args))
+      Select Case i
+      Case Ubound(Split(Command.Args))
+	 Message = Message &Trim(Split(Command.Args)(i))
+      Case Else
+	 Message = Message &Trim(Split(Command.Args)(i))& " "
+      End Select         
+   Next
+
+   For i = 1 To 5
+      text = "clan_members_" &i
+      MemLine = readSetting(ClanTag, text)
+      Select Case i
+         Case "1"
+	    If MemLine = vbNullString Then
+               Command.Respond "Clan "& ClanTag & " does not have a database entry."
+               Exit Sub
+            End If
+
+   	    If MemLine = "n/a" Then
+       	       Command.Respond "Clan "& ClanTag & " has no clan members listed."
+	       Exit Sub
+            End If
+      End Select
+
+      If InStr(MemLine, ",") > 0 Then
+         members = Split(MemLine, ",")
+	 MemCount = MemCount + UBound(members)+1
+
+         For j = 0 To UBound(members)
+            MailUser members(j), User, Message
+         Next
+      Else
+         members = MemLine
+         MemCount = MemCount + 1
+         MailUser members, User, Message
+      End If
+   Next
+
+   Command.Respond "Success! " & User & ", your message '" & Message & "' was sent to all " & MemCount & " members of Clan " & ClanTag & "."
+
+End Sub
+
+'___________________________________
+'| |      LIST CLAN MEMBERS      | |
+'===================================
+Private Sub listmem_cmd(Command, user)
+
+   Dim MemCount, ClanTag, text, HasLeftClan, members, NonMembers, TrimList
+
+   If Ubound(Split(Command.Args)) < 0 Or NOT Command.HasAccess Then
+      Command.Respond "Command syntax: .listmem <clantag>"
+      Exit Sub
+   End If
+
+   ClanTag = Split(Command.Args)(0)
+
+   ClanTag = ModifyCase(ClanTag)
+
+   For i = 1 To 5
+      text = "clan_members_" &i
+      MemLine = readSetting(ClanTag, text)
+
+      Select Case i
+         Case "1"
+	    If MemLine = vbNullString Then
+               Command.Respond "Clan "& ClanTag & " does not have a database entry."
+               Exit Sub
+            End If
+   	    If MemLine = "n/a" Then
+       	       Command.Respond "Clan "& ClanTag & " has no clan members listed."
+	       Exit Sub
+            End If
+      End Select
+
+      If InStr(MemLine, ",") > 0 Then
+         members = Split(MemLine, ",")
+         MemCount = MemCount + UBound(members)+1
+      Else
+         If MemLine <> "n/a" And MemLine <> vbNullString Then 
+            members = MemLine
+	    MemCount = MemCount + 1
+         End If
+      End If
+   Next
+
+   Command.Respond "There are " & MemCount & " members listed in Clan " & ClanTag & "."
+
+   For i = 1 To 5
+      text = "clan_members_" &i
+      MemLine = readSetting(ClanTag, text)
+
+      If MemLine <> "n/a" And MemLine <> vbNullString Then
+         TrimList = Trimlist & Replace(Memline, ",", ", ")
+      End If
+
+      If i = 5 Then 
+         Trimlist = Trimlist & "."
+      Else
+         If readSetting(ClanTag, "clan_members_" &i+1) <> "n/a" Then
+            Trimlist = Trimlist & ", "
+         End If
+      End If
+   Next
+
+   If readSetting("Settings", "Show_List") Then
+      Command.Respond TrimList
+   Else
+      AddChat vbGreen, TrimList
+   End If
+
+End Sub
+
+
+'______________________________________________
+'| |      ADD CLAN MEMBERS TO DATABASE      | |   
+'==============================================
+Private Sub addmem_cmd(Command, user)
+
+   Dim memName, ClanTag, text, members
+   
+   If Ubound(Split(Command.Args)) < 1 Or NOT Command.HasAccess Then
+      Command.Respond "Command syntax: .addmem <clantag> <user>"
+      Exit Sub
+   End If
+
+   ClanTag = Split(Command.Args)(0)
+   ClanTag = ModifyCase(ClanTag)
+
+   memName = Split(Command.Args)(1)
+
+   For i = 1 To 5
+      text = "clan_members_" &i
+      MemLine = readSetting(ClanTag, text)
+
+      Select Case i
+         Case "1"
+            If MemLine = vbNullString Then
+               Command.Respond "Clan "& ClanTag & " does not have a database entry."
+               Exit Sub
+            End If
+
+            If MemLine = "n/a" Then
+       	       Call writeSetting(ClanTag, text, memName, "add")
+               Command.Respond memName & " has been added to the list of Clan "& ClanTag & " members."
+	       Exit Sub
+            End If
+      End Select
+
+      members = Split(MemLine, ",")
+
+      For j = 0 To UBound(members)
+         If LCase(members(j)) = LCase(memName) Then
+            Command.Respond memName & " is already on the list of Clan "& ClanTag & " members."
+            Exit Sub
+         End If
+      Next
+   Next
+         
+   For i = 1 To 5
+      text = "clan_members_" &i
+      MemLine = readSetting(ClanTag, text)	
+      If (UBound(Split(MemLine, ","))+1) < 20 Then
+         Call writeSetting(ClanTag, text, memName, "add")
+	 Command.Respond memName & " has been added to the list of Clan "& ClanTag & " members."
+	 Exit Sub  
+      End If
+   Next
+
+End Sub
+
+'_______________________________________________
+'| |    DELETE CLAN MEMBERS FROM DATABASE    | |
+'===============================================
+Private Sub delmem_cmd(Command, user)
+
+   Dim memName, ClanTag, text, members
+
+   If Ubound(Split(Command.Args)) < 1 Or NOT Command.HasAccess Then
+      Command.Respond "Command syntax: .delmem <clantag> <user>"
+      Exit Sub
+   End If
+
+   ClanTag = Split(Command.Args)(0)
+   ClanTag = ModifyCase(ClanTag)
+
+   memName = Split(Command.Args)(1)
+
+   For i = 1 To 5
+      text = "clan_members_" &i
+      MemLine = readSetting(ClanTag, text)
+
+      Select Case i
+         Case "1"
+	    If MemLine = vbNullString Then
+               Command.Respond "Clan "& ClanTag & " does not have a database entry."
+               Exit Sub
+            End If
+
+   	    If MemLine = "n/a" Then
+               Command.Respond "Clan "& ClanTag & " has no clan members listed."
+	       Exit Sub
+            End If
+      End Select
+
+      members = Split(MemLine, ",")
+
+      For j = 0 To UBound(members)
+         If LCase(members(j)) = LCase(memName) Then
+            Call writeSetting(ClanTag, text, memName, "del")
+	    Command.Respond memName & " has been removed from the list of Clan " & ClanTag & " members."
+	    Exit Sub
+         End If
+      Next
+   Next
+
+   Command.Respond memName & " is not on the list of Clan " & ClanTag & " members."
+
+End Sub
+
+'__________________________________________________
+'| |    WRITE A MEMBER NAME TO SETTINGS FILE    | |
+'==================================================
+Private Sub writeSetting(sType, sSetting, sValue, action)  '// Writes a setting to the ini
+
+   Dim iniFile, iniFileArr, text, MemLine, members
+
+   Select Case action
+      Case "add"
+         MemLine = readSetting(sType, sSetting)
+         If InStr(MemLine, "n/a") < 1 Then
+            WriteConfigEntry sType, sSetting, MemLine & "," & sValue, CM_Path
+         Else
+            WriteConfigEntry sType, sSetting, sValue, CM_Path
+         End If
+
+      Case "del"
+
+         MemLine = readSetting(sType, sSetting)
+         If UBound(Split(MemLine, ",")) > 0 Then
+            members = Split(MemLine, ",")
+            For i = 0 To Ubound(members)
+               If Lcase(members(i)) <> LCase(sValue) Then
+	          text = text & members(i) & ","
+               End If
+            Next
+            text = Left(text, Len(text)-1)
+         End If
+
+         If MemLine = Lcase(sValue) Then
+            text = "n/a"
+         End If
+
+         WriteConfigEntry sType, sSetting, text, CM_Path
+   End Select
+
+   '______________________________________________________
+   '| |    CREATE SETTINGS FILE IF IT DOESN'T EXIST    | |
+   '======================================================
+   Select Case sType
+      Case "firstrun"
+         '// Populate the settings ini for first run
+         Dim CM_File
+	 Set CM_File = recFSO.OpenTextFile(CM_Path, 8, True)
+
+	 With CM_File
+	    .WriteLine "=-=-=-=-=-="
+            .WriteLine "[Settings]"
+	    .WriteLine "=-=-=-=-=-="
+ 	    .WriteLine vbNullString
+            .WriteLine "'___________________________________________________________________"
+            .WriteLine "'|                                                                 |"
+            .WriteLine "'|  When Online, do you want to display the list of Clan Members   |"
+            .WriteLine "'|  to the user who called the command [.listmem] or do you want   |"
+            .WriteLine "'|  to just show the Clan member count?                            |"
+            .WriteLine "'|  If set to False, the list of Clan Members will be displayed    |"
+            .WriteLine "'|  in your Stealthbot window so that only you can see it.         |"
+            .WriteLine "'|_________________________________________________________________|"
+            .WriteLine vbNullString
+            .WriteLine "      Show_List=False"
+            .WriteLine "'___________________________________________________________________"
+            .WriteLine "'|                                                                 |"
+            .WriteLine "'| Clan Auto-Update automatically checks if the member-list of the |"
+            .WriteLine "'| Bot's Clan is up-to-date every time you reload the scripts or   |"
+            .WriteLine "'| start up Stealthbot. Basically, it adds new recruits in your    |"
+            .WriteLine "'| clan to the member list and deletes non-members (members that   |"
+            .WriteLine "'| are are listed in the database but who are no longer part of    |"
+            .WriteLine "'| the clan). However, Auto-Update takes a few seconds to run.     |"
+            .WriteLine "'| If you would like to disable it, set this to 'false'.           |"
+            .WriteLine "'|_________________________________________________________________|"
+            .WriteLine vbNullString
+            .WriteLine "      Clan_AutoUpdate=True"
+            .WriteLine "'___________________________________________________________________"
+            .WriteLine "'|                                                                 |"
+            .WriteLine "'|  Modifies the way you want a clantag displayed or capitalized.  |"
+            .WriteLine "'|  For instance, my favorite clan is Clan 'PuRe', specifically    |"
+            .WriteLine "'|  capitalized that way. I would hate to see it displayed any     |"
+            .WriteLine "'|  way - for instance, Clan 'pure'. You can add an entry with     |"
+            .WriteLine "'|  [.clantag] or just write it down here.                         |"
+            .WriteLine "'|_________________________________________________________________|"
+            .WriteLine vbNullString
+            .WriteLine "      Clan_Tags=n/a"
+            .WriteLine vbNullString
+	    .WriteLine "'//////////////////////////////////////////////////////////////////"
+	    .WriteLine "'/////////////////////////    CLANS    ////////////////////////////"
+	    .WriteLine "'//////////////////////////////////////////////////////////////////"
+	    .WriteLine "'///							        ///"
+	    .WriteLine "'///   You can add any Clan (even ones you are not a part of)   ///"
+	    .WriteLine "'///   to the database, but please use the [/addclan] command   ///"
+	    .WriteLine "'///   to achieve this. Furthermore, if you are not a part of   ///"
+	    .WriteLine "'///   a particular Clan, you will have to manually add Clan    ///"
+	    .WriteLine "'///   This can be a major drawback, so I suggest               ///"
+	    .WriteLine "'///   either joining a Clan temporarily and then starting up   ///"
+	    .WriteLine "'///   Stealthbot (by default it automatically adds your Clan   ///"
+	    .WriteLine "'///   and all its members to the database) and once you have   ///"
+    	    .WriteLine "'///   its entry, you can leave the Clan at a later time.       ///"
+	    .WriteLine "'/// 							        ///"
+	    .WriteLine "'//////////////////////////////////////////////////////////////////"
+ 	    '.WriteLine vbNullString
+ 	    '.WriteLine vbNullString
+	    .WriteLine "=-=-=-="
+	    .WriteLine "[GG]   "
+	    .WriteLine "=-=-=-="
+            .WriteLine vbNullString
+            .WriteLine "clan_members_1=Random,RedNightmare,GG-Armageddon,Kongos,hawkanomics,KING-WIZZLE,Revis,MiNdFuLnEsS,GG)SyN,Vindication,Maverik.,SenatorTomDelay,chuckyfinster,SirOwSki,Eggnog_Crayons,Skinnyz.SwaGG,Bendejo,WataBoy7,Ravinia,demosINconsole"
+            .WriteLine "clan_members_2=JRMYFUKINGLIN,Unheard,ProMod67,rahkarn,NoX,TecHno_LoVer,MYM]FreddhIe,ShockWave,ImInItToWinIt,FailDeadly,RaunchyAssSecks,MexicanHomie,Barristan,4B11T,nowinsforyou,caynj,spear.tooth,Captain_Snacks,CocaColaWc3Game,kingsman327"
+            .WriteLine "clan_members_3=Chippy1337,JeSsE_hArRiS,The-Buffalo-Man,Hoe-HeadHunterz,iTrolldYou,982817,carryme2victory,LtBluelight,OneTooManyBeers,13L4D3M4ST3R,AOE_ROCKS,PudgeZin,kravcha,imu.like.pie.2,4.8.15.16.23.42,ROTS19,markoofellow,CodeHogwash,Dann_Florek,BreadMaker"
+	    .WriteLine "clan_members_4=albumsmart91,GoodGame,I.Wait.Forever,K[3],stonerperson,MicroMotion,RS-FruitPunch,War2.daLua,PornoSonic-,RusTee,ishyrion,Skrumple,WormCrawler,jizzball,gmaster,smellynoise,Vergon,Moist-Fart,o(O.O)o"
+	    .WriteLine "clan_members_5=n/a"
+            .WriteLine vbNullString
+            .WriteLine vbNullString	
+	    .WriteLine "=-=-=-="
+	    .WriteLine "[OOC]  "
+	    .WriteLine "=-=-=-="
+    	    .WriteLine vbNullString
+	    .WriteLine "clan_members_1=UndeadOrcKiller,OrderOfChaos,IThrowRocks,BelligerentMonk,billbobphil,DV_Executioner,Sugarshane777,Jiinii,SeriouslyRizky,nebuchadneZZar7,longjohnson,mexico,UnadoptedDave,The_Boognish,ZwinkBamBam,TP-KinG[ws]0618,rickromero5,thorzz"
+	    .WriteLine "clan_members_2=MotarTactics,PiranhaMontanha,vajpounder69,K(L-Breadzorz,PLEASUREPIE,freshlybrewed,bulldawg-knight,WelcomeToJamRoc,w3stolemyw00kie,PauseTheGameBRB,Fox.WmWM,leftyloosey,OOCBouncer,AoS-Senators,Albino,steamrice21,Hacking"
+	    .WriteLine "clan_members_3=ImSlapped,Crazychaos,Liko,Legal_Ease,Bobdole.,Darkknight1,Hybrid-XT,xbLiNdx,Arsin,KingZofDreamZ,FiatLux.,7n722,Celebrieigil2,cCOLBALTc,Random.Yoshi,pandas.Onfire,AKATSUKI-"
+	    .WriteLine "clan_members_4=Dr.Rexxar,Brotherless,A-Decent-Noob,Z3NSPIRIT.IV,PurrrttyKitty,psychotwin,Nickoteh,psychoviet,dungeon91,Blessed_,IronTroll,MSauce,GodMode[ON],LaDy-AnGeLiNa,9-11_InsideJob,MrWhite,WolfBabe31,uzamaki11111111,the.dude"
+	    .WriteLine "clan_members_5=n/a"
+            .Close
+         End With
+
+ 	AddChat 16759296, "Clan Mail Script:. ", 10682112, "Settings file created."         
+ 	AddChat 16759296, "Clan Mail Script:. ", 10682112, "Creating commands ... This may take a few minutes."
+ 	Call createCMDs
+   End Select
+End Sub
+
+'_________________________________
+'| |    CREATE THE COMMANDS    | |
+'=================================
+Private Sub createCMDs  '// Creates the commands
+'/////////////////////////////////////////////////////////////////////////////////////////////////////////
+'//													//
+'//	Big Thanks to The-Black-Ninja's Recruit and Apply Script for showing me how to do this!		//
+'//	The method for creating the commands was copied entirely from the above-mentioned script.	//
+'//													//
+'/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+   Dim cmd, Parameter
+
+
+   Set cmd = OpenCommand("addclan")
+   If cmd Is Nothing Then
+      Set cmd = CreateCommand("addclan")
+      With cmd
+         .Description = "Adds a Clan name to the database." & vbNewLine & vbNewLine & _
+         "Usage: .addclan <clantag>"
+	 .RequiredRank = 50 
+	 Set Parameter = .NewParameter("clan", False)
+	 .Parameters.Add Parameter
+	 .Save
+      End With
+   End If  
+
+
+   Set cmd = OpenCommand("addmem")
+   If cmd Is Nothing Then
+      Set cmd = CreateCommand("addmem")
+      With cmd
+         .Description = "Adds a user to the list of a specified clan's members." & vbNewLine & vbNewLine & _
+         "Usage: .addmem <clantag> <user>"
+         .RequiredRank = 0
+         Set Parameter = .NewParameter("clan", False, "Word")
+	 .Parameters.Add Parameter
+	 .Save
+      End With
+   End If  
+
+   Set cmd = OpenCommand("clanmail")
+   If cmd Is Nothing Then
+      Set cmd = CreateCommand("clanmail")
+      With cmd
+         .Description = "Sends a mass-mail to all members of the specified clan." & vbNewLine & vbNewLine & _
+         "Usage: .clanmail <clantag> <message>"
+	 .RequiredRank = 0   
+	 Set Parameter = .NewParameter("clan", False, "Message")
+	 .Parameters.Add Parameter
+	 .Save
+      End With
+   End If  
+
+   Set cmd = OpenCommand("clantag")
+   If cmd Is Nothing Then
+      Set cmd = CreateCommand("clantag")
+      With cmd
+         .Description = "Modifies the way you want a clantag displayed or capitalized. For instance, my favorite clan is Clan PuRe, specifically capitalized that way. I would hate to see it displayed as Clan pure, wouldn't you?" & vbNewLine & vbNewLine & _
+         "Usage: .clantag <clantag (capitalized the way you want)>"
+	 .RequiredRank = 5
+	 Set Parameter = .NewParameter("clantag", False)
+	 .Parameters.Add Parameter
+	 .Save
+      End With
+   End If  
+
+   Set cmd = OpenCommand("delmem")
+   If cmd Is Nothing Then
+      Set cmd = CreateCommand("delmem")
+      With cmd
+         .Description = "Removes a user from the list of a specified clan's members." & vbNewLine & vbNewLine & _
+         "Usage: .delmem <clantag> <user>"
+	 .RequiredRank = 0   
+	 Set Parameter = .NewParameter("clan", False, "Word")
+	 .Parameters.Add Parameter
+	 .Save
+      End With
+   End If  
+
+   Set cmd = OpenCommand("listmem")
+   If cmd Is Nothing Then
+      Set cmd = CreateCommand("listmem")
+      With cmd
+         .Description = "Lists the members of the specified clan." & vbNewLine & vbNewLine & _
+         "Usage: .listmem <clantag>"
+	 .RequiredRank = 0   
+	 Set Parameter = .NewParameter("clan", False)
+	 .Parameters.Add Parameter
+	 .Save
+      End With
+   End If  
+
+   AddChat 16759296, "Clan Mail Script:. ", 10682112, "Commands added - script is ready to use."
+   AddChat 5731327,  "Please view the commands in the Command Manager for descriptions, syntax, and command aliases."  
+
+End Sub
+
+
+'______________________________________________________
+'| |     READ MEMBER NAME(S) FROM SETTINGS FILE     | |
+'======================================================
+Private Function readSetting(sType, sSetting)  '// Returns the value in the settings.ini
+
+   readSetting = GetConfigEntry(sType, sSetting, CM_Path)
+
+End Function
+
+
+'__________________________________________________
+'| | MODIFY CASE OF CLAN TAG (IF SPECIFIED)     | |
+'==================================================
+Private Function ModifyCase(ClanTag)
+
+   Dim ClanTags, Temp
+   ClanTags = readSetting("Settings", "Clan_Tags")
+
+   If ClanTags <> "n/a" Or ClanTags <> vbNullString Then
+      If InStr(ClanTags, ",") > 0 Then
+         Temp = Split(ClanTags, ",")
+         For i = 0 To UBound(Temp)
+            If LCase(Temp(i)) = LCase(ClanTag) Then ClanTag = Temp(i)
+         Next
+      Else
+         If LCase(ClanTags) = LCase(ClanTag) Then ClanTag = ClanTags
+      End If       
+   End If
+
+   ModifyCase = ClanTag
+
+End Function
+
+'_______________________________________________
+'| |     FUNCTION TO MAIL CLAN MEMBER(S)     | |
+'===============================================
+Private Function MailUser(recipient,sender,Message)
+
+   Command BotVars.Username, "/mail " & recipient& " [" &sender& "] " &Message, True
+
+End Function

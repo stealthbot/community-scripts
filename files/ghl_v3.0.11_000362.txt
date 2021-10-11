@@ -1,0 +1,219 @@
+script("Name") = "ghl"
+script("Author") = "Tuck"
+script("Major") = 3
+script("Minor") = 0
+script("Revision") = 11
+script("Description") = "Keeps track of your ghost bot(s) and display the new game(s) it/they hosted."
+
+private update_int, ghosts, ghost_cmds, cmd_format, format, str_each, str_false, list_new, list_int, cmd, anti_spam, que_int, mod_list, ghost_left, list, temp_list, bool(2), qint
+
+sub event_load()
+    if (lenb(getsettingsentry("update_int")) = 0) then call writesettingsentry("update_int", 45)
+    update_int = getsettingsentry("update_int")
+    if (lenb(getsettingsentry("ghosts")) = 0) then call writesettingsentry("ghosts", "username1|username2")
+    ghosts = getsettingsentry("ghosts")
+    if (lenb(getsettingsentry("ghost_cmds")) = 0) then call writesettingsentry("ghost_cmds", ".getgames|-getgames")
+    ghost_cmds = getsettingsentry("ghost_cmds")
+    if (lenb(getsettingsentry("cmd_format")) = 0) then call writesettingsentry("cmd_format", 0)
+    cmd_format = getsettingsentry("cmd_format")
+    if (lenb(getsettingsentry("format")) = 0) then call writesettingsentry("format", 1)
+    format = getsettingsentry("format")
+    if (lenb(getsettingsentry("str_each")) = 0) then call writesettingsentry("str_each", "%game(%used/%size)")
+    str_each = getsettingsentry("str_each")
+    if (lenb(getsettingsentry("str_false")) = 0) then call writesettingsentry("str_false", "No games available.")
+    str_false = getsettingsentry("str_false")
+    if (lenb(getsettingsentry("list_new")) = 0) then call writesettingsentry("list_new", 1)
+    list_new = getsettingsentry("list_new")
+    if (lenb(getsettingsentry("list_int")) = 0) then call writesettingsentry("list_int", 0)
+    list_int = getsettingsentry("list_int")
+    if (lenb(getsettingsentry("cmd")) = 0) then call writesettingsentry("cmd", "games")
+    cmd = getsettingsentry("cmd")
+    if (lenb(getsettingsentry("anti_spam")) = 0) then call writesettingsentry("anti_spam", 5)
+    anti_spam = getsettingsentry("anti_spam")
+    if (lenb(getsettingsentry("que_int")) = 0) then call writesettingsentry("que_int", 2)
+    que_int = getsettingsentry("que_int")
+    if (lenb(getsettingsentry("mod_list")) = 0) then call writesettingsentry("mod_list", "-ar|-ap")
+    mod_list = getsettingsentry("mod_list")
+    if (lenb(getsettingsentry("ghost_left")) = 0) then call writesettingsentry("ghost_left", 0)
+    ghost_left = getsettingsentry("ghost_left")
+    call createobj("longtimer", "update")
+    if int(update_int) > 0 then update.interval = int(update_int) else update.interval = 45
+    update.enabled = true
+    if int(list_int) > 0 then
+        call createobj("longtimer", "gamelist")
+        gamelist.interval = int(list_int)
+        gamelist.enabled = true
+    end if
+    if int(anti_spam) > 0 then
+        call createobj("longtimer", "antispam")
+        antispam.interval = int(anti_spam)
+    end if
+    call createobj("longtimer", "que")
+    if int(que_int) > 0 then que.interval = int(que_int)
+    que.enabled = false
+    list = str_false
+    temp_list = ""
+    bool(0) = false
+    bool(1) = false
+    bool(2) = false
+    dim command
+    set command = opencommand(lcase(cmd))
+    if ((command is nothing)) then
+        set command = createcommand(lcase(cmd))
+        with command
+            .requiredrank = 0
+            .description = "Command to list available games"
+            .save
+        end with
+    end if
+end sub
+
+sub update_timer()
+    bool(2) = true
+    dim temp_int
+    temp_int = 0
+    for x = 0 to ubound(split(ghosts, "|"))
+        if lenb(channel.getuser(split(ghosts, "|")(x)).name) > 0 then
+            temp_int = temp_int + 1
+        end if
+    next
+    temp_list = list
+    list = str_false
+    bool(1) = true
+    if int(ubound(split(ghosts, "|")) + 1) = int(temp_int) then exit sub
+    if cmd_format = 0 then
+        addq "/f m " & ghost_cmds
+        bool(2) = false
+    elseif cmd_format = 1 then
+        qint = 0
+        update.enabled = false
+        call que_timer()
+    end if
+end sub
+
+sub que_timer()
+    dim temp_str, temp_ghost
+    if qint <= ubound(split(ghost_cmds, "|")) then
+        temp_str = split(ghost_cmds, "|")(qint)
+        temp_ghost = split(ghosts, "|")(qint)
+    else
+        temp_str = ghost_cmds
+        temp_ghost = ghosts
+    end if
+    if lenb(channel.getuser(temp_ghost).name) <= 0 then dsp 3, temp_str, temp_ghost, vbgreen
+    qint = qint + 1
+    if qint > ubound(split(ghosts, "|")) then
+        bool(2) = false
+        update.enabled = true
+        que.enabled = false
+    else
+        if que_int <= 0 then call que_timer() else que.enabled = true
+    end if
+end sub
+
+sub gamelist_timer()
+    dim games
+    if not list = str_false then games = "Games: " & left(list, len(list) - 2) else games = str_false
+    if bool(1) and not temp_list = str_false then games = "Games: " & left(temp_list, len(temp_list) - 2)
+    dsp format, games, botvars.username, vbgreen
+end sub
+
+sub antispam_timer()
+    bool(0) = false
+    antispam.enabled = false
+end sub
+
+sub event_whisperfromuser(username, flags, message, ping)
+    for x = 0 to ubound(split(ghosts, "|"))
+        if lcase(username) = lcase(split(ghosts, "|")(x)) then
+            bool(1) = false
+            if instr(lcase(message), "is in the lobby") then
+                dim temp_str, game, minutes, used, size, spots, used2, size2, mods
+                temp_str = Split(replace(message, "Game [", ""), "] is")(0)
+                game = split(temp_str, " : ")(0)
+                username = split(temp_str, " : ")(1)
+                minutes = split(temp_str, " : ")(3)
+                temp_str = split(temp_str, " : ")(2)
+                used = split(temp_str, "/")(0)
+                size = split(temp_str, "/")(1)
+                spots = int(Int(size) - int(used))
+                temp_str = split(split(message, " in the lobby and there are ")(1), " other games in progress.")(0)
+                used2 = split(temp_str, "/")(0)
+                size2 = split(temp_str, "/")(1)
+                mods = vbnullstring
+                if instr(mod_list, "|") > 0 then
+                    for y = 0 to ubound(split(mod_list, "|"))
+                        if instr(lcase(game), lcase(split(mod_list, "|")(y))) > 0 then
+                            mods = mods & split(mod_list, "|")(y) 
+                        end if
+                    next
+                elseif len(mod_list) > 0 then
+                    if instr(lcase(game), lcase(split(mod_list, "|")(y))) > 0 then
+                        mods = mods & split(mod_list, "|")(y) 
+                    end if
+                end if
+                temp_str = str_each
+                temp_str = replace(temp_str, "%rb", ubound(split(ghosts, "|")))
+                temp_str = replace(temp_str, "%rc", ubound(split(ghost_cmds, "|")))
+                temp_str = replace(temp_str, "%game", game)
+                temp_str = replace(temp_str, "%username", username)
+                temp_str = replace(temp_str, "%used2", used2)
+                temp_str = replace(temp_str, "%size2", size2)
+                temp_str = replace(temp_str, "%used", used)
+                temp_str = replace(temp_str, "%size", size)
+                temp_str = replace(temp_str, "%minutes", minutes)
+                temp_str = replace(temp_str, "%spots", spots)
+                temp_str = replace(temp_str, "%mod", mods)
+                if instr(temp_list, game) <= 0 and instr(list, game) <= 0 and int(list_new) = 1 then dsp format, "New Game: " & temp_str, botvars.username, vbgreen
+                if list = str_false and instr(list, game) <= 0 then
+                    list = temp_str & ", "
+                elseif instr(list, game) <= 0 then
+                    list = list & temp_str & ", "
+                end if
+            end if
+            exit for
+        end if
+    next
+end sub
+
+sub event_userleaves(username, flags)
+    if int(ghost_left) = 0 or instr(lcase(ghosts), lcase(username)) <= 0 or bool(2) then exit sub
+    if instr(ghosts, "|") > 0 then
+        for x = 0 to ubound(split(ghosts, "|"))
+            if lcase(split(ghosts, "|")(x)) = lcase(username) then
+                qint = 0
+            end if
+        next
+    else
+        qint = 0
+    end if
+    dim temp_str, temp_ghost
+    if qint <= ubound(split(ghost_cmds, "|")) then
+        temp_str = split(ghost_cmds, "|")(qint)
+        temp_ghost = split(ghosts, "|")(qint)
+    else
+        temp_str = ghost_cmds
+        temp_ghost = ghosts
+    end if
+    dsp 3, temp_str, temp_ghost, vbgreen
+    update.enabled = false
+    update.enabled = true
+end sub
+
+sub event_command(command)
+    if lcase(command.name) = lcase(cmd) then
+        if command.isvalid and command.hasaccess and not bool(0) then
+            dim games
+            if bool(1) then
+                if temp_list = str_false or len(temp_list) <= 0 then games = str_false else games = "Games: " & left(temp_list, len(temp_list) - 2)
+            else
+                if list = str_false then games = str_false else games = "Games: " & left(list, len(list) - 2)
+            end if
+            if command.username = botvars.username then dsp 4, games, botvars.username, vbgreen else dsp format, games, botvars.username, vbgreen
+            if int(anti_spam) > 0 then
+                bool(0) = true
+                antispam.enabled = true
+            end if
+        end if
+    end if
+end sub

@@ -1,0 +1,198 @@
+#include "\scoring.txt"
+'use Novynn's scoring system
+
+Script("Name") = "GambleScript"
+Script("Author") = "raylu, conversion by Dragon_Legion (12022010)"
+Script("Major") = 1
+Script("Minor") = 31
+Script("Revision") = 1
+Script("Description") = "Gambling script"
+Script("Commands") = "gamble|bet <amount>|throw"
+
+'// Gamble Script v1.31
+'//   by raylu
+
+'// ver 1.31
+'//   *Changed all myTrigger to BotVars.Trigger (Thanks spasm_attack)
+
+'// ver 1.31.1
+'//   *Converted to script form
+'//   *Moved commands to command manager
+'//   *Added Novynn's scoring system to save values
+
+Public gamble,gamDic,Comm,Par
+
+Sub Event_Load()
+	CreateCommands
+	Set gamble = New ScoringSystem
+	gamble.Setup("Gamble")
+	Set gamDic = CreateObject("Scripting.Dictionary")
+	gamDic.CompareMode = 1
+End Sub
+
+Function money(player)
+	If IsNumeric(gamble.Read(player,"Money")) Then
+		money = gamble.Read(player,"Money")
+	Else
+		money = 0
+	End If
+End Function
+
+Function bet(player)
+	bet = gamDic.Item(player)
+End Function
+
+Sub Event_Command(Cmd)
+	If NOT Cmd.Source = 1 AND NOT Cmd.Source = 3 Then
+		Exit Sub
+	End If
+	If LCase(Cmd.Name) = "gamble" Then
+		doGamble(Cmd)
+	Elseif LCase(Cmd.Name) = "bet" Then
+		doBet(Cmd)
+	ElseIf LCase(Cmd.Name) = "throw" Then
+		doThrow(Cmd)
+	ElseIf LCase(Cmd.Name) = "money" Then
+		getMoney(Cmd)
+	End If
+End Sub
+
+Sub doGamble(Cmd)
+	Dim t : t = BotVars.Trigger
+	Dim u : u = LCase(Cmd.Username)
+	If gamDic.Exists(u) Then
+		Cmd.Respond "You have $" & money(u) & " left.  Use " & t & "bet to place a bet and " & t & "throw to roll the dice"
+	Else
+		If money(u) < 1 Then
+			gamDic.Add u, "Betting"
+			Cmd.Respond "You now have $" & GetSettingsEntry("GambleStart") & ".  Use " & t & "bet to place your bet and then " & t & "throw to roll the dice"
+			newMoney u,GetSettingsEntry("GambleStart")
+		Else
+			gamDic.Add u, "Betting"
+			Cmd.Respond "You have $" & money(u) & " left.  Use " & t & "bet to place a bet and " & t & "throw to roll the dice"
+		End If
+	End If
+End Sub
+
+Sub doBet(Cmd)
+	Dim t : t = BotVars.Trigger
+	Dim u : u = LCase(Cmd.Username)
+	If gamDic.Exists(u) Then
+		If Cmd.Argument("amount") = vbNullString Then
+			Cmd.Respond "You have to specify a value for your bet"
+		ElseIf Cmd.Argument("amount") < 1 Then
+			Cmd.Respond "You cannot bet a negative number.  Please try again"
+		ElseIf Int(Cmd.Argument("amount")) > Int(money(u)) Then
+			Cmd.Respond "You don't have that much credit.  Please use something less than " & money(u)
+		Else
+			gamDic.Item(u) = Int(Cmd.Argument("amount"))
+		End If
+	Else
+		Cmd.Respond "You haven't signed up to gamble.  Please use " & t & "gamble to gain some credit"		
+	End If
+End Sub
+
+Sub doThrow(Cmd)
+	Dim t : t = BotVars.Trigger
+	Dim u : u = LCase(Cmd.Username)
+	If NOT gamDic.Exists(u) Then
+		Cmd.Respond "You haven't signed up to gamble.  Please use " & t & "gamble to gain some credit"
+	Else
+		If bet(u) = "Betting" Then
+			Cmd.Respond "You have to bet something in order to roll.  Use " & t & "bet <amount> to lay your bet.  You have $" & money(Cmd.Username) & " right now."
+			Exit Sub
+		ElseIf IsNumeric(gamDic.Item(u)) Then
+			If Int(bet(Cmd.Username)) > Int(money(u)) Then
+				Cmd.Respond "You have apparently confused me.  You bet $" & bet(Cmd.Username) & " and you only have $" & money(Cmd.Username) & ".  Please use " & t & "bet <amount> to fix this"
+			ElseIf Int(gamDic.Item(u)) < 1 Then
+				Cmd.Respond "You have apparently confused me.  You need to bet a value greater than 0 in order gamble.  Use " & t & "bet <amount> to fix this. (You have $" & money(Cmd.Username) & " available)"
+			Else
+				Randomize
+				Dim d1,d2,d3,oldm,newm,totalm
+				d1 = Int(Rnd()*6)+1
+				d2 = Int(Rnd()*6)+1
+				d3 = Int(Rnd()*6)+1
+				Cmd.Respond Cmd.Username & " rolled (1) " & d1 & " (2) " & d2 & " (3) " & d3
+				If d1 = d2 OR d2 = d3 OR d1 = d3 Then
+					oldm = Int(money(u)) : newm = Int(bet(u)) : totalm = Int(oldm+newm)
+					Cmd.Respond "Congratulations " & Cmd.Username & "!  You have won $" & newm & " which makes your total $" & totalm
+				Else
+					oldm = Int(money(u)) : newm = Int(bet(u)) : totalm = Int(oldm-newm)
+					Cmd.Respond "Sorry " & Cmd.Username & ".  You have lost $" & newm & " which makes your total $" & totalm
+				End If
+				If totalm < 1 Then
+					gamDic.Remove u
+					newMoney u, 0
+					Cmd.Respond Cmd.Username & " is now broke.  Use " & t & "gamble to start again"
+				Else
+					newMoney u, totalm
+				End If 
+			End If
+		End If
+	End If
+End Sub
+
+Sub getMoney(Cmd)
+	Dim u : u = LCase(Cmd.Username)
+	If money(u) <> vbNullString Then
+		Cmd.Respond "You have never signed up to gamble.  Please do so now with " & BotVars.Trigger & "gamble"
+	ElseIf money(u) > 0 Then
+		Cmd.Respond "You, " & Cmd.Username & ", currently have $" & money(u)
+	Else
+		Cmd.Respond "You, " & Cmd.Username & ", are currently broke.  Use " & BotVars.Trigger & "gamble to gamble some more"
+	End If
+End Sub
+
+Sub newMoney(User,Value)
+	gamble.Write User,"Money",Value
+End Sub
+
+Sub CreateCommands()
+	Set Comm = OpenCommand("gamble")
+	If Comm Is Nothing Then
+		Set Comm = CreateCommand("gamble")
+		With Comm
+			.RequiredRank = 0
+			.Description = "Starts the gambling session"
+			.Save
+		End With
+		Set Comm = Nothing
+	End If
+	Set Comm = OpenCommand("bet")
+	If Comm Is Nothing Then
+		Set Comm = CreateCommand("bet")
+		With Comm
+			.RequiredRank = 0
+			.Description = "Bets money for gambling"
+			Set Par = .NewParameter("amount",True,"Number")
+			Par.Description = "Money to bet"
+			.Parameters.Add Par
+			.Save
+		End With
+		Set Comm = Nothing : Set Par = Nothing
+	End If
+	Set Comm = OpenCommand("throw")
+	If Comm Is Nothing Then
+		Set Comm = CreateCommand("throw")
+		With Comm
+			.RequiredRank = 0
+			.Description = "Rolls dice for gambling"
+			.Save
+		End With
+		Set Comm = Nothing
+	End If
+	Set Comm = OpenCommand("money")
+	If Comm Is Nothing Then
+		Set Comm = CreateCommand("money")
+		With Comm
+			.RequiredRank = 0
+			.Description = "Checks the current monetary value a user has"
+			.Save
+		End With
+		Set Comm = Nothing
+	End If
+	Set Comm = Nothing : Set Par = Nothing
+	If GetSettingsEntry("GambleStart") = vbNullString Then
+		WriteSettingsEntry "GambleStart", 20
+	End If
+End Sub

@@ -1,0 +1,259 @@
+Script("Name") = "Clan Mail Script"
+Script("Author") = "WataBoy7"
+Script("Major") = 1
+Script("Minor") = 3
+Script("Revision") = 2
+Script("Description") = "Clan Mail script: Sends out a mass-mail to all listed clan members of a specific clan."
+
+'///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+'//												                 '//
+'//  Change Log													 '//
+'//														 '//
+'//  v1.0 - 1.32												 '//
+'//														 '//
+'//  	Removed the .addmem .delmem and .addclan commands. Stripped the script down to the basic three		 '//
+'//  	commands: .clanmail .clantag and .listmem. Thanks to the Retrieve Clan Data function, it is possible to	 '//
+'//  	mail ANY clan on ANY Server, provided that your bot is on that Server. This means that if you are a	 '//
+'//  	Clan PwR member on Azeroth, you can send a Clan Mail out to any clan (including yours) on the Azeroth	 '//
+'//  	server. Also removed the Clan Mail *.txt file that the script created. There was no need for one.        '//
+'//													         '//
+'///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+ Public Script_Ver, DisplayID
+ Public Const PER_PAGE = 15
+ Private webObject, web
+ Private P_Data, P_Name, P_Rank
+ Private Clan_Name, ClanTag
+
+ Sub Event_Load()
+    Script_Ver = StringFormat("v{0}.{1}{2}", Script("Major"), Script("Minor"), Script("Revision"))
+    If GetSettingsEntry("Script_Ver") <> Script_Ver Then
+       WriteSettingsEntry "Script_Ver", Script_Ver
+       WriteSettingsEntry "ClanTags", "n/a"
+       AddChat 16759296, "Clan Mail Script "&Script_Ver&": ", 10682112, "Creating commands ... This may take a few minutes."
+       Call Create_Commands
+    End If
+    Set P_Data = CreateObject("Scripting.Dictionary")
+    Set webObject = CreateObject("Microsoft.XMLHTTP")
+ End Sub
+
+ Public Sub Event_Command(Command)
+    Select Case LCase(Command.Name)
+       Case "clanmail":            Call clanmail_cmd(Command, Command.Username) 
+       Case "clantag":             Call clantag_cmd(Command, Command.Username) 
+       Case "listmem":             Call listmem_cmd(Command, Command.Username) 
+    End Select
+ End Sub
+
+ Private Sub clantag_cmd(Command, Username)
+    Dim ClanTag, Line
+    Set_OutputFormat Command, Username
+    If Command.IsValid Then
+       If Command.HasAccess Then
+          ClanTag = Trim(Command.Args)
+          If ClanTag <> vbNullString Then
+             If Retrieve_Clan_Data(ClanTag) Then
+                Line = GetSettingsEntry("ClanTags")
+                If Line <> "n/a" Then
+                   If InStr(LCase(Line), LCase(ClanTag)) = 0 Then
+                      WriteSettingsEntry "ClanTags", StringFormat("{0},{1}", Line, ClanTag)
+                   Else
+                      dsp DisplayID, StringFormat("A clantag for ""{0}"" already exists!", ModifyCase(ClanTag)), Username, vbRed
+                   End If
+                Else
+                   WriteSettingsEntry "ClanTags", ClanTag
+                End If
+                dsp DisplayID, StringFormat("Clan tag ""{0}"" saved!", ClanTag), Username, vbGreen
+             Else
+                dsp DisplayID, StringFormat("Error: Clan ""{0}"" does not exist!", ClanTag), Username, vbRed
+             End If
+          End If
+       End If
+    Else
+       dsp DisplayID, "Description: Choose how you want your clan tag capitalized.", Username
+       dsp DisplayID, StringFormat("Command syntax: {0}clantag <clantag>", BotVars.Trigger), Username
+    End If
+ End Sub
+
+ Private Sub clanmail_cmd(Command, Username)
+    Dim Message, i
+    Set_OutputFormat Command, Username
+    If Ubound(Split(Command.Args)) > 0 Then
+       If Command.HasAccess Then
+          If IsOnline Then
+             ClanTag = Split(Command.Args)(0)
+             Message = Trim(Mid(Command.Args, Len(ClanTag)+1))
+             If Len(Message) > 5 Then
+                If Len(Message) < 215 Then
+                   If Retrieve_Clan_Data(ClanTag) Then
+                      P_Name = P_Data.Keys
+                      P_Rank = P_Data.Items
+                      For i = 0 To P_Data.Count-1
+                         MailUser P_Name(i), Username, Message
+                      Next
+                      dsp DisplayID, StringFormat("Success! {0}, your message ""{1}"" was sent out to all {2} members of Clan {3} [{4}].", Username, Message, P_Data.Count, ModifyCase(ClanTag), Clan_Name), Username
+                   Else
+                      dsp DisplayID, StringFormat("Error: Clan ""{0}"" does not exist!", ClanTag), Username, vbRed
+                   End If   
+                Else
+                   dsp DisplayID, "Error: Your message must be less than 225 characters.", Username, vbRed
+                End If
+             Else
+                dsp DisplayID, "Error: Your message must be more than 5 characters.", Username, vbRed
+             End If   
+          Else
+             dsp 4, "Error: You must be online to send a Clan Mail!", Username, vbRed
+          End If
+       End If
+    Else
+       dsp DisplayID, "[Clan Mail] Sends out a mass-mail to all members of a Clan", Username
+       dsp DisplayID, StringFormat("Command syntax: {0}clanmail <clantag> <message>. Aliases: {0}cmail, {0}cm.", BotVars.Trigger), Username
+    End If
+ End Sub
+
+ Private Sub listmem_cmd(Command, Username)
+    Dim ClanTag, MemList, i
+    Set_OutputFormat Command, Username
+    If Command.IsValid Then
+       If Command.HasAccess Then 
+          ClanTag = Trim(Command.Args)
+          If ClanTag <> vbNullString Then
+             If Retrieve_Clan_Data(ClanTag) Then
+                P_Name = P_Data.Keys
+                P_Rank = P_Data.Items
+                For i = 0 To P_Data.Count-1
+                   MemList = StringFormat("{0}{1}, ", MemList, P_Name(i)) 
+                Next
+                MemList = Left(MemList, Len(MemList)-2)
+                dsp DisplayID, StringFormat("Clan {0} [{1}] members ({2}): {3}.", ModifyCase(ClanTag), Clan_Name, P_Data.Count, MemList), Username
+             Else
+                dsp DisplayID, StringFormat("Error: Clan ""{0}"" does not exist!", ModifyCase(ClanTag)), Username, vbRed
+             End If
+          End If
+       End If
+    Else
+       dsp DisplayID, StringFormat("Command syntax: {0}listmem <clantag>", BotVars.Trigger), Username
+       Exit Sub
+    End If
+ End Sub
+
+ Private Sub Create_Commands
+    Dim cmd, Parameter
+    Set cmd = OpenCommand("clanmail")
+    If cmd Is Nothing Then
+       Set cmd = CreateCommand("clanmail")
+       With cmd
+          .Description = "Sends a mass-mail to all members of the specified clan." & vbNewLine & vbNewLine & _
+          "Usage: .clanmail <clantag> <message>"
+          .RequiredRank = 0   
+          Set Parameter = .NewParameter("clan", False, "Message")
+	  .Parameters.Add Parameter
+	  .Aliases.Add "cmail"
+	  .Aliases.Add "cm"
+	  .Save
+       End With
+    End If  
+    Set cmd = OpenCommand("clantag")
+    If cmd Is Nothing Then
+       Set cmd = CreateCommand("clantag")
+       With cmd
+          .Description = "Modifies the way you want a clantag displayed or capitalized." & vbNewLine & vbNewLine & _
+          "Usage: .clantag <clantag (capitalized the way you want)>"
+	  .RequiredRank = 50
+	  Set Parameter = .NewParameter("clantag", False)
+	  .Parameters.Add Parameter
+	  .Aliases.Add "ctag"
+	  .Aliases.Add "ct"
+	  .Save
+       End With
+    End If  
+    Set cmd = OpenCommand("listmem")
+    If cmd Is Nothing Then
+       Set cmd = CreateCommand("listmem")
+       With cmd
+          .Description = "Lists the members of the specified clan." & vbNewLine & vbNewLine & _
+          "Usage: .listmem <clantag>"
+	  .RequiredRank = 50  
+	  Set Parameter = .NewParameter("clan", False)
+	  .Parameters.Add Parameter
+	  .Aliases.Add "showmem"
+	  .Save
+       End With
+    End If  
+    AddChat 16759296, "Clan Mail Script "&Script_Ver&": ", 10682112, "Commands added - script is ready to use."
+    AddChat 5731327,  "Please view the commands in the Command Manager for descriptions, syntax, and command aliases."  
+ End Sub
+
+ Function Set_OutputFormat(Command, Username)
+    If Username = BotVars.Username Then
+       DisplayID = 4
+    Else
+       If Command.WasWhispered Then
+          DisplayID = 3
+       Else
+          DisplayID = 1
+       End If
+    End If
+ End Function
+
+ Private Function Retrieve_Clan_Data(ClanTag)
+    Dim P_Tag, P_RankNum_Raw, P_RankNum
+    Dim i, j
+    '// Clear Clan Data in case the function is run subsequent time(s)
+    P_Data.RemoveAll
+       '// Default - Runs for 10 pages. If the last page is found before this, then the loop ends there.
+       For i = 1 To 10
+          webObject.Open "GET", "http://classic.battle.net/war3/ladder/w3xp-clan-profile.aspx?ClanTag=" &UCase(ClanTag)& "&Gateway=" &BotVars.Gateway& "&PageNo=" &i& "", False
+          webObject.Send
+          web = webObject.responseText
+          '// Ensures that the following action(s) only happen once: on the 1st Page
+          Select Case i
+             Case "1":
+                Clan_Name = "<title>Frozen Throne - " & BotVars.Gateway & " - "
+                If InStr(web, Clan_Name) = 0 Then
+                   Retrieve_Clan_Data = False
+                   Exit Function
+                Else
+                   Clan_Name = Split(Split(web, Clan_Name)(1), " - Clan Profile</title>")(0)
+                End If
+          End Select
+          P_Tag = Split(web, "&PlayerName=")
+          P_RankNum_Raw = Split(web, "clans/rank")
+          For j = 1 to UBound(P_Tag)
+             P_Name = Split(P_Tag(j), """>")(0)
+             P_Name = Replace(P_Name, "%5b", "[")
+             P_Name = Replace(P_Name, "%5d", "]")
+             P_RankNum = Split(P_RankNum_Raw(j), ".gif")(0)
+             Select Case P_RankNum
+                Case "0": P_Rank = "Peon"
+                Case "2": P_Rank = "Grunt"
+                Case "3": P_Rank = "Shaman"
+                Case "4": P_Rank = "Chieftain"
+             End Select
+             P_Data.Item(P_Name) = P_Rank
+          Next
+          '// If the last page is found, exit out.
+          If UBound(P_Tag) < PER_PAGE Then Exit For 
+       Next
+    Retrieve_Clan_Data = True
+ End Function
+
+ Private Function ModifyCase(ClanTag)
+    Dim Line, Temp, i
+    Line = GetSettingsEntry("ClanTags")
+    If Line <> "n/a" Then
+       If InStr(Line, ",") > 0 Then
+          Temp = Split(Line, ",")
+          For i = 0 To UBound(Temp)
+             If LCase(Temp(i)) = LCase(ClanTag) Then ClanTag = Temp(i)
+          Next
+       Else
+          If LCase(Line) = LCase(ClanTag) Then ClanTag = Line
+       End If       
+    End If
+    ModifyCase = ClanTag
+ End Function
+
+ Private Function MailUser(recipient,sender,Message)
+    Command BotVars.Username, StringFormat("/mail {0} [{1}] {2}: {3}", recipient, Date(), sender, Message), True
+ End Function

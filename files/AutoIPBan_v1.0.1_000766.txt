@@ -1,0 +1,71 @@
+Script("Name") = "AutoIPBan"
+Script("Author") = "Dragon_Legion"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 1
+Script("Description") = "Automatically IPBan or squelch anyone with a specified flag"
+
+Public ipStatus
+
+Sub Event_Load()
+	If GetSettingsEntry("IPFlag") = vbNullString Then
+		WriteSettingsEntry "IPFlag","X"
+	End If
+	If GetSettingsEntry("IPMessage") = vbNullString Then
+		WriteSettingsEntry "IPMessage", "Auto IPban"
+	End If
+End Sub
+
+Sub Event_UserInChannel(Username, Flags, Message, Ping, Product, StatUpdate)
+	If Channel.Self.IsOperator = True Then
+		GetDBEntry LCase(Username), A, F
+		If InStr(UCase(F),UCase(GetSettingsEntry("IPFlag"))) Then
+			If IsSafelisted(LCase(Username)) Then
+				Exit Sub
+			End If
+			If InStr(UCase(F),"B") Then
+				If NOT GetDBEntry(Username).BanMessage = vbNullString Then
+					ipBanMsg = GetDBEntry(Username).BanMessage
+				Else
+					ipBanMsg = GetSettingsEntry("IPMessage")
+				End If
+			Else
+				ipBanMsg = GetSettingsEntry("IPMessage")
+			End If
+			AddQ "/squelch " & Username
+			Command BotVars.Username, "/ban " & Username & " " & ipBanMsg, True
+		End If
+	Else
+		GetDBEntry LCase(Username), A, F
+		If InStr(UCase(F),UCase(GetSettingsEntry("IPFlag"))) Then
+			AddQ "/squelch " & Username
+		End If
+	End If
+End Sub
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+	If Channel.Self.IsOperator = True Then
+		GetDBEntry LCase(Username), A, F
+		If InStr(UCase(F),UCase(GetSettingsEntry("IPFlag"))) Then
+			If IsSafelisted(LCase(Username)) Then
+				Exit Sub
+			End If
+			If InStr(UCase(F),"B") Then
+				If NOT GetDBEntry(Username).BanMessage = vbNullString Then
+					ipBanMsg = GetDBEntry(Username).BanMessage
+				Else
+					ipBanMsg = GetSettingsEntry("IPMessage")
+				End If
+			Else
+				ipBanMsg = GetSettingsEntry("IPMessage")
+			End If
+			AddQ "/squelch " & Username
+			Command BotVars.Username, "/ban " & Username & " " & ipBanMsg, True
+		End If
+	Else
+		GetDBEntry LCase(Username), A, F
+		If InStr(UCase(F),UCase(GetSettingsEntry("IPFlag"))) Then
+			AddQ "/squelch " & Username
+		End If
+	End If
+End Sub

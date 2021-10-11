@@ -1,0 +1,1341 @@
+Script("Name") = "Winamp Playlist"
+Script("Author") = "MrPunkKid"
+Script("Major") = 1
+Script("Minor") = 9
+Script("Revision") = 235
+Script("Description") = "A Winamp solution that provides support for playlists, song-change idles, and radio stations for use with StealthBot."
+
+Private wsConn             '// Holds database connection
+Private wsDatabasePath     '// Holds database file path
+Private wsFSO              '// Holds FileSystemObject
+Private wsSC               '// Holds Script Module
+Private wsShell            '// Holds Shell Application Object
+Private wsObject           '// Holds Winamp DLL Object
+Private curTrack           '// Holds current track name
+Private idledTrackName     '// Holds current track name going to be idled
+Private firstRun           '// Holds true if this is the first time script has run
+Private scriptEnabled      '// Holds false if script is disabled due to script errors
+Private wsPath             '// Holds winamp path
+Private idleMsgs           '// Holds the number of messages sent through Winamp Idle
+Private wsIdleMsg          '// Holds Winamp Idle Message
+
+'/////////////////////////////
+'//      SCRIPT CODE        //
+'//     DO NOT MODIFY       //
+'/////////////////////////////
+
+'// Other Variables
+Const MY_COMPUTER = &H11&  '// Do Not Change
+Const WINDOW_HANDLE = 0    '// Do Not Change
+
+'/////////////////////////////
+'//       EVENT SUBS        //
+'/////////////////////////////
+
+'// [ Script Load ]
+
+Sub LoadTutorial()
+  AddChat vbGreen, "   ÿcb»ÿc0 Loading Tutorial..."
+  MsgBox "Welcome to Winamp Playlist", vbOkOnly, "Winamp Playlist Tutorial"
+  MsgBox "Winamp Playlist is a script solution for StealthBot 2.7 that allows battle.net users to fully utilize Winamp's playlists and AOL Radio stations or any other radio station you might want to listen to.", vbOkOnly, "Winamp Playlist Tutorial"
+  MsgBox "With Winamp Playlist you can add all your playlists to StealthBot so that stealthbot can handle your playlists. To do this, simply export one of your playlists to either your Desktop or your Bot's playlists folder." & String(2, vbCrLf) & BotPath & "\playlists\", vbOkOnly, "Winamp Playlist Tutorial"
+  MsgBox "Stealthbot will then automatically prompt you with a window to designate a special alias for this playlist so whenever you want to play that playlist you can type /playlist <alias> or type it from your game's client using your bot's trigger.", vbOkOnly, "Winamp Playlist Tutorial"
+  MsgBox "To add radio stations to Winamp Playlist, simply type /addradio <alias>|<url>, <alias> being the radio's alias and 'url' being the radio station's web address. To play them, type /playradio <alias>. You can retrieve AOL Radio addresses by bookmarking them into winamp then copying and pasting the address into stealthbot.", vbOkOnly, "Winamp Playlist Tutorial"
+  MsgBox "To view all your playlists and radio stations, type /playlist list.", vbOkOnly, "Winamp Playlist Tutorial"
+  MsgBox "You can also designate a radio station or a playlist to load when StealthBot loads. To do this, type /playlist default|<alias> to set your default playlist/radio station. To enable or disable this feature type /playlist default|<toggle>. To show your current default playlist, type /playlist default|playlist. To show your current default station, type /playlist default|station. Your default playlist/radio station will only play if Winamp is not playing already.", vbOkOnly, "Winamp Playlist Tutorial"
+  MsgBox "Winamp Playlist can also idle your songs in your channel. This feature is different from Stealthbot's idle system because it only shows the idle once per song, and when the song changes. To enable/disable this feature type /winampidle on/off. To set the message it idles, type /winampidle <message>." & String(2, vbCrLf) & "Valid arguments in the idle message are:" & String(1, vbCrLf) & "%mp3 = Shows the current song's title.", vbOkOnly, "Winamp Playlist Tutorial"
+  MsgBox "To play playlists on StealthBot, type /playlist <alias>. <alias> refers to the name of the playlist you gave it when it was added to StealthBot.", vbOkOnly, "Winamp Playlist Tutorial"
+  MsgBox "All these commands can also be used directly from the bot's interface, click on Scripting, then scroll down to Winamp Playlist, and look at all the features there. This gives a Graphical interface to accomplish what you want from Winamp Playlist.", vbOkOnly, "Winamp Playlist Tutorial"
+  MsgBox "Thank you for using Winamp Playlist. I hope you enjoy it. If you forget anything or having problems remembering a command, you can view the Command Manager on StealthBot or load this tutorial again by clicking on Scripting -> Winamp Playlist -> Open Tutorial. Gotta go, hope you enjoy Winamp Playlist. Good-bye.", vbOkOnly, "Winamp Playlist Tutorial"
+End Sub
+
+Sub Event_Load()
+  dTut = False
+  idleMsgs = 0
+  scriptEnabled = True
+  Set wsSC = GetScriptModule()
+  Set wsFSO = CreateObject("Scripting.FileSystemObject")
+  Set wsShell = CreateObject("WScript.Shell")
+  On Error Resume Next
+  wsPath = wsShell.RegRead("HKCU\Software\Winamp\")
+  If err.Number <> 0 Then
+    err.Clear
+    MsgBox "Downloaded Winamp Playlist and don't have winamp. Sorry but you cannot use Winamp Playlist.", vbOkOnly, "Winamp Playlist"
+    AddChat vbRed, "   ÿcb»ÿc0 Disabling Winamp Playlist..."
+    scriptEnabled = False
+    Command BotVars.Username, "/disable Winamp Playlist", True
+  End If
+  If MediaPlayer.IsLoaded And LCase(MediaPlayer.Name) <> "winamp" Then
+    MsgBox "Sorry but you are using a media player that is not supported by this script."
+    AddChat vbRed, "   ÿcb»ÿc0 Disabling Winamp Playlist..."
+    scriptEnabled = False
+    Command BotVars.Username, "/disable Winamp Playlist", True
+  End If
+  If scriptEnabled = False Then
+    Exit Sub
+  End If
+  Call CreateMenus()
+  wsDatabasePath = BotPath & "playData.mdb"
+  firstRun = False
+  If Not wsFSO.FileExists(wsDatabasePath) Then
+    firstRun = True
+    AddChat vbYellow, "   ÿcb»ÿc0 Creating database..."
+    ws_create_db()          '// Create the database
+    AddChat vbYellow, "   ÿcb»ÿc0 Creating initial settings..."
+    ws_create_settings()    '// Create the settings
+  Else
+    ws_connect_db()         '// Connect to database
+  End If
+  If Not wsFSO.FolderExists(BotPath & "playlists") Then
+    wsFSO.CreateFolder(BotPath & "playlists")
+    AddChat vbGreen, "   ÿcb»ÿc0 Created 'playlists' folder"
+  End If
+  If Not wsFSO.FolderExists(BotPath & "music") Then
+    wsFSO.CreateFolder(BotPath & "music")
+    AddChat vbGreen, "   ÿcb»ÿc0 Created 'music' folder"
+  End If
+  If firstRun = True Then
+    Content = MsgBox("Do you wish to read Winamp Playlist's tutorial? If this is your first time using this script, it is highly recommended you read it. If not you can always read it at a later time by clicking on 'Scripting -> Winamp Playlist -> Open Tutorial'.", vbYesNo, "Winamp Playlist")
+    If Content = vbYes Then
+      Call LoadTutorial()
+    Else
+      dTut = True
+    End If    
+  End If
+  Set playlistFolder = wsFSO.GetFolder(BotPath & "playlists").Files
+  For Each File in playlistFolder
+    If isPlaylist(File) Then
+      If Not InDatabase(File, 0) Then
+        Content = InputBox("Enter an alias for this new playlist: " & String(2, vbCrLf) & wsFSO.GetFileName(File) & String(2, vbCrLf) & "Note: Only spaces and letters please. Numbers and symbols in the playlist's alias will cause errors, you have been warned.", "Winamp Playlist")
+        If Len(Content) = 0 Then
+          Do While Len(Content) = 0
+            Content = InputBox("Enter an alias for this new playlist: " & String(2, vbCrLf) & wsFSO.GetFileName(File) & String(2, vbCrLf) & "Note: Only spaces and letters please. Numbers and symbols in the playlist's alias will cause errors, you have been warned.", "Winamp Playlist")
+          Loop
+        End If
+        Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `alias`='" & Content & "'")
+        If rs.Fields(0) > 0 Then
+          Do While rs.Fields(0) > 0 or Len(Content) = 0
+            Content = InputBox("That alias already exists. Please enter another one:" & String(2, vbCrLf) & wsFSO.GetFileName(File) & String(2, vbCrLf) & "Note: Only spaces and letters please. Numbers and symbols in the playlist's alias will cause errors, you have been warned.", "Winamp Playlist")
+            Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `alias`='" & Content & "'")
+          Loop
+        End If
+        If LCase(Content) = "list" or LCase(Content) = "default" Then
+          Do While LCase(Content) = "list" or LCase(Content) = "default" or Len(Content) = 0
+            Content = InputBox("You cannot use that as an alias for this playlist:" & String(2, vbCrLf) & wsFSO.GetFileName(File) & String(2, vbCrLf) & "Note: Only spaces and letters please. Numbers and symbols in the playlist's alias will cause errors, you have been warned.", "Winamp Playlist")
+          Loop
+        End If
+        wsConn.Execute("INSERT INTO `playlists` (`path`, `alias`, `default`)" & _
+                       "VALUES ('" & File & "', '" & Content & "', '0')")
+      End If
+    End If
+  Next
+  '// Create the commands
+  Call CreateCmds()
+  playlistFolderSize = wsFSO.GetFolder(BotPath & "playlists").Size
+  Call CreateObj("LongTimer", "refresh")
+  refresh.Enabled = True
+  refresh.Interval = 1
+  Call CreateObj("LongTimer", "winampIdle")
+  Call CreateObj("LongTimer", "fixStations")
+  Call CreateObj("LongTimer", "tuningRadio")
+  tuningRadio.Interval = 2
+  tuningRadio.Enabled = False
+  fixStations.Interval = .0001
+  fixStations.Enabled = True
+  Set rs = wsConn.Execute("SELECT * FROM `settings` WHERE `key`='winampIdle'")
+  If CInt(rs.Fields(2)) > 0 Then
+    winampIdle.Enabled = True
+    winampIdle.Interval = 1
+  Else
+    winampIdle.Enabled = False
+    winampIdle.Interval = 1
+  End If
+  Set rs = wsConn.Execute("SELECT COUNT(*) FROM `stations`")
+  ubID = rs.Fields(0)
+  stationCount = ubID
+  If ubID > 0 Then
+    Set rs = wsConn.Execute("SELECT * FROM `stations` ORDER BY `alias`")
+    If Not (rs.BOF Or rs.EOF) Then
+      Do Until rs.EOF
+        If rs.Fields(3) = 1 Then
+          defaultWord = " (default)"
+          Set rs2 = wsConn.Execute("SELECT * FROM `settings` WHERE `key`='defaultType'")
+          If CInt(rs2.Fields(2)) = 1 Then
+            defaultWord = defaultWord & " ON"
+          Else
+            defaultWord = defaultWord & " OFF"
+          End If
+        Else
+          defaultWord = vbNullString
+        End If
+        url = rs.Fields(1)
+        alias = rs.Fields(2)
+        Set tmp = CreateObj("Menu", Replace(Trim(Alias), " ", vbNullString))
+        tmp.Parent = mnuStations
+        tmp.Caption = alias & defaultWord
+        Set tmp = CreateObj("Menu", "SetDefault" & Replace(Trim(alias), " ", vbNullString))
+        tmp.Parent = mnuSetDefaultStation
+        tmp.Caption = alias & defaultWord
+        loadedStations = loadedStations & alias & ", "
+        wsSC.AddCode _
+          "Sub " & Replace(Trim(Alias), " ", vbNullString) & "_Click()" & vbNewLine & _
+          "   Call playstation(""" & url & """)" & vbNewLine & _
+          "   Call AddRecent(""" & Alias & """, """ & url & """)" & vbNewLine & _
+          "End Sub"
+        wsSC.AddCode _
+          "Sub SetDefault" & Replace(Trim(alias), " ", vbNullString) & "_Click()" & vbNewLine & _
+          "   Call setdefault(""" & alias & """)" & vbNewLine & _
+          "End Sub"
+        rs.MoveNext
+      Loop
+    End If
+  End If
+  Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists`")
+  ubID = rs.Fields(0)
+  playlistCount = ubID
+  If ubID > 0 Then
+    Set rs = wsConn.Execute("SELECT * FROM `playlists` ORDER BY `alias`")
+    If Not (rs.BOF Or rs.EOF) Then
+      Do Until rs.EOF
+        If rs.Fields(3) = 1 Then
+          defaultWord = " (default)"
+          Set rs2 = wsConn.Execute("SELECT * FROM `settings` WHERE `key`='defaultType'")
+          If CInt(rs2.Fields(2)) = 0 Then
+            defaultWord = defaultWord & " ON"
+          Else
+            defaultWord = defaultWord & " OFF"
+          End If
+        Else
+          defaultWord = vbNullString
+        End If
+        path = rs.Fields(1)
+        alias = rs.Fields(2)
+        Set tmp = CreateObj("Menu", Replace(Trim(alias), " ", vbNullString))
+        tmp.Parent = mnuPlaylistOperations
+        tmp.Caption = alias & defaultWord
+        Set tmp = CreateObj("Menu", "SetDefault" & Replace(Trim(alias), " ", vbNullString))
+        tmp.Parent = mnuSetDefaultPlaylist
+        tmp.Caption = alias & defaultWord
+        loadedPlaylists = loadedPlaylists & alias & ", "
+        wsSC.AddCode _
+          "Sub " & Replace(Trim(alias), " ", vbNullString) & "_Click()" & vbNewLine & _
+          "   Call playstation(""" & path & """)" & vbNewLine & _
+          "   Call AddRecent(""" & alias & """, """ & path & """)" & vbNewLine & _
+          "End Sub"
+        wsSC.AddCode _
+          "Sub SetDefault" & Replace(Trim(alias), " ", vbNullString) & "_Click()" & vbNewLine & _
+          "   Call setdefault(""" & alias & """)" & vbNewLine & _
+          "End Sub"
+        rs.MoveNext
+      Loop
+    End If
+  End If
+  AddChat vbGreen, "   ÿcbÿc3.: ÿc4Winamp Playlist v1.9 Revision 235 by MrPunkKid ÿc3:."
+  AddChat vbGreen, "     ÿcbÿc8 " & playlistCount & " " & getTypeCountWord(0, playlistCount) & " ÿc1ÿcb-ÿc2¤ÿc1-ÿc8ÿcb " & stationCount & " " & getTypeCountWord(1, stationCount)
+  AddChat vbGreen, "   ÿcb»ÿc0 View Command Manager for a list of commands"
+  If firstRun = True And dTut = True Then
+    AddChat vbGreen, "   ÿcb»ÿc0 Remember you can always read the tutorial by clicking on 'Scripting -> Winamp Playlist -> Open Tutorial'"
+  End If
+  If MediaPlayer.IsPlaying = False And MediaPlayer.isPaused = False Then
+    Set rs = wsConn.Execute("SELECT * FROM `settings` WHERE `key`='defaultPlaylistEnabled'")
+    If CInt(rs.Fields(2)) > 0 Then
+      Set rs4 = wsConn.Execute("SELECT * FROM `settings` WHERE `key`='defaultType'")
+      dType = CInt(rs4.Fields(2))
+      If dType = 0 Then
+        Set rs2 = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `default`=1")
+        defaultCount = CInt(rs2.Fields(0))
+        If defaultCount > 0 Then
+          Set rs3 = wsConn.Execute("SELECT * FROM `playlists` WHERE `default`=1")
+          defaultType = "Playlist"
+          wsShell.Run("winamp.exe """ & rs3.Fields(1) & """")
+          AddChat vbYellow, "   ÿcb»ÿc0 Initializing default playlist..."
+          Call CreateObj("LongTimer", "NowPlayingTimerLoad")
+          NoWPlayingTimerLoad.Enabled = True
+          NowPlayingTimerLoad.Interval = .0001
+        End If
+      ElseIf dType = 1 Then
+        Set rs2 = wsConn.Execute("SELECT COUNT(*) FROM `stations` WHERE `default`=1")
+        defaultCount = CInt(rs2.Fields(0))
+        If defaultCount > 0 Then
+          Set rs3 = wsConn.Execute("SELECT * FROM `stations` WHERE `default`=1")
+          defaultType = "Station"
+          wsShell.Run("winamp.exe """ & rs3.Fields(1) & """")
+          AddChat vbYellow, "   ÿcb»ÿc0 Initializing default station..."
+          Call CreateObj("LongTimer", "NowPlayingTimerLoad")
+          NoWPlayingTimerLoad.Enabled = True
+          NowPlayingTimerLoad.Interval = .0001
+        End If
+      End If
+    End If
+  End If
+End Sub    
+
+Public Function SetTimeFormat(TimeValue)
+  seconds = Fix(TimeValue)
+  mins = Fix(TimeValue / 60)
+  If mins < 10 Then mins = "0" & mins
+  secs = TimeValue - (mins * 60)
+  If secs < 10 Then secs = "0" & secs
+  SetTimeFormat = mins & ":" & secs
+  Exit Function
+End Function
+
+Private Function generateRandomMenuName()
+  alphabetStringArray = Array("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z")
+  Randomize
+  For i = 1 to 80
+    word = word & alphabetStringArray(Int(Rnd*(UBound(alphabetStringArray)+1)))
+  Next
+  generateRandomMenuName = word
+End Function
+
+Sub refresh_Timer()
+  If Not MediaPlayer.IsLoaded Then
+    Set mp3Obj = GetObjByName("mnuMp3Title")
+    mp3Obj.Caption = "Title: Winamp is not loaded"
+    Set mp3Obj = GetObjByName("mnuMp3CurrentTime")
+    mp3Obj.Caption = "Track Position: 00:00/00:00"
+    Set mp3Obj = GetObjByName("mnuMp3PlaylistPosition")
+    mp3Obj.Caption = "Playlist Position: 0/0"
+    Exit Sub
+  End If
+  If InStr(MediaPlayer.TrackName, "-") = 0 And InStr(MediaPlayer.TrackName, "(") > 0 And InStr(MediaPlayer.TrackName, ")") > 0 And InStr(CStr(SetTimeFormat(MediaPlayer.TrackLength)), "-1") > 0 Then
+    Set mp3Obj = GetObjByName("mnuMp3Title")
+    mp3Obj.Caption = "Title: Advertisement " & MediaPlayer.TrackName
+    Set mp3Obj = GetObjByName("mnuMp3CurrentTime")
+    mp3Obj.Caption = "Track Position: 00:00/00:00"
+    Set mp3Obj = GetObjByName("mnuMp3PlaylistPosition")
+    mp3Obj.Caption = "Playlist Position: " & MediaPlayer.PlaylistPosition & "/" & MediaPlayer.PlaylistCount
+    Exit Sub
+  End If
+  If Not MediaPlayer.IsPlaying And tuningRadio.Enabled = False And MediaPlayer.isPaused = False Then
+    idledTrackName = vbNullString
+  End If
+  If MediaPlayer.IsLoaded Then
+    If MediaPlayer.IsPlaying Then
+      If (InStr(LCase(MediaPlayer.TrackName), "%") > 0 And InStr(LCase(MediaPlayer.TrackName), "buffer") > 0) or InStr(MediaPlayer.TrackName, "-") = 0 Then
+        Exit Sub
+      End If
+      Set mp3Obj = GetObjByName("mnuMp3Title")
+      mp3Obj.Caption = "Title: " & MediaPlayer.TrackName
+      Set mp3Obj = GetObjByName("mnuMp3CurrentTime")
+      mp3Obj.Caption = "Track Position: " & SetTimeFormat(MediaPlayer.TrackTime) & "/" & SetTimeFormat(MediaPlayer.TrackLength)
+      Set mp3Obj = GetObjByName("mnuMp3PlaylistPosition")
+      mp3Obj.Caption = "Playlist Position: " & MediaPlayer.PlaylistPosition & "/" & MediaPlayer.PlaylistCount
+    Else
+      If MediaPlayer.isPaused Then
+        Set mp3Obj = GetObjByName("mnuMp3Title")
+        mp3Obj.Caption = "Title: " & MediaPlayer.TrackName & " (Paused)"
+        Set mp3Obj = GetObjByName("mnuMp3CurrentTime")
+        mp3Obj.Caption = "Track Position: " & SetTimeFormat(MediaPlayer.TrackTime) & "/" & SetTimeFormat(MediaPlayer.TrackLength)
+      Else
+        Set mp3Obj = GetObjByName("mnuMp3Title")
+        mp3Obj.Caption = "Title: " & MediaPlayer.TrackName & " (Stopped)"
+        Set mp3Obj = GetObjByName("mnuMp3CurrentTime")
+        mp3Obj.Caption = "Track Position: 00:00/" & SetTimeFormat(MediaPlayer.TrackLength)
+      End If
+      Set mp3Obj = GetObjByName("mnuMp3PlaylistPosition")
+      mp3Obj.Caption = "Playlist Position: " & MediaPlayer.PlaylistPosition & "/" & MediaPlayer.PlaylistCount
+    End If
+  End If
+  Set playlistFolder = wsFSO.GetFolder(BotPath & "playlists").Files
+  For Each File in playlistFolder
+    If isPlaylist(File) Then
+      If Not InDatabase(File, 0) Then
+        Content = InputBox("Enter an alias for this new playlist: " & String(2, vbCrLf) & wsFSO.GetFileName(File) & String(2, vbCrLf) & "Note: Only spaces and letters please. Numbers and symbols in the playlist's alias will cause errors, you have been warned.", "Winamp Playlist")
+        If Len(Content) = 0 Then
+          Do While Len(Content) = 0
+            Content = InputBox("Enter an alias for this new playlist: " & String(2, vbCrLf) & wsFSO.GetFileName(File) & String(2, vbCrLf) & "Note: Only spaces and letters please. Numbers and symbols in the playlist's alias will cause errors, you have been warned.", "Winamp Playlist")
+          Loop
+        End If
+        Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `alias`='" & Content & "'")
+        If rs.Fields(0) > 0 Then
+          Do While rs.Fields(0) > 0 or Len(Content) = 0
+            Content = InputBox("That alias already exists. Please enter another one:" & String(2, vbCrLf) & wsFSO.GetFileName(File) & String(2, vbCrLf) & "Note: Only spaces and letters please. Numbers and symbols in the playlist's alias will cause errors, you have been warned.", "Winamp Playlist")
+            Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `alias`='" & Content & "'")
+          Loop
+        End If
+        If LCase(Content) = "list" or LCase(Content) = "default" Then
+          Do While LCase(Content) = "list" or LCase(Content) = "default" or Len(Content) = 0
+            Content = InputBox("You cannot use that as an alias for this playlist:" & String(2, vbCrLf) & wsFSO.GetFileName(File) & String(2, vbCrLf) & "Note: Only spaces and letters please. Numbers and symbols in the playlist's alias will cause errors, you have been warned.", "Winamp Playlist")
+          Loop
+        End If
+        wsConn.Execute("INSERT INTO `playlists` (`path`, `alias`, `default`)" & _
+                       "VALUES ('" & File & "', '" & Content & "', '0')")
+        Set tmp = CreateObj("Menu", Replace(Trim(Content), " ", vbNullString))
+        tmp.Parent = mnuPlaylistOperations
+        tmp.Caption = Content
+        Set tmp = CreateObj("Menu", "SetDefault" & Replace(Trim(Content), " ", vbNullString))
+        tmp.Parent = mnuSetDefaultPlaylist
+        tmp.Caption = Content
+        wsSC.AddCode _
+          "Sub " & Replace(Trim(Content), " ", vbNullString) & "_Click()" & vbNewLine & _
+          "   Call playstation(""" & File & """)" & vbNewLine & _
+          "   Call AddRecent(""" & Content & """, """ & File & """)" & vbNewLine & _
+          "End Sub"
+        wsSC.AddCode _
+          "Sub SetDefault" & Replace(Trim(Content), " ", vbNullString) & "_Click()" & vbNewLine & _
+          "   Call setdefault(""" & Content & """)" & vbNewLine & _
+          "End Sub"
+      End If
+    End If
+  Next
+  desktop = wsShell.SpecialFolders("Desktop")
+  Set playlistFolder = wsFSO.GetFolder(desktop).Files
+  For Each File in playlistFolder
+    If isPlaylist(File) Then
+      If Not InDatabase(File, 0) Then
+        If Not wsFSO.FileExists(BotPath & "\playlists\" & wsFSO.GetFileName(File)) Then
+          wsFSO.MoveFile File, BotPath & "\playlists\"
+        End If
+      End If
+    End If
+  Next
+End Sub
+
+Sub AddRecent(Content, File)
+  Randomize
+  num = generateRandomMenuName()
+  Set tmp = CreateObj("Menu", num)
+  tmp.Parent = mnuRecentlyPlayed
+  tmp.Caption = Content
+  wsSC.AddCode _
+    "Sub " & num & "_Click()" & vbNewLine & _
+    "  Call playstation(""" & File & """)" & vbNewLine & _
+    "End Sub"
+End Sub
+
+Private Function getTypeCountWord(TypeOfFiles, Num)
+  If TypeOfFiles = 0 Then
+    Select Case CInt(Num)
+      Case 1:          getTypeCountWord = "Playlist"
+      Case Else:       getTypeCountWord = "Playlists"
+    End Select
+  Else
+    Select Case CInt(Num)
+      Case 1:          getTypeCountWord = "Station"
+      Case Else:       getTypeCountWord = "Stations"
+    End Select
+  End If
+End Function
+
+'// [ Script Close ]
+
+Sub Event_Close()
+  wsConn.Close
+  Set wsConn = Nothing
+End Sub
+
+'// [ Command Execution ]
+
+Public Sub Event_Command(Command)
+  If scriptEnabled = False Then
+    Exit Sub
+  End If
+  Select Case LCase(Command.Name)
+    Case "playlist":            Call playlistCmd(Command, Command.Username)
+    Case "winampidle":          Call winampidleCmd(Command, Command.username)
+    Case "addradio":            Call addradioCmd(Command, Command.Username)
+    Case "playradio":           Call playradioCmd(Command, Command.Username)
+    Case "closewinamp":         Call closewinampCmd(Command, Command.Username)
+    Case "startwinamp":         Call startwinampCmd(Command, Command.Username)
+  End Select
+End Sub
+
+'/////////////////////////////
+'//      COMMAND SUBS       //
+'/////////////////////////////
+
+'// [ Command Creation ]
+
+Public Sub CreateCmds()
+  Set cmd = OpenCommand("startwinamp")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("startwinamp")
+    With cmd
+      .Description = "Loads winamp."
+      .RequiredRank = 200
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("closewinamp")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("closewinamp")
+    With cmd
+      .Description = "Closes winamp."
+      .RequiredRank = 200
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("addradio")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("addradio")
+    With cmd
+      .Description = "Adds a radio station to your bot."
+      .RequiredRank = 200
+      Set Parameter = .NewParameter("<alias>|<url>", False, "Word")
+      With Parameter
+        .Description = "addradio <alias>|<url> = Adds the specified station."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("playradio")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("playradio")
+    With cmd
+      .Description = "Plays the specified radio station."
+      .RequiredRank = 200
+      Set Parameter = .NewParameter("<alias>", False, "Word")
+      With Parameter
+        .Description = "playradio <alias> = Plays the specified radio station."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("winampidle")
+  If cmd Is Nothing Then
+    Set cmd = Createcommand("winampidle")
+    With cmd
+      .Description = "Does various commands with Winamp Idle."
+      .RequiredRank = 200
+      Set Parameter = .NewParameter("on/off/<message>", False, "Word")
+      With Parameter
+        .Description = "winampidle on = Turns on winamp idle." & vbNewLine & _
+                       "winampidle off = Turns off winamp idle." & vbNewLine & _
+                       "winampidle <message> = Sets winamp idle message."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("playlist")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("playlist")
+    With cmd
+      .Description = "Loads the specified playlist and plays it."
+      .RequiredRank = 200
+      Set Parameter = .NewParameter("<alias>/list/default|<alias/playlist/station>", False, "Word")
+      With Parameter
+        .Description = "playlist <alias> = Loads the specified playlist." & vbNewLine & _
+                       "playlist list = Displays a list of currently loaded playlists/stations." & vbNewLine & _
+                       "playlist default|<alias> = Sets a default playlist/station to play on bot load." & vbNewLine & _
+                       "playlist default|toggle = Enables/Disables the default playlist." & vbNewLine & _
+                       "playlist default|playlist = Shows your current default playlist." & vbNewLine & _
+                       "playlist default|station = Shows your current default station." & vbNewLine & _
+                       "playlist folder = Plays all music located in the bot's music folder."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+End Sub
+
+'// [ Playlist Command ]
+
+Sub playlistCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      cmd = Command.Args
+      If LCase(cmd) = "folder" Then
+        fileCount = 0
+        Set musicFolder = wsFSO.GetFolder(BotPath & "music").Files
+        For Each File in musicFolder
+          fileCount = fileCount + 1
+        Next
+        Command.Respond "Loaded " & fileCount & " " & getNumberSongWord(fileCount) & " from 'music' folder."
+        PlayMusicFolder()
+        Exit Sub
+      End If
+      playlistsListed = vbNullString
+      playlistcount = 0
+      If InStr(cmd, "|") > 0 Then
+        cmdArgs = Split(cmd, "|")
+        argFirst = cmdArgs(0)
+        argSecond = cmdArgs(1)
+        If LCase(argFirst) = "default" Then
+          If LCase(argSecond) = "playlist" Then
+            Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `default`=1")
+            If rs.Fields(0) = 1 Then
+              Set rs = wsConn.Execute("SELECT * FROM `playlists` WHERE `default`=1")
+              Command.Respond "Your default playlist is: " & rs.Fields(2)
+              Exit Sub
+            Else
+              Command.Respond "You have not set a default playlist yet."
+              Exit Sub
+            End If
+          ElseIf LCase(argSecond) = "station" Then
+            Set rs = wsConn.Execute("SELECT COUNT(*) FROM `stations` WHERE `default`=1")
+            If rs.Fields(0) = 1 Then
+              Set rs = wsConn.Execute("SELECT * FROM `stations` WHERE `default`=1")
+              Command.Respond "Your default station is: " & rs.Fields(2)
+              Exit Sub
+            Else
+              Command.Respond "You have not set a default station yet."
+              Exit Sub
+            End If
+          End If
+          If LCase(argSecond) = "toggle" Then
+            Set rs = wsConn.Execute("SELECT * FROM `settings` WHERE `key`='defaultPlaylistEnabled'")
+            Select Case rs.Fields(2)
+              Case 1:              wsConn.Execute("UPDATE `settings` SET `value`='0' WHERE `key`='defaultPlaylistEnabled'"): Command.Respond "Your default playlist/station has been disabled": _
+                Set rs = wsConn.Execute("SELECT COUNT(*) FROM `stations` WHERE `default`=1")
+                If rs.Fields(0) > 0 Then
+                  Set rs = wsConn.Execute("SELECT * FROM `stations` WHERE `default`=1")
+                  Set tmp = GetObjByName("SetDefault" & Replace(Trim(rs.Fields(2)), " ", vbNullString))
+                  tmp.Caption = rs.Fields(2) & " (default) OFF"
+                  Set tmp = GetObjByName(Replace(Trim(rs.Fields(2)), " ", vbNullString))
+                  tmp.Caption = rs.Fields(2) & " (default) OFF"
+                End If
+                Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `default`=1")
+                If rs.Fields(0) > 0 Then
+                  Set rs = wsConn.Execute("SELECT * FROM `playlists` WHERE `default`=1")
+                  Set tmp = GetObjByName("SetDefault" & Replace(Trim(rs.Fields(2)), " ", vbNullString))
+                  tmp.Caption = rs.Fields(2) & " (default) OFF"
+                  Set tmp = GetObjByName(Replace(Trim(rs.Fields(2)), " ", vbNullString))
+                  tmp.Caption = rs.Fields(2) & " (default) OFF"
+                End If
+              Case 0:              wsConn.Execute("UPDATE `settings` SET `value`='1' WHERE `key`='defaultPlaylistEnabled'"): Command.Respond "Your default playlist/station has been enabled"
+            End Select
+            Exit Sub
+          End If
+          Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `alias`='" & ArgSecond & "'")
+          If rs.Fields(0) <> 0 Then
+            Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `default`=1")
+            If rs.Fields(0) = 1 Then
+              Set rs = wsConn.Execute("SELECT * FROM `stations` WHERE `default`=1")
+              Set tmp = GetObjByName("SetDefault" & Replace(Trim(rs.Fields(2)), " ", vbNullString))
+              tmp.Caption = rs.Fields(2)
+              Set tmp = GetObjByName(Replace(Trim(rs.Fields(2)), " ", vbNullString))
+              tmp.Caption = rs.Fields(2)
+            End If
+            Set rs = wsConn.Execute("SELECT * FROM `playlists` WHERE `alias`='" & ArgSecond & "'")
+            name = rs.Fields(2)
+            wsConn.Execute("UPDATE `settings` SET `value`='0' WHERE `key`='defaultType'")
+            wsConn.Execute("UPDATE `playlists` SET `default`='0'")
+            wsConn.Execute("UPDATE `playlists` SET `default`='1' WHERE `alias`='" & name & "'")
+            Command.Respond "Your default playlist has been set to: " & name
+            Set tmp = GetObjByName("SetDefault" & Replace(Trim(name), " ", vbNullString))
+            tmp.Caption = name & " (default) ON"
+            Set tmp = GetObjByName(Replace(Trim(name), " ", vbNullString))
+            tmp.Caption = name & " (default) ON"
+            Set rs = wsConn.Execute("SELECT COUNT(*) FROM `stations` WHERE `default`=1")
+            If rs.Fields(0) > 0 Then
+              Set rs = wsConn.Execute("SELECT * FROM `stations` WHERE `default`=1")
+              Set tmp = GetObjByName("SetDefault" & Replace(Trim(rs.Fields(2)), " ", vbNullString))
+              tmp.Caption = rs.Fields(2) & " (default) OFF"
+              Set tmp = GetObjByName(Replace(Trim(rs.Fields(2)), " ", vbNullString))
+              tmp.Caption = rs.Fields(2) & " (default) OFF"
+            End If
+          Else
+            Set rs = wsConn.Execute("SELECT COUNT(*) FROM `stations` WHERE `alias`='" & ArgSecond & "'")
+            If rs.Fields(0) <> 0 Then
+              Set rs = wsConn.Execute("SELECT COUNT(*) FROM `stations` WHERE `default`=1")
+              If rs.Fields(0) = 1 Then
+                Set rs = wsConn.Execute("SELECT * FROM `stations` WHERE `default`=1")
+                Set tmp = GetObjByName("SetDefault" & Replace(Trim(rs.Fields(2)), " ", vbNullString))
+                tmp.Caption = rs.Fields(2)
+                Set tmp = GetObjByName(Replace(Trim(rs.Fields(2)), " ", vbNullString))
+                tmp.Caption = rs.Fields(2)
+              End If
+              Set rs = wsConn.Execute("SELECT * FROM `stations` WHERE `alias`='" & ArgSecond & "'")
+              name = rs.Fields(2)
+              wsConn.Execute("UPDATE `settings` SET `value`='1' WHERE `key`='defaultType'")
+              wsConn.Execute("UPDATE `stations` SET `default`='0'")
+              wsConn.Execute("UPDATE `stations` SET `default`='1' WHERE `alias`='" & name & "'")
+              Command.Respond "Your default station has been set to: " & name
+              Set tmp = GetObjByName("SetDefault" & Replace(Trim(name), " ", vbNullString))
+              tmp.Caption = name & " (default) ON"
+              Set tmp = GetObjByName(Replace(Trim(name), " ", vbNullString))
+              tmp.Caption = name & " (default) ON"
+              Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `default`=1")
+              If rs.Fields(0) > 0 Then
+                Set rs = wsConn.Execute("SELECT * FROM `playlists` WHERE `default`=1")
+                Set tmp = GetObjByName("SetDefault" & Replace(Trim(rs.Fields(2)), " ", vbNullString))
+                tmp.Caption = rs.Fields(2) & " (default) OFF"
+                Set tmp = GetObjByName(Replace(Trim(rs.Fields(2)), " ", vbNullString))
+                tmp.Caption = rs.Fields(2) & " (default) OFF"
+              End If
+            Else
+              Command.Respond "That playlist/station does not exist."
+              Exit Sub
+            End If
+          End If
+        End If
+        Exit Sub
+      End If
+      If LCase(cmd) = "list" Then
+        Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists`")
+        Set rs2 = wsConn.Execute("SELECT COUNT(*) FROM `stations`")
+        If rs.Fields(0) <> 0 Or rs2.Fields(0) <> 0 Then
+          playlistcount = rs.Fields(0) + rs2.Fields(0)
+        Else
+          Command.Respond "You have not yet added any playlists/stations to the database."
+          Exit Sub
+        End If
+        playlistsListed = getPlaylists()
+        Command.Respond "You have " & playlistcount & " " & getWord(playlistcount) & ": " & Left(playlistsListed, Len(playlistsListed) -2)
+        If InStr(playlistsListed, "(radio)") > 0 Then
+          Command.Respond "Playlists specified with (radio) next to them are radio stations and can only be played using " & BotVars.Trigger & "playradio <name>."
+        End If
+        Exit Sub
+      End If
+      Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `alias`='" & cmd & "'")
+      If rs.Fields(0) = 0 Then
+        Command.Respond "Playlist does not exist."
+        Exit Sub
+      End If
+      Set rs = wsConn.Execute("SELECT * FROM `playlists` WHERE `alias`='" & cmd & "'")
+      If Not wsFSO.FileExists(rs.Fields(1)) Then
+        Command.Respond "An error occurred while playing the playlist, this may be due to the playlist file being deleted from the hard drive. Please replace the playlist back into the 'playlists' folder to make this playlist load again."
+        Exit Sub
+      End If
+      wsShell.Run("winamp.exe """ & rs.Fields(1) & """")
+      Command.Respond "Playing Playlist (" & rs.Fields(2) & ")"
+      Randomize
+      num = generateRandomMenuName()
+      Set tmp = CreateObj("Menu", num)
+      tmp.Parent = mnuRecentlyPlayed
+      tmp.Caption = rs.Fields(2)
+      wsSC.AddCode _
+        "Sub " & num & "_Click()" & vbNewLine & _
+        "  Call playstation(""" & rs.Fields(1) & """)" & vbNewLine & _
+        "End Sub"
+    End If
+  End If
+End Sub
+
+Sub ws_create_db()
+  Set Catalog = CreateObject("ADOX.Catalog")
+  Catalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & wsDatabasePath
+  ws_connect_db()
+  wsConn.Execute("CREATE TABLE `watchfolders` (`ID` COUNTER, `path` varchar(255) NOT NULL)")
+  wsConn.Execute("CREATE TABLE `playlists` (`ID` COUNTER, `path` varchar(255) NOT NULL, `alias` varchar(200) NOT NULL, `default` int NULL)")
+  wsConn.Execute("CREATE TABLE `settings` (`ID` COUNTER, `key` varchar(200) NOT NULL, `value` varchar(200) NOT NULL)")
+  wsConn.Execute("CREATE TABLE `ignored` (`ID` COUNTER, `path` varchar(200) NOT NULL)")
+  wsConn.Execute("CREATE TABLE `stations` (`ID` COUNTER, `url` varchar(200) NOT NULL, `alias` varchar(200) NOT NULL, `default` int NULL)")
+End Sub
+
+Sub ws_connect_db()
+  Set wsConn = CreateObject("ADODB.connection")
+  dsn = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & wsDatabasePath
+  wsConn.ConnectionString = dsn
+  wsConn.Open
+End Sub
+
+Sub ws_create_settings()
+  wsConn.Execute("INSERT INTO `settings` (`key`, `value`)" & _
+                 "VALUES ('defaultPlaylistEnabled', '0')")
+  wsConn.Execute("INSERT INTO `settings` (`key`, `value`)" & _
+                 "VALUES ('winampIdle', '0')")
+  wsConn.Execute("INSERT INTO `settings` (`key`, `value`)" & _
+                 "VALUES ('winampIdleMsg', '/me is currently listening to: %mp3')")
+  wsConn.Execute("INSERT INTO `settings` (`key`, `value`)" & _
+                 "VALUES ('defaultType', '0')")
+End Sub
+
+Sub NowPlayingTimerLoad_Timer()
+  If MediaPlayer.IsPlaying Then
+    If InStr(LCase(MediaPlayer.TrackName), "-") > 0 And InStr(LCase(MediaPlayer.TrackName), "http:") = 0 And InStr(LCase(MediaPlayer.TrackName), "buffer") = 0 Then
+      lenC = Len(MediaPlayer.TrackName) + Len("Now Playing: ")
+      For i = 1 to lenC
+        s1 = s1 & "_"
+        s2 = s2 & "¯"
+        If i = lenC Then
+          s1 = Mid(s1, 1, lenC - 8)
+          s2 = Mid(s2, 1, lenC - 8)
+          AddChat vbGreen, "   ÿcb»ÿc0 Now Playing: ÿc1" & MediaPlayer.TrackName
+        End If
+      Next
+      NowPlayingTimerLoad.Enabled = False
+    End If
+  End If
+End Sub
+
+Private Sub playstation(url)
+  urlblank = Replace(url, """", vbNullString)
+  Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `path`='" & urlblank & "'")
+  If rs.Fields(0) = 0 Then
+    Set rs = wsConn.Execute("SELECT * FROM `stations` WHERE `url`='" & urlblank & "'")
+    name = rs.Fields(2)
+  Else
+    Set rs = wsConn.Execute("SELECT * FROM `playlists` WHERE `path`='" & urlblank & "'")
+    name = rs.Fields(2)
+  End If
+  wsShell.Run("winamp.exe """ & url & """")
+  AddChat vbGreen, "   ÿcb»ÿc0 Now Playing: ÿc1" & name
+End Sub
+
+Private Sub setdefault(file)
+  file = Replace(file, """", vbNullString)
+  Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `alias`='" & file & "'")
+  If rs.Fields(0) <> 0 Then
+    Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `default`=1")
+    If rs.Fields(0) = 1 Then
+      Set rs = wsConn.Execute("SELECT * FROM `playlists` WHERE `default`=1")
+      Set tmp = GetObjByName("SetDefault" & Replace(Trim(rs.Fields(2)), " ", vbNullString))
+      tmp.Caption = rs.Fields(2)
+      Set tmp = GetObjByName(Replace(Trim(rs.Fields(2)), " ", vbNullString))
+      tmp.Caption = rs.Fields(2)
+    End If
+    wsConn.Execute("UPDATE `settings` SET `value`='0' WHERE `key`='defaultType'")
+    wsConn.Execute("UPDATE `playlists` SET `default`='0'")
+    wsConn.Execute("UPDATE `playlists` SET `default`='1' WHERE `alias`='" & file & "'")
+    AddChat vbGreen, "   ÿcb»ÿc0 Your default playlist has been set to: ÿc1" & file
+    Set tmp = GetObjByName("SetDefault" & Replace(Trim(file), " ", vbNullString))
+    tmp.Caption = file & " (default) ON"
+    Set tmp = GetObjByName(Replace(Trim(file), " ", vbNullString))
+    tmp.Caption = file & " (default) ON"
+    Set rs = wsConn.Execute("SELECT COUNT(*) FROM `stations` WHERE `default`=1")
+    If rs.Fields(0) > 0 Then
+      Set rs = wsConn.Execute("SELECT * FROM `stations` WHERE `default`=1")
+      Set tmp = GetObjByName("SetDefault" & Replace(Trim(rs.Fields(2)), " ", vbNullString))
+      tmp.Caption = rs.Fields(2) & " (default) OFF"
+      Set tmp = GetObjByName(Replace(Trim(rs.Fields(2)), " ", vbNullString))
+      tmp.Caption = rs.Fields(2) & " (default) OFF"
+    End If
+  Else
+    Set rs = wsConn.Execute("SELECT COUNT(*) FROM `stations` WHERE `alias`='" & file & "'")
+    If rs.Fields(0) <> 0 Then
+      Set rs = wsConn.Execute("SELECT COUNT(*) FROM `stations` WHERE `default`=1")
+      If rs.Fields(0) = 1 Then
+        Set rs = wsConn.Execute("SELECT * FROM `stations` WHERE `default`=1")
+        Set tmp = GetObjByName("SetDefault" & Replace(Trim(rs.Fields(2)), " ", vbNullString))
+        tmp.Caption = rs.Fields(2)
+        Set tmp = GetObjByName(Replace(Trim(rs.Fields(2)), " ", vbNullString))
+        tmp.Caption = rs.Fields(2)
+      End If
+      wsConn.Execute("UPDATE `settings` SET `value`='1' WHERE `key`='defaultType'")
+      wsConn.Execute("UPDATE `stations` SET `default`='0'")
+      wsConn.Execute("UPDATE `stations` SET `default`='1' WHERE `alias`='" & file & "'")
+      AddChat vbGreen, "   ÿcb»ÿc0 Your default station has been set to: ÿc1" & file
+      Set tmp = GetObjByName("SetDefault" & Replace(Trim(file), " ", vbNullString))
+      tmp.Caption = file & " (default) ON"
+      Set tmp = GetObjByName(Replace(Trim(file), " ", vbNullString))
+      tmp.Caption = file & " (default) ON"
+      Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `default`=1")
+      If rs.Fields(0) > 0 Then
+        Set rs = wsConn.Execute("SELECT * FROM `playlists` WHERE `default`=1")
+        Set tmp = GetObjByName("SetDefault" & Replace(Trim(rs.Fields(2)), " ", vbNullString))
+        tmp.Caption = rs.Fields(2) & " (default) OFF"
+        Set tmp = GetObjByName(Replace(Trim(rs.Fields(2)), " ", vbNullString))
+        tmp.Caption = rs.Fields(2) & " (default) OFF"
+      End If
+    End If
+  End If
+End Sub
+
+Private Function IsPlaylist(FileName)
+  ValidExts = Array("pls", "m3u", "asf")
+  FileExt = Split(LCase(FileName), ".")(UBound(Split(LCase(FileName), ".")))
+  For i = 0 To UBound(ValidExts)
+    If LCase(FileExt) = ValidExts(i) Then
+      IsPlaylist = True
+      Exit Function
+    End If
+  Next
+  IsPlaylist = False
+End Function
+
+Sub fixStations_Timer()
+  If MediaPlayer.IsLoaded Then
+    If MediaPlayer.IsPlaying Then
+      If InStr(LCase(MediaPlayer.TrackName) , "buffer") > 0 And tuningRadio.Enabled = False Then
+        AddChat vbYellow, "   ÿcb»ÿc0 Auto-Tuner: Tuning Radio Performance..."
+        If winampIdle.Enabled = True Then
+          winampIdle.Enabled = False
+        End If
+        tuningRadio.Enabled = True
+        MediaPlayer.PlayTrack
+      End If
+    End If
+  End If
+End Sub
+
+Private Function InDatabase(FileName, TypeOfData)
+  If TypeOfData = 0 Then
+    Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `path`='" & FileName & "'")
+  Else
+    Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists` WHERE `alias`='" & FileName & "'")
+  End If
+  If rs.Fields(0) > 0 Then
+    InDatabase = True
+    Exit Function
+  End If
+  InDatabase = False
+End Function
+
+Public Sub CreateMenus()
+  Set tmp = CreateObj("Menu", "mnuOnLoad")
+  tmp.Caption = "Default Playlist/Station"
+  Set tmp = CreateObj("Menu", "mnuSetDefaultPlaylist")
+  tmp.Parent = mnuOnLoad
+  tmp.Caption = "Playlist"
+  Set tmp = CreateObj("Menu", "mnuSetDefaultStation")
+  tmp.Parent = mnuOnLoad
+  tmp.Caption = "Station"
+  Set tmp = CreateObj("Menu", "mnuDash21")
+  tmp.Caption = "-"
+  Set tmp = CreateObj("Menu", "mnuPlayBotFolder")
+  tmp.Caption = "Play Music From Bot Folder"
+  Set tmp = CreateObj("Menu", "mnuPlayCustomFolder")
+  tmp.Caption = "Play Music From User-Defined Folder..."
+  Set tmp = CreateObj("Menu", "mnuDash2")
+  tmp.Caption = "-"
+  Set tmp = CreateObj("Menu", "mnuPlaylistOperations")
+  tmp.Caption = "Playlists"
+  Set tmp = CreateObj("Menu", "mnuStations")
+  tmp.Caption = "Radio Stations"
+  Set tmp = CreateObj("Menu", "mnuRecentlyPlayed")
+  tmp.Caption = "Recently Played"
+  Set tmp = CreateObj("Menu", "mnuDash3")
+  tmp.Caption = "-"
+  Set tmp = CreateObj("Menu", "mnuDeleteMusicFolder")
+  tmp.Caption = "Permanently Erase Music From Bot Folder"
+  Set tmp = CreateObj("Menu", "mnuDash4")
+  tmp.Caption = "-"
+  Set tmp = CreateObj("Menu", "mnuPlaybackOperations")
+  tmp.Caption = "Playback Operations"
+  Set tmp = CreateObj("Menu", "mnuPlaybackPlay")
+  tmp.Parent = mnuPlaybackOperations
+  tmp.Caption = "Play"
+  Set tmp = CreateObj("Menu", "mnuPlaybackStop")
+  tmp.Parent = mnuPlaybackOperations
+  tmp.Caption = "Stop"
+  Set tmp = CreateObj("Menu", "mnuPlaybackPause")
+  tmp.Parent = mnuPlaybackOperations
+  tmp.Caption = "Pause"
+  Set tmp = CreateObj("Menu", "mnuPlaybackFos")
+  tmp.Parent = mnuPlaybackOperations
+  tmp.Caption = "Fade Out Stop"
+  Set tmp = CreateObj("Menu", "mnuPlaybackDash1")
+  tmp.Parent = mnuPlaybackOperations
+  tmp.Caption = "-"
+  Set tmp = CreateObj("Menu", "mnuPlaybackNext")
+  tmp.Parent = mnuPlaybackOperations
+  tmp.Caption = "Next"
+  Set tmp = CreateObj("Menu", "mnuPlaybackPrev")
+  tmp.Parent = mnuPlaybackOperations
+  tmp.Caption = "Previous"
+  Set tmp = CreateObj("Menu", "mnuPlaybackDash2")
+  tmp.Parent = mnuPlaybackOperations
+  tmp.Caption = "-"
+  Set tmp = CreateObj("Menu", "mnuPlaybackRepeat")
+  tmp.Parent = mnuPlaybackOperations
+  tmp.Caption = "Repeat"
+  Set tmp = CreateObj("Menu", "mnuPlaybackShuffle")
+  tmp.Parent = mnuPlaybackOperations
+  tmp.Caption = "Shuffle"
+  Set tmp = CreateObj("Menu", "mnuDash5")
+  tmp.Caption = "-"
+  Set tmp = CreateObj("Menu", "mnuMp3")
+  tmp.Caption = "Currently Playing"
+  Set tmp = CreateObj("Menu", "mnuMp3Title")
+  tmp.Parent = mnuMp3
+  If MediaPlayer.IsPlaying Or MediaPlayer.IsPaused Then
+    tmp.Caption = "Title: " & MediaPlayer.TrackName
+  Else
+    tmp.Caption = "Title: Nothing is playing"
+  End If
+  Set tmp = CreateObj("Menu", "mnuMp3CurrentTime")
+  tmp.Parent = mnuMp3
+  If MediaPlayer.IsPlaying Or MediaPlayer.IsPaused Then
+    tmp.Caption = "Track Position: " & SetTimeFormat(MediaPlayer.TrackTime)
+  Else
+    tmp.Caption = "Track Position: 00:00/00:00"
+  End If
+  Set tmp = CreateObj("Menu", "mnuMp3PlaylistPosition")
+  tmp.Parent = mnuMp3
+  If MediaPlayer.IsPlaying Or MediaPlayer.IsPaused Then
+    tmp.Caption = "Playlist Position: " & MediaPlayer.PlaylistPosition & "/" & MediaPlayer.PlaylistCount
+  Else
+    tmp.Caption = "Playlist Position: 0/0"
+  End If
+  Set tmp = CreateObj("Menu", "mnuIdleOperations")
+  tmp.Caption = "Winamp Idle"
+  Set tmp = CreateObj("Menu", "mnuIdleOn")
+  tmp.Parent = mnuIdleOperations
+  tmp.Caption = "Turn On"
+  Set tmp = CreateObj("Menu", "mnuIdleOff")
+  tmp.Parent = mnuIdleOperations
+  tmp.Caption = "Turn Off"
+  Set tmp = CreateObj("Menu", "mnuIdleMsg")
+  tmp.Parent = mnuIdleOperations
+  tmp.Caption = "Set Message"
+  Set tmp = CreateObj("Menu", "mnuDash10")
+  tmp.Caption = "-"
+  Set tmp = CreateObj("Menu", "mnuFolderOperations")
+  tmp.Caption = "Folder Operations"
+  Set tmp = CreateObj("Menu", "mnuMusicFolder")
+  tmp.Parent = mnuFolderOperations
+  tmp.Caption = "Open Music Folder"
+  Set tmp = CreateObj("Menu", "mnuPlaylistsFolder")
+  tmp.Parent = mnuFolderOperations
+  tmp.Caption = "Open Playlists Folder"
+  Set tmp = CreateObj("Menu", "mnuDash11")
+  tmp.Caption = "-"
+  Set tmp = CreateObj("Menu", "mnuTutorial")
+  tmp.Caption = "Open Tutorial"
+End Sub
+
+Sub mnuTutorial_Click()
+  Call LoadTutorial()
+End Sub
+
+Sub mnuMusicFolder_Click()
+  wsShell.Run(BotPath & "\music\")
+End Sub
+
+Sub mnuPlaylistsFolder_Click()
+  wsShell.Run(BotPath & "\playlists\")
+End Sub
+
+Sub mnuIdleOn_Click()
+  winampIdle.Interval = 1
+  winampidle.Enabled = True
+  wsConn.Execute("UPDATE `settings` SET `value`='1' WHERE `key`='winampIdle'")
+  AddChat vbGreen, "   ÿcb»ÿc0 Winamp Idle Activated"
+End Sub
+
+Sub mnuIdleMsg_Click()
+  Set rs = wsConn.Execute("SELECT * FROM `settings` WHERE `key`='winampIdleMsg'")
+  Content = InputBox("Enter your idle message for Winamp Playlist:", "Winamp Playlist", rs.Fields(2))
+  If Len(Content) = 0 Then
+    Set rs = wsConn.Execute("SELECT * FROM `settings` WHERE `key`='winampIdleMsg'")
+    wsIdleMsg = rs.Fields(2)
+    Exit Sub
+  End If
+  wsIdleMsg = Content
+  wsConn.Execute("UPDATE `settings` SET `value`='" & wsIdleMsg & "' WHERE `key`='winampIdleMsg'")
+  AddChat vbGreen, "   ÿcb»ÿc0 Winamp Idle Message Set"
+End Sub
+
+Sub tuningRadio_Timer()
+  If MediaPlayer.IsPlaying Then
+    tuningRadio.Enabled = False
+    Set rs = wsConn.Execute("SELECT * FROM `settings` WHERE `key`='winampIdle'")
+    If CInt(rs.Fields(2)) = 1 And winampIdle.Enabled = False Then
+      winampIdle.Enabled = True
+    End If
+  End If
+End Sub
+
+Sub winampIdle_Timer()
+    If Not MediaPlayer.IsPlaying And tuningRadio.Enabled = False And MediaPlayer.isPaused = False Then
+      idledTrackName = vbNullString
+    End If
+    If MediaPlayer.IsLoaded Then
+      If MediaPlayer.IsPlaying Then
+        If (InStr(LCase(MediaPlayer.TrackName), "%") > 0 And InStr(LCase(MediaPlayer.TrackName), "buffer") > 0) or InStr(MediaPlayer.TrackName, "-") = 0 Then
+          Exit Sub
+        End If
+        curTrack = MediaPlayer.TrackName
+        If Len(wsIdleMsg) = 0 Then
+          wsIdleMsg = "/me is currently listening to: %mp3"
+        End If
+        Set rs = wsConn.Execute("SELECT * FROM `settings` WHERE `key`='winampIdleMsg'")
+        wsIdleMsg = rs.Fields(2)
+        wsIdleMsg = Replace(wsIdleMsg, "%mp3", curTrack)
+        If idledTrackName <> curTrack Then
+          If InStr(curTrack, "-") = 0 Then
+            idledTrackName = curTrack
+            Exit Sub
+          End If
+          If InStr(LCase(curTrack), "http") > 0 Or InStr(LCase(curTrack), "buffer") > 0 Or InStr(LCase(curTrack), "aol radio") > 0 Then
+            idledTrackName = curTrack
+            Exit Sub
+          End If
+          AddQ wsIdleMsg
+          idledTrackName = MediaPlayer.TrackName
+        End If
+      End If
+    End If
+End Sub
+
+Sub mnuIdleOff_Click()
+  winampIdle.Enabled = False
+  wsConn.Execute("UPDATE `settings` SET `value`='0' WHERE `key`='winampIdle'")
+  AddChat vbGreen, "   ÿcb»ÿc0 Winamp Idle Deactivated"
+End Sub
+
+Sub mnuPlaybackNext_Click()
+  Command BotVars.Username, "/next", True
+End Sub
+
+Sub mnuPlaybackPrev_Click()
+  Command BotVars.Username, "/prev", True
+End Sub
+
+Sub mnuPlaybackRepeat_Click()
+  Command BotVars.Username, "/repeat", True
+End Sub
+
+Sub mnuPlaybackShuffle_Click()
+  Command BotVars.Username, "/shuffle", True
+End Sub
+
+Sub mnuMp3_Click()
+  Command BotVars.Username, "/mp3", True
+End Sub
+
+Sub mnuPlaybackPlay_Click()
+  Command BotVars.Username, "/play", True
+End Sub
+
+Sub mnuPlaybackStop_Click()
+  Command BotVars.Username, "/stop", True
+End Sub
+
+Sub mnuPlaybackPause_Click()
+  Command BotVars.Username, "/pause", True
+End Sub
+
+Sub mnuPlaybackFos_Click()
+  Command BotVars.Username, "/fos", True
+End Sub
+
+Sub mnuDeleteMusicFolder_Click()
+  Content = MsgBox("Are you sure you want to do this? This may cause errors with your current playlists and they won't load anymore if the music is removed.", vbYesNo, "Winamp Playlist")
+  If Content = vbNo Then
+    Exit Sub
+  End If
+  Set musicFolder = wsFSO.GetFolder(BotPath & "music").Files
+  For Each File In musicFolder
+    wsFSO.DeleteFile(File)
+  Next
+  MsgBox "Files inside the music folder have been deleted.", vbOkOnly, "Winamp Playlist"
+End Sub
+
+Sub mnuPlayBotFolder_Click()
+  fileCount = 0
+  Set musicFolder = wsFSO.GetFolder(BotPath & "music").Files
+  AddChat vbGreen, "   ÿcb»ÿc0 Loaded " & musicFolder.Count & " " & getNumberSongWord(musicFolder.Count) & " from bot folder"
+  PlayMusicFolder()
+  Randomize
+  num = generateRandomMenuName()
+  Set tmp = CreateObj("Menu", num)
+  tmp.Parent = mnuRecentlyPlayed
+  tmp.Caption = "Folder"
+  wsSC.AddCode _
+    "Sub " & num & "_Click()" & vbNewLine & _
+    "  Call PlayMusicFolderFromRecent()" & vbNewLine & _
+    "End Sub"
+End Sub
+
+Sub PlayMusicFolderFromRecent()
+  fileCount = 0
+  Set musicFolder = wsFSO.GetFolder(BotPath & "music").Files
+  AddChat vbGreen, "   ÿcb»ÿc0 Loaded " & musicFolder.Count & " " & getNumberSongWord(musicFolder.Count) & " from bot folder"
+  PlayMusicFolder()
+End Sub
+
+Private Function getPlaylists()
+  curPlaylist = vbNullString
+  Set rs = wsConn.Execute("SELECT COUNT(*) FROM `playlists`")
+  If rs.Fields(0) <> 0 Then
+    ubID = rs.Fields(0)
+    Set rs = wsConn.Execute("SELECT * FROM `playlists` ORDER BY `alias`")
+    If Not (rs.BOF or rs.EOF) Then
+      Do Until rs.EOF
+        curPlaylist = curPlaylist & rs.Fields(2) & ", "
+        rs.MoveNext
+      Loop
+    End If
+    Set rs = Nothing
+  End If
+  Set rs = wsConn.Execute("SELECT COUNT(*) FROM `stations`")
+  If rs.Fields(0) <> 0 Then
+    ubID = rs.Fields(0)
+    Set rs = wsConn.Execute("SELECT * FROM `stations` ORDER BY `alias`")
+    If Not (rs.BOF or rs.EOF) Then
+      Do Until rs.EOF
+        curPlaylist = curPlaylist & rs.Fields(2) & " (radio), "
+        rs.MoveNext
+      Loop
+    End If
+    Set rs = Nothing
+  End If
+  If curPlaylist <> vbNullString Then
+    getPlaylists = curPlaylist
+  Else
+    getPlaylists = -1
+  End If
+End Function
+
+Sub mnuPlayCustomFolder_Click()
+    Dim numOptions, objFolder, objFolderItem
+    Dim objPath, objShell, strPath, strPrompt
+    ' Set the options for the dialog window
+    strPrompt = "Select a folder:"
+    If blnSimpleDialog = True Then
+      numOptions = 0      ' Simple dialog
+    Else
+      numOptions = &H10&  ' Additional text field to type folder path
+    End If
+    ' Create a Windows Shell object
+    Set objShell = CreateObject("Shell.Application")
+    ' If specified, convert "My Computer" to a valid
+    ' path for the Windows Shell's BrowseFolder method
+    If UCase(myStartLocation) = "MY COMPUTER" Then
+      Set objFolder = objShell.Namespace(MY_COMPUTER)
+      Set objFolderItem = objFolder.Self
+      strPath = objFolderItem.Path
+    Else
+      strPath = myStartLocationp
+    End If
+    Set objFolder = objShell.BrowseForFolder(WINDOW_HANDLE, strPrompt, _
+                                              numOptions, strPath)
+    ' Quit if no folder was selected
+    If objFolder Is Nothing Then
+      BrowseFolder = ""
+      Exit Sub
+    End If
+    ' Retrieve the path of the selected folder
+    Set objFolderItem = objFolder.Self
+    objPath = objFolderItem.Path
+    ' Return the path of the selected folder
+    BrowseFolder = objPath
+    If Len(BrowseFolder) <> 0 Then
+      Set CustomFolder = wsFSO.GetFolder(BrowseFolder).Files
+      For Each File In CustomFolder
+        fileCount = fileCount + 1
+      Next
+      If Len(fileCount) = 0 Or fileCount > 0 Then
+        wsShell.Run("winamp.exe """ & BrowseFolder & """")
+        AddChat vbGreen, "   ÿcb»ÿc0 Loaded " & fileCount & " " & getNumberSongWord(fileCount) & " from ÿcbÿci" & Split(BrowseFolder, "\")(UBound(Split(BrowseFolder, "\")))
+        Randomize
+        num = generateRandomMenuName()
+        Set tmp = CreateObj("Menu", num)
+        tmp.Parent = mnuRecentlyPlayed
+        tmp.Caption = BrowseFolder
+        wsSC.AddCode _
+          "Sub " & num & "_Click()" & _
+          "  Call playCustomFolder(""" & BrowseFolder & """)" & vbNewLine & _
+          "End Sub"
+      Else
+        AddChat vbRed, "   ÿcb»ÿc0 You have no music in that folder."
+      End If
+    Else
+      AddChat vbRed, "   ÿcb»ÿc0 You must provide a folder to play music with."
+    End If
+End Sub
+
+Sub playCustomFolder(Folder)
+  wsShell.Run("winamp.exe """ & Replace(Folder, """", vbNullString) & """")
+  Set CustomFolder = wsFSO.GetFolder(BrowseFolder).Files
+  For Each File In CustomFolder
+    fileCount = fileCount + 1
+  Next
+  If Len(fileCount) = 0 Or fileCount > 0 Then
+    wsShell.Run("winamp.exe """ & BrowseFolder & """")
+    AddChat vbGreen, "   ÿcb»ÿc0 Loaded " & fileCount & " " & getNumberSongWord(fileCount) & " from ÿcbÿci" & Split(BrowseFolder, "\")(UBound(Split(BrowseFolder, "\")))
+  End If
+End Sub
+
+Private Function getNumberSongWord(Number)
+  Select Case Number
+    Case 1:            getNumberSongWord = "song"
+    Case Else:         getNumberSongWord = "songs"
+  End Select
+End Function
+
+Private Function getNumberSongs(Playlist)
+  Set wsFSO = CreateObject("Scripting.FileSystemObject")
+  Set playlistFile = wsFSO.OpenTextFile(Playlist, 1, False)
+  Do While Not playlistFile.AtEndOfStream
+    line = playlistFile.ReadLine
+    If InStr(LCase(line), "numberofentries=") Then
+      getNumberSongs = Split(LCase(line), "numberofentries=")(1)
+    End If
+  Loop
+End Function
+
+Sub startwinampCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      wsShell.Run("winamp.exe")
+      Command.Respond "Winamp has been loaded."
+    End If
+  End If
+End Sub
+
+Sub closewinampCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      wsShell.Run "taskkill /F /IM winamp.exe", 0
+      Command.Respond "Winamp has been closed."
+    End If
+  End If
+End Sub
+
+Sub addradioCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      If Len(Command.Args) = 0 Then
+        Exit Sub
+      End If
+      alias = Split(Command.Args, "|")(0)
+      url = Split(Command.Args, "|")(1)
+      wsConn.Execute("INSERT INTO `stations` (`url`,`alias`,`default`)" & _
+                     "VALUES ('" & url & "', '" & alias & "', '0')")
+      Command.Respond "Added Station: " & alias
+    End If
+  End If
+End Sub
+
+Sub playradioCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      If Len(Command.Args) = 0 Then
+        Exit Sub
+      End If  
+      Set rs = wsConn.Execute("SELECT COUNT(*) FROM `stations` WHERE `alias`='" & Replace(Command.Args, "|url", vbNullString) & "'")
+      If rs.Fields(0) = 0 Then
+        Command.Respond "That station does not exist."
+        Exit Sub
+      End If
+      Set rs = wsConn.Execute("SELECT * FROM `stations` WHERE `alias`='" & Replace(Command.Args, "|url", vbNullString) & "'")
+      If InStr(LCase(Command.Args), "|url") > 0 Then
+        Command.Respond "The url to that station is: " & rs.Fields(1)
+        Exit Sub
+      End If
+      wsShell.Run("winamp.exe """ & rs.Fields(1) & """")
+      Command.Respond "Playing Station: " & rs.Fields(2)
+      Randomize
+      num = generateRandomMenuName()
+      Set tmp = CreateObj("Menu", num)
+      tmp.Parent = mnuRecentlyPlayed
+      tmp.Caption = rs.Fields(2)
+      wsSC.AddCode _
+        "Sub " & num & "_Click()" & vbNewLine & _
+        "  Call playstation(""" & rs.Fields(1) & """)" & vbNewLine & _
+        "End Sub"
+    End If
+  End If
+End Sub
+
+Private Function getWord(Number)
+  Select Case Number
+    Case 1:          getWord = "playlist"
+    Case Else:       getWord = "playlists"
+  End Select
+End Function
+
+Sub PlayMusicFolder()
+  wsShell.Run("winamp.exe """ & BotPath & "music" & """")
+End Sub
+
+Sub winampidleCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      cmd = Command.Args
+      Select Case LCase(cmd)
+        Case "on":                Call mnuIdleOn_Click():Command.Respond "Winamp Idle activated."
+        Case "off":               Call mnuIdleOff_Click():Command.Respond "Winamp Idle deactivated."
+        Case Else:                wsIdleMsg = cmd:wsConn.Execute("UPDATE `settings` SET `value`='" & wsIdleMsg & "' WHERE `key`='winampIdleMsg'"):Command.Respond "Winamp Idle Message Set."
+      End Select
+    End If
+  End If
+End Sub

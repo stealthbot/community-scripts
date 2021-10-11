@@ -1,0 +1,1804 @@
+Script("Name") = "Nexus"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 124
+Script("Author") = "Neco"
+ 
+' PLEASE NOTE THAT A LOT OF CONTENT WAS MODIFIED FROM RIBOSE's "NUKE SCRIPT"
+' HE DESERVES PARTIAL, IF NOT FULL, CREDITS IN THIS PROJECT
+' OH AND ALSO A BIG THANKS TO TUCK FOR ASSISTING WITH PACKET DATA!
+' ANOTHER BIG THANKS TO TUCK FOR MAKING THE COMMAND HANDLING!!
+
+'---- EDITABLE SETTINGS ----
+
+Public Const DebugInfo = False '// Displays packet information in the bot console
+Public Const Detail = True
+Public BotName : BotName = "Verus"  '// Allows you to name spoof
+Public Const Failsafe = False
+Public CheckCommand : CheckCommand = False
+
+'---- DO NOT EDIT FROM HERE ON IN ----
+Private GameList : Set GameList = CreateObject("Scripting.Dictionary")
+Private Game : Set Game = Nothing
+Private ListAction : ListAction = 0
+Private PlayerList : Set PlayerList = CreateObject("Scripting.Dictionary")
+Private LastClicked : LastClicked = vbNullString
+Private Connected : Connected = False
+Const FormWidth = 14150
+Const FormHeight = 9825
+Private FormAction : FormAction = 0
+Public JoinSlot : JoinSlot = - 1
+
+CreateObj "Timer", "FormEffects"
+FormEffects.Interval = 1
+FormEffects.Enabled = False
+
+CreateObj "Timer", "TestTimer"
+TestTimer.Enabled = False
+
+CreateObj "LongTimer", "GameInfoUpdater"
+GameInfoUpdater.Interval = 0
+GameInfoUpdater.Enabled = False
+
+CreateObj "Timer", "LastClickedTimer"
+LastClickedTimer.Enabled = False
+
+CreateObj "LongTimer", "GameTimeoutTimer"
+GameTimeoutTimer.Interval = 5
+GameTimeoutTimer.Enabled = False
+
+
+Sub Event_Command(Command)
+If Command.WasWhispered Then Exit Sub
+    If LenB(Channel.GetUser(Command.Username).Name) <= 0 Then
+        Dim Blah
+        Blah = Command.GetResponse(1)
+        Game.SendMessage Blah
+        Command.GetResponse.Remove 1
+End If
+
+End Sub
+
+
+
+Public Function AddGChat(Message)
+        Dim String
+        String = "[" & Split(Now)(1) & " " & Split(Now)(2) & "] " & Message
+        String = Replace(String, vbNewLine, vbNullString)
+        With GameUIForm.GetObjByName("TxtConsole")
+                .Text = .Text & String & vbNewLine
+               	.SelStart = Len(.Text)
+        End With
+End Function
+
+Sub TestTimer_Timer()
+	If JoinSlot = 20 Then
+		JoinSlot = 0
+	Else
+		JoinSlot = JoinSlot + 1
+	End If
+        Dim GameName
+        With GameUIForm.GetObjByName("txtGame")
+                GameName = .Text
+        End With
+	Call Send_SID_GETADVLISTEX_Join(GameName, vbNullString)
+	TestTimer.Enabled = False
+	TestTimer.Interval = 0
+End Sub
+ 
+Sub Event_Load()    
+        CreateUI
+	ObserveScript(SSC.InternalScript)
+	Dim ScriptCol
+	Set ScriptCol = Scripts()
+  	For i = 1 to ScriptCol.Count
+    		ObserveScript(ScriptCol(i).Script("Name"))
+  	Next
+End Sub
+
+Sub GameUIMenu_Click()
+	If IsOnline Then
+		GameUIForm.Show
+	Else
+		AddChat vbBlue, "You are not online. To prevent errors, the UI has been disabled."
+	End If
+End Sub
+
+'--------------------------------FORM STUFFS (UI)------------------------------------
+Sub UpdateList()
+    Dim Items, I, GameItem, Item, J
+    With GameUIForm.GetObjByName("LVGameList")
+        Items = GameList.Items()
+        For I = 0 To GameList.Count - 1
+            Set GameItem = Items(I)
+            Set Item = Nothing
+            For J = 1 To .ListItems.Count
+                If LCase(.ListItems(J).Text) = LCase(GameItem.Name) Then
+                    Set Item = .ListItems(J)
+                End If
+            Next
+            If Item Is Nothing Then
+                Set Item = .ListItems.Add()
+ 
+            End If
+            With Item
+                .Text = GameItem.Name
+		.TooltipText = ":)"
+            End With
+        Next
+	.ListItems(.ListItems.Count).EnsureVisible
+    End With
+End Sub
+ 
+Sub GameUIForm_LVGameList_ItemClick(ListItem)
+	Dim Text, Name
+        With GameUIForm.GetObjByName("txtGame")
+                .Text = ListItem.Text
+        End With
+	With GameList(ListItem.Text)
+                    Text = .ParsedInfo
+                    Name = .Name
+        End With
+	GameUIForm.GetObjByName("lblGameInfo").Caption = Text
+
+	If LastClicked = ListItem.Text Then
+		LastClickedTimer.Enabled = False
+		LastClickedTimer.Interval = 0
+		Dim GameName
+        	With GameUIForm.GetObjByName("txtGame")
+                	GameName = .Text
+        	End With
+		LastClicked = vbNullString
+		Call Send_SID_GETADVLISTEX_Join(GameName, vbNullString)  
+	Elseif LastClickedTimer.Enabled = False Then
+		LastClicked = ListItem.Text
+		LastClickedTimer.Enabled = True
+		LastClickedTimer.Interval = 1000
+	End If
+End Sub
+
+Sub LastClickedTimer_Timer()
+	With LastClickedTimer
+		.Enabled = False
+		.Interval = 0
+		LastClicked = vbNullString
+	End With
+End Sub
+
+Sub CreateUI()
+        CreateObj "Form", "GameUIForm"
+   
+        CreateObj "Menu", "GameUIMenu"
+        GameUIMenu.Caption = "Open Game User Interface"
+ 
+   With GameUIForm
+        .CreateObj "ListView", "LVGameList"
+        .CreateObj "ListView", "LVUserPanel"
+        .CreateObj "Button", "BTGameRefresh"
+        .CreateObj "Button", "BTDisconnect"
+        .CreateObj "Button", "BTConnect"
+        .CreateObj "RichTextBox", "txtConsole"
+        .CreateObj "TextBox", "txtChatBar"
+        .CreateObj "TextBox", "txtGame"
+        .CreateObj "CheckBox", "cbxAutoRefresh"
+        .CreateObj "Label", "lblAutoRefresh"
+        .CreateObj "Button", "BTAutoRefresh0"
+        .CreateObj "Button", "BTAutoRefresh1"
+        .CreateObj "Button", "BTAutoRefresh2"
+        .CreateObj "Button", "BTAutoRefresh3"
+        .CreateObj "Button", "BTAutoRefresh4"
+        .CreateObj "Button", "BTOpenGameList"
+        .CreateObj "Button", "BTCloseGameList"
+        .CreateObj "Label", "lblGameInfo"
+
+	.BorderStyle = 3
+	.Caption = "Game User Interface"
+
+        With .GetObjByName("lblGameInfo")
+            .Top = 5050
+            .Left = 8000
+            .Width = 3000
+                .Height = 4650
+		.Caption = "No game selected."
+        End With 
+
+        With .GetObjByName("BTAutoRefresh0")
+            .Top = 0
+            .Left = 12100
+            .Width = 350
+                .Height = 250
+		.Caption = "2"
+		.Enabled = False
+        End With 
+
+        With .GetObjByName("BTAutoRefresh1")
+            .Top = 0
+            .Left = 12500
+            .Width = 350
+                .Height = 250
+		.Caption = "5"
+		.Enabled = False
+        End With 
+
+        With .GetObjByName("BTAutoRefresh2")
+            .Top = 0
+            .Left = 12900
+            .Width = 350
+                .Height = 250
+		.Caption = "10"
+		.Enabled = False
+        End With 
+
+        With .GetObjByName("BTAutoRefresh3")
+            .Top = 0
+            .Left = 13300
+            .Width = 350
+                .Height = 250
+		.Caption = "15"
+		.Enabled = False
+        End With 
+
+        With .GetObjByName("BTAutoRefresh4")
+            .Top = 0
+            .Left = 13700
+            .Width = 350
+                .Height = 250
+		.Caption = "20"
+		.Enabled = False
+        End With 
+
+        With .GetObjByName("lblAutoRefresh")
+            .Top = 20
+            .Left = 11350
+            .Width = 1000
+                .Height = 250
+		.BackColor = vbBlack
+		.ForeColor = vbWhite
+		.Caption = "Auto"
+        End With  
+
+        With .GetObjByName("cbxAutoRefresh")
+            .Top = 0
+            .Left = 11050
+            .Width = 250
+                .Height = 250
+		.BackColor = vbBlack
+        End With   
+ 
+        With .GetObjByName("LVUserPanel")
+            .Top = 0
+            .Left = 8000
+            .Width = 3000
+                .Height = 5000
+            .BackColor = vbWhite
+            .ForeColor = vbBlack
+            .FullRowSelect = True
+           
+            .ColumnHeaders.Add , , "Name", 1200
+            .ColumnHeaders.Add , , "Position", 650
+        End With
+ 
+        With .GetObjByName("txtConsole")
+            .Top = 0
+            .Left = 0
+            .Width = 7950
+                .Height = 9100
+                .Text = "[" & Split(Now)(1) & " " & Split(Now)(2) & "] "
+		.Text = .Text & "Welcome to " & Script("Name") & " "
+		.Text = .Text & "v" & Script("Major") & "." & Script("Minor") & Script("Revision") & " "
+		.Text = .Text & ". Author: " & Script("Author")
+		.Text = .Text & " with help from Ribose."
+		.Text = .Text & vbNewLine
+                .Locked = True
+        End With    
+        With .GetObjByName("txtChatBar")
+            .Top = 9100
+            .Left = 0
+            .Width = 7950
+                .Height = 200
+                .Text = vbNullString
+ 
+        End With    
+        With .GetObjByName("BtOpenGameList")
+            .Top = 9150
+            .Left = 8000
+            .Width = 3000
+                .Height = 250
+                .Caption = "Open Games List"
+		.Visible = False
+        End With  
+        With .GetObjByName("BtCloseGameList")
+            .Top = 9150
+            .Left = 8000
+            .Width = 3000
+                .Height = 250
+                .Caption = "Close Games List"
+		.Visible = True
+        End With  
+        With .GetObjByName("BtConnect")
+            .Top = 8850
+            .Left = 11050
+            .Width = 3000
+                .Height = 250
+                .Caption = "Connect"
+        End With
+        With .GetObjByName("txtGame")
+            .Top = 8500
+            .Left = 11050
+            .Width = 3000
+                .Height = 250
+        End With
+        With .GetObjByName("BTDisconnect")
+            .Top = 9150
+            .Left = 11050
+            .Width = 3000
+                .Height = 250
+                .Caption = "Disconnect"
+        End With
+ 
+        With .GetObjByName("BTGameRefresh")
+            .Top = 300
+            .Left = 11050
+            .Width = 3000
+                .Height = 250
+                .Caption = "Refresh List"
+        End With  
+        With .GetObjByName("LVGameList")
+               
+            .Top = 600
+            .Left = 11050
+            .Width = 3000
+                .Height = 7900
+            .BackColor = vbBlack
+            .ForeColor = vbWhite
+            .FullRowSelect = True
+           
+            .ColumnHeaders.Add , , "Name", 2650
+        End With
+            .BackColor = vbBlack
+            .ForeColor = vbWhite
+        .Height = FormHeight
+        .Width = FormWidth
+End With
+End Sub
+
+Sub GameUIForm_BTAutoRefresh0_Click()
+    With GameInfoUpdater
+        .Interval = 2
+        .Enabled = True
+    End With
+End Sub
+
+Sub GameUIForm_BTAutoRefresh1_Click()
+    With GameInfoUpdater
+        .Interval = 5
+        .Enabled = True
+    End With
+End Sub
+
+Sub GameUIForm_BTAutoRefresh2_Click()
+    With GameInfoUpdater
+        .Interval = 10
+        .Enabled = True
+    End With
+End Sub
+
+Sub GameUIForm_BTAutoRefresh3_Click()
+    With GameInfoUpdater
+        .Interval = 15
+        .Enabled = True
+    End With
+End Sub
+
+Sub GameUIForm_BTAutoRefresh4_Click()
+    With GameInfoUpdater
+        .Interval = 20
+        .Enabled = True
+    End With
+End Sub
+
+Sub GameUIForm_BTCloseGameList_Click()
+	FormAction = 1
+    With FormEffects
+	.Enabled = True
+    End With
+End Sub
+
+Sub GameUIForm_BTOpenGameList_Click()
+	FormAction = 2
+    With FormEffects
+	.Enabled = True
+    End With
+End Sub
+
+Sub FormEffects_Timer()
+	If FormAction = 1 Then
+		If GameUIForm.Width > (FormWidth - 3050) Then
+			GameUIForm.GetObjByName("BTCloseGameList").Enabled = False
+			GameUIForm.Width = (GameUIForm.Width - 100)
+		Else
+			GameUIForm.GetObjByName("BTCloseGameList").Visible = False
+			GameUIForm.GetObjByName("BTOpenGameList").Visible = True
+			GameUIForm.GetObjByName("BTOpenGameList").Enabled = True
+			FormEffects.Enabled = False
+			FormAction = 0
+		End If
+	Elseif FormAction = 2 Then
+		If GameUIForm.Width < (FormWidth) Then
+			GameUIForm.Width = (GameUIForm.Width + 100)
+			GameUIForm.GetObjByName("BTOpenGameList").Enabled = False
+		Else
+			GameUIForm.GetObjByName("BTCloseGameList").Visible = True
+			GameUIForm.GetObjByName("BTCloseGameList").Enabled = True
+			GameUIForm.GetObjByName("BTOpenGameList").Visible = False
+			FormEffects.Enabled = False
+			FormAction = 0
+		End If
+	End If
+End Sub
+
+Sub GameUIForm_cbxAutoRefresh_Click()
+	With GameUIForm.GetObjByName("cbxAutoRefresh")
+		If .Value = 1 Then
+			For i = 0 to 4
+				GameUIForm.GetObjByName("BTAutoRefresh" & i).Enabled = True
+			Next	
+		Else
+			For i = 0 to 4
+				GameUIForm.GetObjByName("BTAutoRefresh" & i).Enabled = False
+			Next	
+			GameInfoUpdater.Enabled = False
+			GameInfoUpdater.Interval = 0
+		End If
+	End With
+End Sub
+ 
+Sub UpdatePanel()
+        With GameUIForm.GetObjByName("LVUserPanel").ListItems
+                .Clear
+                Dim Users, i, tmp, PIDS
+                Users = PlayerList.Items
+                PIDS = PlayerList.Keys
+                For i = 0 to UBound(Users)
+                        .Add ,, Users(i)
+                        .Item(GameUIForm.GetObjByName("LVUserPanel").ListItems.Count).ListSubItems.Add , , PIDS(i)
+                Next
+        End With
+End Sub
+ 
+Sub GameUIForm_txtChatBar_KeyPress(KeyAscii)
+        If not KeyAscii = 13 Then Exit Sub
+ 
+        Dim Message, ConsoleCommand, ConsoleConnected
+
+        With GameUIForm.GetObjByName("TxtChatBar")
+                Message = .Text
+                .Text = vbNullString
+        End With
+	Message = Replace(Message, vbNewLine, vbNullString)
+
+	If Left(Message, 1) = "/" Then
+		ConsoleCommand = True
+	End If
+	If Connected Then
+		ConsoleConnected = True
+	End If
+	Call Event_ConsoleMessage(Message, ConsoleCommand, ConsoleConnected)
+End Sub
+
+Sub Event_ConsoleMessage(Message, CCommand, Online)
+	If Online = False And CCommand = False Then
+		AddGChat "You are not connected to a game. Message has been rerouted to the chat channel."
+		AddQ "Rerouted from Nexus: " & Message
+	Elseif CCommand = True Then
+		If Split(Message)(0) = "/priv" And Online = True Then
+			If UBound(Split(Message)) > 1 Then
+
+				msgArray = Split(Message, " ", 3)
+
+				Dim PID, String, Name
+				Name = msgArray(1)
+				PID = GetUserPID(Name)
+
+				If PID > 0 Then
+					If PlayerList.Exists(PID) Then
+						String = Trim(msgArray(2))
+		        			Call Game.SendMessageToPlayer(String, PID)
+					Else
+						AddGChat "Player does not exist."
+					End If
+				Else
+					AddGChat "Player does not exist."
+				End If					
+			Else
+				AddGChat """" & Message & """ is not valid!"
+			End If
+		Else
+			Select Case LCase(Message)
+				Case "/cls" : Call ClearConsole()
+				Case Else : Command BotVars.Username, Message, True
+			End Select
+		End If
+	Elseif Online = True And CCommand = False Then
+		Call Game.SendMessage(Message)	
+	End If
+End Sub
+
+Function GetUserPID(Name)
+Dim PIDs, Usernames, Key, More
+	More = 0
+        PIDs = PlayerList.Keys()
+        Usernames = PlayerList.Items()
+	For i = 0 to UBound(Usernames)
+		If LCase(Usernames(i)) = LCase(Name) Then
+			If More = 0 Then Key = i
+			More = More + 1
+		End If
+	Next
+	If More = 1 Then
+		GetUserPID = PIDs(Key)
+	Else
+		GetUserPID = 0
+	End If
+End Function
+
+Sub ClearConsole()
+        With GameUIForm.GetObjByName("TxtConsole")
+		.Text = vbNullString
+                AddGChat "Console window cleared."
+        End With
+End Sub
+ 
+Sub GameUIForm_txtGame_KeyPress(KeyAscii)
+        If not KeyAscii = 13 Then Exit Sub
+ 
+        	Dim GameName
+        	With GameUIForm.GetObjByName("txtGame")
+                	GameName = .Text
+			GameName = Replace(GameName, vbCrLf, vbNullString)
+                	Call Send_SID_GETADVLISTEX_Join(GameName, vbNullString) 
+                	.Text = vbNullString
+        	End With
+End Sub
+
+Sub GameUIForm_BTConnect_Click()
+        Dim GameName
+        With GameUIForm.GetObjByName("txtGame")
+                GameName = .Text
+	End With
+    Call Send_SID_GETADVLISTEX_Join(GameName, vbNullString)     
+End Sub
+ 
+ 
+Sub GameUIForm_BTDisconnect_Click()
+         Game.CloseAll
+End Sub
+ 
+Sub GameUIForm_BTGameRefresh_Click()
+        GameList.RemoveAll
+        GameUIForm.GetObjByName("LVGameList").ListItems.Clear
+        Send_SID_GETADVLISTEX
+End Sub
+ 
+Sub GameInfoUpdater_Timer()
+        Send_SID_GETADVLISTEX
+End Sub
+
+
+'-------------------------------Gamelist Ect-----------------------------------------
+ 
+Sub Event_LoggedOn(Username, Product)
+	Select Case Product
+		Case "PX3W" : Set Game = New clsW3GameClient
+		Case "3RAW" : Set Game = New clsW3GameClient
+		Case Else
+			AddChat vbBlue, "[NEXUS] This script only supports WC3."
+	End Select
+End Sub
+ 
+Sub Event_LoggedOff()
+    Set Game = Nothing
+    GameUIForm.Hide
+End Sub
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)
+    If Protocol = "BNCS" Then
+        Select Case ID
+            Case &H09 : Recv_SID_GETADVLISTEX Mid(Data, 5)
+        End Select
+    End If
+End sub
+ 
+Sub Send_SID_GETADVLISTEX() ' SID_GETADVLISTEX
+    ListAction = 1
+    With DataBufferEx()
+        .InsertWORD &H0a ' (WORD) Product-specific condition 1
+        .InsertWORD 0 ' (WORD) Product-specific condition 2
+        .InsertDWORD 0 ' (DWORD) Product-specific condition 3
+        .InsertDWORD 0 ' (DWORD) Product-specific condition 4
+        .InsertDWORD &H19 ' (DWORD) List count
+        .InsertBYTE 0 ' (STRING) Game name
+        .InsertBYTE 0 ' (STRING) Game password
+        .InsertBYTE 0 ' (STRING) Game stats
+        .SendPacket &H09 ' SID_GETADVLISTEX
+    End With
+End Sub
+ 
+Sub Send_SID_GETADVLISTEX_Join(Name, Pass)
+    ListAction = 2
+    With DataBufferEx()
+        .InsertWORD 0 ' (WORD) Product-specific condition 1
+        .InsertWORD 0 ' (WORD) Product-specific condition 2
+        .InsertDWORD 0 ' (DWORD) Product-specific condition 3
+        .InsertDWORD 0 ' (DWORD) Product-specific condition 4
+        .InsertDWORD &H01 ' (DWORD) List count
+        .InsertNTString CStr(Name) ' (STRING) Game name
+        .InsertNTString CStr(Pass) ' (STRING) Game password
+        .InsertBYTE 0 ' (STRING) Game stats
+        .SendPacket &H09 ' SID_GETADVLISTEX
+    End With
+End Sub
+ 
+Sub Recv_SID_GETADVLISTEX(Data) ' SID_GETADVLISTEX
+    Dim Packet, Count, Status, I, GType, GPara, GLang, GHostAF, GHostPort, GHostIP, GState, GElapse, GName, GPass, GStatstring
+    With DataBufferEx()
+        .Data = Data
+        Count = .GetDWORD()
+        If Count = 0 Then
+            Status = .GetDWORD()
+            Select Case Status
+                Case &H01
+                    AddGChat "Game does not exist."
+                Case &H02
+                    AddGChat "Incorrect password."
+                Case &H03
+                    AddGChat "Game full."
+                Case &H04
+                    AddGChat "Game already started."
+                Case &H06
+                    AddGChat "Too many server requests."
+            End Select
+        Else
+            For I = 0 To Count - 1
+                GType = .GetWORD() 	' (WORD) Game Type, 
+		GPara = .GetWord	' (WORD) Parameter
+                GLang = .GetDWORD() ' (DWORD) Language ID
+                GHostAF = .GetWORD() ' (WORD) Address Family (Always AF_INET (2))
+                GHostPort = .GetWORD() ' (WORD) Port
+                GHostIP = .GetDWORD() ' (DWORD) Host's IP
+                .GetDWORD ' (DWORD) 0
+                .GetDWORD ' (DWORD) 0
+                GState = .GetDWORD() ' (DWORD) Game Status
+                GElapse = .GetDWORD() ' (DWORD) Elapsed time (in seconds)
+                GName = .GetString() ' (STRING) Game name
+                GPass = .GetString() ' (STRING) Game password
+                GStatstring = .GetString() ' (STRING) Game statstring
+                Set GameList(GName) = New clsGameListItem
+                GameList(GName).Init GType, GPara, GLang, GHostAF, GHostPort, GHostIP, GState, GElapse, GName, GPass, GStatstring
+                If ListAction = 2 And Count = 1 Then
+                    	'AddGChat "Game found. Will now attempt to join..."
+                    	GameList(GName).Connect
+                   	GameTimeoutTimer.Enabled = True
+                    	GameInfoUpdater.Enabled = False
+			GameUIForm.GetObjByName("lblGameInfo").Caption = GameList(GName).ParsedInfo
+                End If
+            Next
+                       Call UpdateList
+        End If
+    End With
+    ListAction = 0
+End Sub
+ 
+Sub GameTimeoutTimer_Timer()
+    If Game.Starting Then
+        AddGChat "Game join failed. Connection to the host timed out."
+        Game.CloseAll
+    End If
+    GameTimeoutTimer.Enabled = False
+End Sub
+
+'--------------------------------Parsing Functions----------------------------------
+ 
+Private Function GetNumericSettingsEntry(SettingName, DefaultValue)
+    Dim Value
+    Value = GetSettingsEntry(SettingName)
+    If IsNumeric(Value) Then
+        GetNumericSettingsEntry = CLng(Value)
+    Else
+        GetNumericSettingsEntry = DefaultValue
+    End If
+End Function
+ 
+Public Function FormatPacket(FirstLine, ByVal Data)
+    Dim Lines, DataLen, HexPart, TextPart, Line, C, HexChar, HexLine, Dump
+    DataLen = Len(Data)
+    If DataLen = 0 Then
+        FormatPacket = FirstLine & vbCrLf & "(no data)"
+        Exit Function
+    End If
+    Lines = Fix(DataLen / &H10)
+    If DataLen Mod &H10 Then Lines = Lines + 1
+    Dump = FirstLine
+    For Line = 1 To Lines
+        HexPart = vbNullString
+        TextPart = vbNullString
+        For C = ((Line - 1) * &H10) + 1 To Line * &H10
+            If C <= DataLen Then
+                HexChar = Hex(Asc(Mid(Data, C, 1)))
+                HexChar = Right("00", 2 - Len(HexChar)) & HexChar
+                HexPart = HexPart & HexChar & " "
+                If Asc(Mid(Data, C, 1)) < &H20 Then
+                    TextPart = TextPart & "."
+                Else
+                    TextPart = TextPart & Mid(Data, C, 1)
+                End If
+            Else
+                HexPart = HexPart & "   "
+            End If
+            If (C Mod &H08) = 0 Then
+                HexPart = HexPart & " "
+                TextPart = TextPart & " "
+            End If
+        Next
+        HexLine = Hex(Line - 1)
+        HexLine = Right("0000000", 7 - Len(HexLine)) & HexLine & "0"
+        Dump = Dump & vbCrLf & HexLine & ":   " & HexPart & " " & TextPart
+    Next
+    FormatPacket = Dump
+End Function
+ 
+Public Sub DisplayPacket(Direction, Protocol, ID, Length, Data, Unhandled)
+    Dim HexID, FirstLine, PacketVerb
+    HexID = Hex(ID)
+    HexID = "0x" & Right("00", 2 - Len(HexID)) & HexID
+    PacketVerb = GetNumericSettingsEntry("PacketVisibility", 3)
+    FirstLine = Protocol & " " & Direction & " PACKET " & HexID & " (" & Length & " BYTES)"
+    If PacketVerb >= 1 And PacketVerb <= 3 And Unhandled Then
+        AddChat "Courier New", vbRed, FormatPacket("UNHANDLED " & FirstLine & ":", Data)
+    ElseIf PacketVerb = 2 Then
+        AddChat "Courier New", 13408512, FirstLine
+    ElseIf PacketVerb = 3 Then
+        AddChat "Courier New", 13408512, FormatPacket(FirstLine & ":", Data)
+    End If
+End Sub
+ 
+Public Function FlipPort(Po)
+    FlipPort = Right("0000", 4 - Len(Hex(Po))) & Hex(Po)
+    FlipPort = Eval("&H" & Mid(FlipPort, 3, 2) & Mid(FlipPort, 1, 2))
+End Function
+ 
+Class clsEndPoint
+    Private AF, IP, Po
+   
+    Public Property Get AddressFamily()
+        AddressFamily = AF
+    End Property
+   
+    Public Property Get IPAddress()
+        IPAddress = Right("00000000", 8 - Len(Hex(IP))) & Hex(IP)
+        IPAddress = _
+            Eval("&H" & Mid(IPAddress, 7, 2)) & "." & _
+            Eval("&H" & Mid(IPAddress, 5, 2)) & "." & _
+            Eval("&H" & Mid(IPAddress, 3, 2)) & "." & _
+            Eval("&H" & Mid(IPAddress, 1, 2))
+    End Property
+   
+    Public Property Get Port()
+        Port = Po
+        If Port < 0 Then Port = &H10000 - Abs(Po)
+    End Property
+   
+    Public Sub Init(AddressFamily, IPAddress, Port)
+        AF = AddressFamily
+        IP = IPAddress
+        Po = FlipPort(Port)
+    End Sub
+   
+    Public Function ToString()
+        ToString = IPAddress & ":" & Port
+    End Function
+End Class
+
+'----------------------------------Gamelist data------------------------------------
+ 
+Class clsGameListItem
+    Private Flags_, Language_, HostData_, State_, ElapsedSeconds_
+    Private Name_, Password_, Stats_, Latency_
+    Private RetrievalTime, Parameter_
+   
+    Public Property Get Name()
+        Name = Name_
+    End Property
+   
+    Public Property Get Host()
+        Set Host = HostData_
+    End Property
+   
+    Public Property Get Stats()
+        Set Stats = Stats_
+    End Property
+
+    Public Property Get Parameter()
+        Parameter = Parameter_
+    End Property
+   
+    Public Property Get Language()
+        Language = Language_
+    End Property
+   
+    Public Property Get LanguageName()
+        Select Case Language
+            Case 1025: LanguageName = "Arabic (Saudi Arabia)"
+            Case 1026: LanguageName = "Bulgarian"
+            Case 1027: LanguageName = "Catalan"
+            Case 1028: LanguageName = "Chinese (Taiwan)"
+            Case 1029: LanguageName = "Czech"
+            Case 1030: LanguageName = "Danish"
+            Case 1031: LanguageName = "German (Germany)"
+            Case 1032: LanguageName = "Greek"
+            Case 1033: LanguageName = "English (United States)"
+            Case 1034: LanguageName = "Spanish (Traditional Sort)"
+            Case 1035: LanguageName = "Finnish"
+            Case 1036: LanguageName = "French (France)"
+            Case 1037: LanguageName = "Hebrew"
+            Case 1038: LanguageName = "Hungarian"
+            Case 1039: LanguageName = "Icelandic"
+            Case 1040: LanguageName = "Italian (Italy)"
+            Case 1041: LanguageName = "Japanese"
+            Case 1042: LanguageName = "Korean"
+            Case 1043: LanguageName = "Dutch (Netherlands)"
+            Case 1044: LanguageName = "Norwegian (Bokmal)"
+            Case 1045: LanguageName = "Polish"
+            Case 1046: LanguageName = "Portuguese (Brazil)"
+            Case 1047: LanguageName = "Rhaeto-Romanic"
+            Case 1048: LanguageName = "Romanian"
+            Case 1049: LanguageName = "Russian"
+            Case 1050: LanguageName = "Croatian"
+            Case 1051: LanguageName = "Slovak"
+            Case 1052: LanguageName = "Albanian"
+            Case 1053: LanguageName = "Swedish"
+            Case 1054: LanguageName = "Thai"
+            Case 1055: LanguageName = "Turkish"
+            Case 1056: LanguageName = "Urdu"
+            Case 1057: LanguageName = "Indonesian"
+            Case 1058: LanguageName = "Ukrainian"
+            Case 1059: LanguageName = "Belarusian"
+            Case 1060: LanguageName = "Slovenian"
+            Case 1061: LanguageName = "Estonian"
+            Case 1062: LanguageName = "Latvian"
+            Case 1063: LanguageName = "Lithuanian"
+            Case 1064: LanguageName = "Tajik"
+            Case 1065: LanguageName = "Farsi"
+            Case 1066: LanguageName = "Vietnamese"
+            Case 1067: LanguageName = "Armenian"
+            Case 1068: LanguageName = "Azeri (Latin)"
+            Case 1069: LanguageName = "Basque"
+            Case 1070: LanguageName = "Sorbian"
+            Case 1071: LanguageName = "FYRO Macedonian"
+            Case 1072: LanguageName = "Sutu"
+            Case 1072: LanguageName = "Sesotho"
+            Case 1073: LanguageName = "Tsonga"
+            Case 1074: LanguageName = "Tswana"
+            Case 1075: LanguageName = "Venda"
+            Case 1076: LanguageName = "Xhosa"
+            Case 1077: LanguageName = "Zulu"
+            Case 1078: LanguageName = "Afrikaans"
+            Case 1079: LanguageName = "Georgian"
+            Case 1080: LanguageName = "Faroese"
+            Case 1081: LanguageName = "Hindi"
+            Case 1082: LanguageName = "Maltese"
+            Case 1083: LanguageName = "Sami Lappish"
+            Case 1084: LanguageName = "Gaelic Scotland"
+            Case 1085: LanguageName = "Yiddish"
+            Case 1086: LanguageName = "Malay (Malaysia)"
+            Case 1087: LanguageName = "Kazakh"
+            Case 1088: LanguageName = "Kyrgyz (Cyrillic)"
+            Case 1089: LanguageName = "Swahili"
+            Case 1090: LanguageName = "Turkmen"
+            Case 1091: LanguageName = "Uzbek (Latin)"
+            Case 1092: LanguageName = "Tatar"
+            Case 1093: LanguageName = "Bengali (India)"
+            Case 1094: LanguageName = "Punjabi"
+            Case 1095: LanguageName = "Gujarati"
+            Case 1096: LanguageName = "Oriya"
+            Case 1097: LanguageName = "Tamil"
+            Case 1098: LanguageName = "Telugu"
+            Case 1099: LanguageName = "Kannada"
+            Case 1100: LanguageName = "Malayalam"
+            Case 1101: LanguageName = "Assamese"
+            Case 1102: LanguageName = "Marathi"
+            Case 1103: LanguageName = "Sanskrit"
+            Case 1104: LanguageName = "Mongolian (Cyrillic)"
+            Case 1105: LanguageName = "Tibetan"
+            Case 1106: LanguageName = "Welsh"
+            Case 1107: LanguageName = "Khmer"
+            Case 1108: LanguageName = "Lao"
+            Case 1109: LanguageName = "Burmese"
+            Case 1110: LanguageName = "Galician"
+            Case 1111: LanguageName = "Konkani"
+            Case 1112: LanguageName = "Manipuri"
+            Case 1113: LanguageName = "Sindhi"
+            Case 1114: LanguageName = "Syriac"
+            Case 1115: LanguageName = "Sinhalese (Sri Lanka)"
+            Case 1118: LanguageName = "Amharic (Ethiopia)"
+            Case 1120: LanguageName = "Kashmiri"
+            Case 1121: LanguageName = "Nepali"
+            Case 1122: LanguageName = "Frisian (Netherlands)"
+            Case 1124: LanguageName = "Filipino"
+            Case 1125: LanguageName = "Divehi"
+            Case 1126: LanguageName = "Edo"
+            Case 1136: LanguageName = "Igbo (Nigeria)"
+            Case 1140: LanguageName = "Guarani (Paraguay)"
+            Case 1142: LanguageName = "Latin"
+            Case 1143: LanguageName = "Somali"
+            Case 1153: LanguageName = "Maori (New Zealand)"
+            Case 1279: LanguageName = "HID (Human Interface Device)"
+            Case 2049: LanguageName = "Arabic (Iraq)"
+            Case 2052: LanguageName = "Chinese (PRC)"
+            Case 2055: LanguageName = "German (Switzerland)"
+            Case 2057: LanguageName = "English (United Kingdom)"
+            Case 2058: LanguageName = "Spanish (Mexico)"
+            Case 2060: LanguageName = "French (Belgium)"
+            Case 2064: LanguageName = "Italian (Switzerland)"
+            Case 2067: LanguageName = "Dutch (Belgium)"
+            Case 2068: LanguageName = "Norwegian (Nynorsk)"
+            Case 2070: LanguageName = "Portuguese (Portugal)"
+            Case 2072: LanguageName = "Romanian (Moldova)"
+            Case 2073: LanguageName = "Russian (Moldova)"
+            Case 2074: LanguageName = "Serbian (Latin)"
+            Case 2077: LanguageName = "Swedish (Finland)"
+            Case 2092: LanguageName = "Azeri (Cyrillic)"
+            Case 2108: LanguageName = "Gaelic Ireland"
+            Case 2110: LanguageName = "Malay (Brunei Darussalam)"
+            Case 2115: LanguageName = "Uzbek (Cyrillic)"
+            Case 2117: LanguageName = "Bengali (Bangladesh)"
+            Case 2128: LanguageName = "Mongolian (Mongolia)"
+            Case 3073: LanguageName = "Arabic (Egypt)"
+            Case 3076: LanguageName = "Chinese (Hong Kong S.A.R.)"
+            Case 3079: LanguageName = "German (Austria)"
+            Case 3081: LanguageName = "English (Australia)"
+            Case 3082: LanguageName = "Spanish (International Sort)"
+            Case 3084: LanguageName = "French (Canada)"
+            Case 3098: LanguageName = "Serbian (Cyrillic)"
+            Case 4097: LanguageName = "Arabic (Libya)"
+            Case 4100: LanguageName = "Chinese (Singapore)"
+            Case 4103: LanguageName = "German (Luxembourg)"
+            Case 4105: LanguageName = "English (Canada)"
+            Case 4106: LanguageName = "Spanish (Guatemala)"
+            Case 4108: LanguageName = "French (Switzerland)"
+            Case 4122: LanguageName = "Croatian (Bosnia/Herzegovina)"
+            Case 5121: LanguageName = "Arabic (Algeria)"
+            Case 5124: LanguageName = "Chinese (Macau S.A.R.)"
+            Case 5127: LanguageName = "German (Liechtenstein)"
+            Case 5129: LanguageName = "English (New Zealand)"
+            Case 5130: LanguageName = "Spanish (Costa Rica)"
+            Case 5132: LanguageName = "French (Luxembourg)"
+            Case 5146: LanguageName = "Bosnian (Bosnia/Herzegovina)"
+            Case 6145: LanguageName = "Arabic (Morocco)"
+            Case 6153: LanguageName = "English (Ireland)"
+            Case 6154: LanguageName = "Spanish (Panama)"
+            Case 6156: LanguageName = "French (Monaco)"
+            Case 7169: LanguageName = "Arabic (Tunisia)"
+            Case 7177: LanguageName = "English (South Africa)"
+            Case 7178: LanguageName = "Spanish (Dominican Republic)"
+            Case 7180: LanguageName = "French (West Indies)"
+            Case 8193: LanguageName = "Arabic (Oman)"
+            Case 8201: LanguageName = "English (Jamaica)"
+            Case 8202: LanguageName = "Spanish (Venezuela)"
+            Case 9217: LanguageName = "Arabic (Yemen)"
+            Case 9225: LanguageName = "English (Caribbean)"
+            Case 9226: LanguageName = "Spanish (Colombia)"
+            Case 9228: LanguageName = "French (Congo, DRC)"
+            Case 10241: LanguageName = "Arabic (Syria)"
+            Case 10249: LanguageName = "English (Belize)"
+            Case 10250: LanguageName = "Spanish (Peru)"
+            Case 10252: LanguageName = "French (Senegal)"
+            Case 11265: LanguageName = "Arabic (Jordan)"
+            Case 11273: LanguageName = "English (Trinidad)"
+            Case 11274: LanguageName = "Spanish (Argentina)"
+            Case 11276: LanguageName = "French (Cameroon)"
+            Case 12289: LanguageName = "Arabic (Lebanon)"
+            Case 12297: LanguageName = "English (Zimbabwe)"
+            Case 12298: LanguageName = "Spanish (Ecuador)"
+            Case 12300: LanguageName = "French (Cote d'Ivoire)"
+            Case 13313: LanguageName = "Arabic (Kuwait)"
+            Case 13321: LanguageName = "English (Philippines)"
+            Case 13322: LanguageName = "Spanish (Chile)"
+            Case 13324: LanguageName = "French (Mali)"
+            Case 14337: LanguageName = "Arabic (U.A.E.)"
+            Case 14346: LanguageName = "Spanish (Uruguay)"
+            Case 14348: LanguageName = "French (Morocco)"
+            Case 15361: LanguageName = "Arabic (Bahrain)"
+            Case 15370: LanguageName = "Spanish (Paraguay)"
+            Case 16385: LanguageName = "Arabic (Qatar)"
+            Case 16393: LanguageName = "English (India)"
+            Case 16394: LanguageName = "Spanish (Bolivia)"
+            Case 17418: LanguageName = "Spanish (El Salvador)"
+            Case 18442: LanguageName = "Spanish (Honduras)"
+            Case 19466: LanguageName = "Spanish (Nicaragua)"
+            Case 20490: LanguageName = "Spanish (Puerto Rico)"
+        End Select
+    End Property
+   
+    Public Property Get CreateTime()
+        CreateTime = DateAdd("s", -ElapsedSeconds_, RetrievalTime)
+    End Property
+   
+    Public Property Get State()
+        State = State_
+    End Property
+   
+    Public Property Get Flags()
+        Flags = Flags_
+    End Property
+   
+    Public Property Get ParsedInfo()
+        ParsedInfo = _
+	    "Game name: " & Name & vbCrLf & _
+            "Creation time: " & CreateTime & vbCrLf & _
+            "Language: " & LanguageName & vbCrLf & _
+            "State: " & State & vbCrLf & _
+            "Flags: " & Flags & vbCrLf & _
+            "Host Computer: " & Host.IPAddress & ":" & Host.Port & vbCrLf & _
+            Stats.ParsedInfo
+    End Property
+   
+    Public Sub Init(Flags, Para, Language, HostAF, HostPort, HostIP, State, ElapsedSeconds, Name, Password, Statstring)
+        RetrievalTime = Now()
+        Parameter_ = Para
+        Flags_ = Flags
+        Language_ = Language
+        Set HostData_ = New clsEndPoint
+        HostData_.Init HostAF, HostIP, HostPort
+        State_ = State
+        ElapsedSeconds_ = ElapsedSeconds
+        Name_ = Name
+        Password_ = Password
+        Set Stats_ = New clsStatsData
+        Stats_.Init Statstring
+       
+        Latency_ = -1
+    End Sub
+   
+    Public Sub SetPing(IP, Port, Latency)
+        Latency_ = Latency
+    End Sub
+   
+    Public Sub Connect()
+	tmpFlags = Right(Flags_, 1)
+        Game.JoinGame Name, Password_, ParsedInfo, Host
+    End Sub
+End Class
+ 
+Class clsStatsData
+    Private MapSizeX, MapSizeY, MapMax, MapApproval, MapCheck, MapTileset, MapName
+    Private GameSpeed, GameType, GameTypeParam, GameIsReplay, GameStartRes, GameCreator
+    Private W3Flags, W3Speed, W3Visibility, W3Observers, W3TeamsTogether, W3TeamsFixed, W3UnitShare, W3HeroRandom, W3RaceRandom
+   
+    Public Property Get ParsedInfo()
+                ParsedInfo = _
+                    "WarCraft III Game:" & vbCrLf & _
+                    "    Host: " & GameCreator & vbCrLf & _
+                    "    Speed: " & GameSpeedName & vbCrLf & _
+                    "    Map Name: " & MapName & vbCrLf & _
+                    "    Visibility: " & VisibilityName & vbCrLf & _
+                    "    Observe Settings: " & ObserversName & vbCrLf & _
+                    "    Teams Start Together: " & TeamsTogetherName & vbCrLf & _
+                    "    Teams Fixed: " & TeamsFixedName & vbCrLf & _
+                    "    Team Units Shared: " & UnitShareName & vbCrLf & _
+                    "    Random Hero: " & HeroRandomName & vbCrLf & _
+                    "    Random Race: " & RaceRandomName
+    End Property
+   
+    Public Property Get GameTypeName()
+        Select Case GameType
+            Case 0 : GameTypeName = "Show All"
+            Case 1 : GameTypeName = "Custom"
+            Case 2 : GameTypeName = "Melee"
+            Case 3 : GameTypeName = "Free For All"
+            Case 4 : GameTypeName = "One Vs One"
+            Case 5 : GameTypeName = "Capture The Flag"
+            Case 6 : GameTypeName = "Greed"
+            Case 7 : GameTypeName = "Slaughter"
+            Case 8 : GameTypeName = "Sudden Death"
+            Case 9 : GameTypeName = "Ladder"
+            Case 10 : GameTypeName = "Use Map Settings"
+            Case 11 : GameTypeName = "Team Melee"
+            Case 12 : GameTypeName = "Team Free For All"
+            Case 13 : GameTypeName = "Team Capture The Flag"
+            Case 15 : GameTypeName = "Top Vs Bottom"
+            Case 16 : GameTypeName = "Iron Man Ladder"
+        End Select
+        GameTypeName = GameTypeName & " (" & GameTypeParam & ")"
+    End Property
+   
+    Public Property Get GameSpeedName()
+                Select Case GameSpeed
+                    Case 0 : GameSpeedName = "Slow"
+                    Case 1 : GameSpeedName = "Normal"
+                    Case 2 : GameSpeedName = "Fast"
+                End Select
+    End Property
+   
+    Public Property Get VisibilityName()
+        Select Case W3Visibility
+            Case &H100 : VisibilityName = "Hide Terrain"
+            Case &H200 : VisibilityName = "Map Explored"
+            Case &H400 : VisibilityName = "Always Visible"
+            Case &H800 : VisibilityName = "Default"
+        End Select
+    End Property
+   
+    Public Property Get ObserversName()
+        Select Case W3Observers
+            Case &H00000000 : ObserversName = "No Observers"
+            Case &H00002000 : ObserversName = "Observers on Defeat"
+            Case &H00003000 : ObserversName = "Observers Allowed"
+            Case &H40000000 : ObserversName = "Referees Allowed"
+        End Select
+    End Property
+   
+    Public Property Get TeamsTogetherName()
+        If W3TeamsTogether Then
+            TeamsTogetherName = "Yes"
+        Else
+            TeamsTogetherName = "No"
+        End If
+    End Property
+   
+    Public Property Get TeamsFixedName()
+        If W3TeamsFixed Then
+            TeamsFixedName = "Yes"
+        Else
+            TeamsFixedName = "No"
+        End If
+    End Property
+   
+    Public Property Get UnitShareName()
+        If W3UnitShare Then
+            UnitShareName = "Yes"
+        Else
+            UnitShareName = "No"
+        End If
+    End Property
+   
+    Public Property Get HeroRandomName()
+        If W3HeroRandom Then
+            HeroRandomName = "Yes"
+        Else
+            HeroRandomName = "No"
+        End If
+    End Property
+   
+    Public Property Get RaceRandomName()
+        If W3RaceRandom Then
+            RaceRandomName = "Yes"
+        Else
+            RaceRandomName = "No"
+        End If
+    End Property
+   
+    Public Sub Init(Statstring)
+        Dim StatSplit
+            Statstring = W3DecodeGameStatstring(Statstring)
+                With DataBufferEx()
+                    .Data = Statstring
+                    W3Flags = .GetDWORD()
+                    W3Speed = W3Flags And &H03
+                    GameSpeed = W3Speed
+                    W3Visibility = W3Flags And &H0F00
+                    W3Observers = W3Flags And &H40003000
+                    W3TeamsTogether = CBool(W3Flags And &H4000)
+                    W3TeamsFixed = CBool(W3Flags And &H060000)
+                    W3UnitShare = CBool(W3Flags And &H01000000)
+                    W3HeroRandom = CBool(W3Flags And &H02000000)
+                    W3RaceRandom = CBool(W3Flags And &H04000000)
+                    .GetDWORD 'unknown bytes/0 bytes
+                    .GetByte '0 byte
+                    MapCheck = .GetDWORD()
+                    MapName = .GetString()
+                    GameCreator = .GetString()
+                End With
+    End Sub
+   
+    Public Function W3DecodeGameStatstring(ByVal Encoded)
+        ' Ported to VB by l2k-Shadow
+        ' Converted to VBs by Ribose
+        Dim Dec, I, J, D, iLen
+        ReDim Dec(0)
+        J = 0
+        D = 0
+        iLen = 0
+        Encoded = Mid(Encoded, 2)
+        'enc = StrConvEx(Encoded, 128) 'vbFromUnicode
+        For I = 0 To Len(Encoded) - 1
+            If I Mod 8 Then
+                ReDim Preserve Dec(iLen)
+                Dec(iLen) = (Asc(Mid(Encoded, I + 1, 1)) And ((RShift(D, 1 + J) Or Not 1)))
+                J = J + 1
+                iLen = iLen + 1
+            Else
+                J = 0
+                D = Asc(Mid(Encoded, I + 1, 1))
+            End If
+        Next
+        'W3DecodeGameStatstring = StrConvEx(dec, 64) 'vbUnicode
+        W3DecodeGameStatstring = ""
+        For I = 0 To Ubound(dec)
+            W3DecodeGameStatstring = W3DecodeGameStatstring & Chr(dec(I))
+        Next
+        W3DecodeGameStatstring = Mid(W3DecodeGameStatstring, InStrRev(Left(W3DecodeGameStatstring, 10), "0") + 1)
+    End Function
+ 
+    Public Function RShift(ByVal pnValue, ByVal pnShift)
+        RShift = CLng(pnValue \ (2 ^ pnShift))
+    End Function
+End Class
+ 
+Class clsW3GameClient
+    Private GameName, GamePass, ParsedInfo_, Port, InStage_, MyIndex
+    Private HostConn, Conns, Players_, Slots_
+   
+    Public Sub Class_Initialize()
+        InStage_ = True
+        Set HostConn = Nothing
+    End Sub
+   
+    Private Sub Class_Terminate()
+        CloseAll
+    End Sub
+ 
+    Public Property Get Starting()
+        Starting = (Not HostConn Is Nothing And Not InStage_)
+    End Property
+   
+    Public Property Get InStage()
+        InStage = InStage_
+    End Property
+   
+    Public Property Get Name()
+        Name = GameName
+    End Property
+   
+    Public Property Get Password()
+        Password = GamePass
+    End Property
+   
+    Public Property Get Slots()
+        Set Slots = Slots_
+    End Property
+   
+    Public Property Get Players()
+        Set Players = Players_
+    End Property
+   
+    Public Property Get ParsedGameInfo()
+        ParsedGameInfo = "Game Name: " & Name & vbCrLf
+        If Password <> "" Then _
+            ParsedGameInfo = ParsedGameInfo & "Game Password: " & Password & vbCrLf
+        ParsedGameInfo = ParsedGameInfo & ParsedInfo_
+    End Property
+   
+    Public Sub JoinGame(Name, Pass, ParsedInfo, HostEndPoint)
+        InStage_ = False
+        GameName = Name
+        GamePass = Pass
+        ParsedInfo_ = ParsedInfo
+        CreateObj "Winsock", "TcpListener"
+        With TcpListener
+            If .LocalPort = 0 Then
+                .Protocol = 0 ' TCP
+                On Error Resume Next
+                Port = 6112
+                .Listen Port
+                Do While Err.Number = 10048
+                    Err.Clear
+                    Port = Port + 1
+                    .Listen Port
+                Loop
+                On Error GoTo 0
+                If Detailed Then AddGChat "Listening for connections on port " & Port & "."
+            End If
+        End With
+        Set Conns = CreateObject("Scripting.Dictionary")
+        Set Players_ = CreateObject("Scripting.Dictionary")
+        Set Slots_ = CreateObject("Scripting.Dictionary")
+        'AddGChat "Connecting to host of game " & GameName & "..."
+        Set HostConn = New clsW3PlayerConnection
+        HostConn.Connect HostEndPoint, 1
+    End Sub
+ 
+        Public Sub SendMessage(String)
+                Call HostConn.Send_W3GS_Message(String, 0)
+        End Sub
+
+        Public Sub SendMessageToPlayer(String, PID)
+                Call HostConn.Send_W3GS_Message(String, PID)
+        End Sub
+   
+    Public Sub JoinSuccess(MyPID)
+	GameTimeoutTimer.Enabled = False
+        MyIndex = MyPID
+        AddGChat "Game join successful as user #" & MyPID & "."
+    End Sub
+   
+    Public Sub CloseAll()
+        Dim I, SlotKeys
+        If HostConn Is Nothing Then Exit Sub
+        HostConn.Disconnect
+        Set HostConn = Nothing
+        For I = 2 To Conns.Count + 1
+            Conns.Disconnect
+            Set Conns(I) = Nothing
+        Next
+        For I = 2 To Players_.Count + 1
+            Set Players_(I) = Nothing
+        Next
+        SlotKeys = Slots_.Keys()
+        For I = 0 To Slots_.Count - 1
+            Set Slots_(SlotKeys(I)) = Nothing
+        Next
+        Slots_.RemoveAll
+        Players_.RemoveAll
+        PlayerList.RemoveAll
+        UpdatePanel
+        Conns.RemoveAll
+        TcpListener.Close
+        AddGChat "Disconnected."
+	Connected = False
+	GameUIForm.GetObjByName("lblGameInfo").Caption = "No game selected."
+    End Sub
+   
+    Public Sub Event_ConnectionRequest(RequestID, EndPoint)
+        Dim Index
+        AddGChat "Connection request from " & EndPoint.ToString() & "."
+       
+        Index = GetPlayerByEndPoint(EndPoint).Index()
+        Set Conns(Index) = New clsW3PlayerConnection
+        Conns(Index).Accept RequestID, EndPoint, Index
+    End Sub
+   
+    Public Sub Event_Connect(Index)
+        If Index = 1 Then
+            HostConn.Event_Connect
+            HostConn.Send_W3GS_REQUESTJOIN()
+        Else
+            Conns(Index).Event_Connect
+        End If
+    End Sub
+   
+    Public Sub Event_Close(Index)
+        If Index = 1 Then
+            HostConn.Event_Close
+            'AddGChat "The host has closed your connection."
+            CloseAll
+        Else
+            Conns(Index).Event_Close
+        End If
+    End Sub
+   
+    Public Sub Event_DataArrival(Index, Total)
+        If Index = 1 Then
+            HostConn.Event_DataArrival Total
+        Else
+            Conns(Index).Event_DataArrival Total
+        End If
+    End Sub
+   
+    Public Sub Event_Error(Index, a,b,c,d,e,f)
+        If Index = 1 Then
+            HostConn.Event_Error a,b,c,d,e,f
+        Else
+            Conns(Index).Event_Error a,b,c,d,e,f
+        End If
+    End Sub
+   
+    Public Function GetPlayerByEndPoint(EndPoint)
+        For Each Player In Players_.Items()
+            If Player.EndPoint.IPAddress = EndPoint.IPAddress And _
+               Player.EndPoint.Port = EndPoint.Port Then
+                Set GetPlayerByEndPoint = Player
+                Exit For
+            End If
+        Next
+        Set GetPlayerByEndPoint = Nothing
+    End Function
+End Class
+ 
+Class clsW3PlayerConnection
+    Private EndPoint_, Index_, Latency_, Winsock_, Incoming
+    Private Map, GLOBALPID
+   
+    Private Sub Class_Initialize()
+        Set Endpoint_ = Nothing
+        Set Winsock_ = Nothing
+    End Sub
+   
+    Private Sub Class_Terminate()
+        Disconnect
+    End Sub
+   
+    Public Sub Connect(EndPoint, Index)
+        Init EndPoint, Index
+        If Detailed Then AddGChat "Connecting to user at " & EndPoint.ToString() & "..."
+        Winsock_.Connect
+    End Sub
+   
+    Public Sub Accept(RequestID, EndPoint, Index)
+        Init EndPoint, Index
+        AddGChat "Accepting user at " & EndPoint.ToString() & "..."
+        Winsock_.Accept RequestID
+    End Sub
+   
+    Private Sub Init(EndPoint, Index)
+        Set EndPoint_ = EndPoint
+        Set Winsock_ = CreateObj("Winsock", "W3" & Index)
+        ExecuteGlobal "Sub W3" & Index & "_Connect() : Game.Event_Connect " & Index & " : End " & "Sub"
+        ExecuteGlobal "Sub W3" & Index & "_DataArrival(Total) : Game.Event_DataArrival " & Index & ", Total : End " & "Sub"
+        ExecuteGlobal "Sub W3" & Index & "_Error(a,b,c,d,e,f) : Game.Event_DataArrival " & Index & ", a,b,c,d,e,f : End " & "Sub"
+        ExecuteGlobal "Sub W3" & Index & "_Close() : Game.Event_Close " & Index & " : End " & "Sub"
+        Winsock_.RemoteHost = EndPoint.IPAddress
+        Winsock_.RemotePort = EndPoint.Port
+        Index_ = Index
+        Incoming = vbNullString
+    End Sub
+   
+    Public Property Get EndPoint()
+        Set EndPoint = EndPoint_
+    End Property
+   
+    Public Property Get Index()
+        Index = Index_
+    End Property
+   
+    Public Property Get Latency()
+        Latency = Latency_
+    End Property
+   
+    Public Sub Event_Error(Number, Description, Scode, Source, HelpFile, HelpContext, CancelDisplay)
+        AddGChat "Connection Error #" & Number & ": " & Description
+    End Sub
+   
+    Public Sub Disconnect()
+        'If Not Winsock_ Is Nothing Then
+        Winsock_.Close
+        'ExecuteGlobal "W3" & Index & ".Close"
+    End Sub
+   
+    Public Sub Event_Connect()
+        'AddGChat "User #" & Index_ & " connected!"
+	'AddGChat "Connection successful."
+	Connected = True
+    End Sub
+   
+    Public Sub Event_Close()
+        'AddGChat "Connection aborted."
+	Connected = False
+    End Sub
+ 
+'-----------------------------------Ingame Packets----------------------------------'
+   
+        Private Sub SendPacket(ID, Data)
+                With DataBufferEx()
+                        .InsertBYTE &HF7
+                        .InsertBYTE ID
+                        .InsertWORD Len(Data) + 4
+                        Data = .Data & Data
+                        Winsock_.SendData Data
+                End With
+                If DebugInfo Then DisplayPacket "SENT TO #" & Index_, "W3GS", ID, Len(Data), Data, False
+        End Sub
+   
+        Public Sub Event_DataArrival(ByVal Total)
+                Dim Data, F7, ID, Length
+                Winsock_.GetData Data, 8, Total
+                Incoming = Incoming & Data
+                Do While Len(Incoming) >= 4
+                        With DataBufferEx()
+                                .Data = Incoming
+                                F7 = .GetBYTE()
+                                ID = .GetBYTE()
+                                Length = .GetWORD()
+                        End With
+                        If F7 <> &HF7 Then
+                                AddGChat "User #" & Index_ & " has sent malformed data (does not begin with 0xF7)."
+                                Winsock_.Close
+                                Exit Do
+                        End If
+ 
+                        If Length > Len(Incoming) Then Exit Do
+                        Packet_Parse ID, Left(Incoming, Length)
+                        Incoming = Mid(Incoming, Length + 1)
+                Loop
+        End Sub
+ 
+        Sub Send_W3GS_Message(String, PID)
+		If PID = 0 Then
+                	Dim i, PIDs
+                	PIDs = PlayerList.Keys
+                	With DataBufferEx()
+                        	.InsertBYTE CByte(PlayerList.Count - 1)
+                        	For i = 0 to UBound(PIDs)
+					If not PIDs(i) = GLOBALPID Then .InsertBYTE CByte(PIDs(i))
+                    	  	Next
+                        	.InsertBYTE CByte(GLOBALPID)
+                        	.InsertBYTE CByte(&H10)
+                        	.InsertNTString CStr(String)
+                        	SendPacket &H28, .Data
+                        	.Clear
+                	End With
+			AddGChat "<" & BotName & "> " & CStr(String)
+		Elseif PID > 0 Then
+                	With DataBufferEx()
+                        	.InsertBYTE CByte(1)
+                                .InsertBYTE CByte(PID)
+                        	.InsertBYTE CByte(GLOBALPID)
+                        	.InsertBYTE CByte(&H10)
+                        	.InsertNTString CStr(String)
+                        	SendPacket &H28, .Data
+                        	.Clear
+                	End With
+			Dim Username
+			Username = PlayerList.Item(CStr(PID))
+			If LenB(Username) = 0 Then Username = BotName
+			AddGChat "<To " & Username & "> " & String
+		End If
+        End Sub
+ 
+        Private Sub Send_W3GS_HOSTPING(Data)
+                With DataBufferEx()
+                        .InsertDWord Data
+                        SendPacket &H46, .Data
+                End With               
+        End Sub
+ 
+	Public Sub Send_W3GS_REQUESTJOIN()
+		If Detailed Then AddGChat "Sending join information to host..."
+		With DataBufferEx()
+			.InsertDWORD JoinSlot			' (DWORD) Join game counter
+			.InsertDWORD 0                          ' (DWORD) Tick count (0 on b.net)
+			.InsertBYTE 0                           ' (BYTE) 0
+			.InsertWORD 6112                        ' (DWORD) External port
+			.InsertDWORD JoinSlot + 1		' (DWORD) Join game counter + create game counter
+			.InsertNTString CStr(BotName)        ' (STRING) Username
+			.InsertWORD &H01                        ' (WORD) IP Type IPv4
+			.InsertWORD &H02                        ' (WORD) Addr Family
+			.InsertWORD FlipPort(6112)              ' (WORD) Internal port
+			.InsertDWORD &H4201A8C0                 ' (DWORD) Internal IP
+			.InsertDWORD 0                          ' (DWORD) 0
+			.InsertDWORD 0                          ' (DWORD) 0
+			SendPacket &H1E, .Data                  ' W3GS_REQUESTJOIN
+		End With
+	End Sub
+ 
+        Private Sub Send_W3GS_MAPCHECK(FileSize)
+                With DataBufferEx()
+                        .InsertDWORD &H01       ' (DWORD) 1
+                        .InsertBYTE &H01   ' (BYTE) Action (1=complete, 3=incomplete)
+                        .InsertDWORD FileSize       ' (DWORD) Map size
+                        SendPacket &H42, .Data  ' W3GS_MAPSIZE
+                End With
+        End Sub
+   
+        Private Sub Packet_Parse(ID, ByVal Data)
+                Dim D, Unhandled
+                D = Mid(Data, 5)
+                Unhandled = False
+                Select Case ID
+                        Case &H01 : Recv_W3GS_HOSTPING D
+                        Case &H04 : Recv_W3GS_SLOTINFOJOIN D
+                        Case &H05 : Recv_W3GS_REJECTJOIN D
+                        Case &H06 : Recv_W3GS_PLAYERINFO D
+                        Case &H07 : Recv_W3GS_LEAVER D
+                        Case &H08 : Recv_W3GS_CLIENTREADY D
+                        Case &H09 : Recv_W3GS_SLOTINFO D
+                        Case &H0A : Recv_W3GS_START D
+                        Case &H0B : Recv_W3GS_LOADING D
+                        Case &H0F : Recv_W3GS_MESSAGE D
+                        Case &H35 : Recv_W3GS_CLIENTPING D
+                        Case &H3D : Recv_W3GS_MAPCHECK D
+                        Case Else : Unhandled = True
+                End Select
+                If DebugInfo Then DisplayPacket "RECV FROM #" & Index_, "W3GS", ID, Len(Data), Data, Unhandled
+        End Sub
+ 
+        Private Sub Recv_W3GS_HOSTPING(Data)
+                Dim Val
+                With DataBufferEx()
+                        .Data = Data
+                        Val = .GetDWord
+                End With
+                Call Send_W3GS_HOSTPING(Val)
+        End Sub
+ 
+        Private Sub Recv_W3GS_SLOTINFOJOIN(Data)
+                Dim SlotInfoSize, SlotCount, I, PID, DLLen, Status, IsComputer, TeamNum, ColorNum, _
+                RaceStatus, ComputerType, Handicap, HostGTC, MyPID, HostLocalAF, HostLocalPort, _
+                HostLocalIP
+                With DataBufferEx()
+                        .Data = Data
+                        SlotInfoSize = .GetWORD()
+                        If SlotInfoSize > 0 Then
+                                SlotCount = .GetBYTE()
+                                For I = 0 To SlotCount - 1
+                                        PID = .GetBYTE()
+                                        DLLen = .GetBYTE()
+                                        Status = .GetBYTE()
+                                        IsComputer = .GetBYTE()
+                                        TeamNum = .GetBYTE()
+                                        ColorNum = .GetBYTE()
+                                        RaceStatus = .GETBYTE()
+                                        ComputerType = .GetBYTE()
+                                        Handicap = .GetBYTE()
+                                Next
+                                HostGTC = .GetDWORD() ' (DWORD) Host tick count (0 om b.net)
+                                .GetBYTE() ' (BYTE) 0 or 0xCC for ladder
+                                .GetBYTE() ' (BYTE) slot count or 0xCC for ladder
+                        End If
+                        MyPID = .GetBYTE() ' (BYTE) My ID
+                        HostLocalAF = .GetWORD() ' (DWORD) Host Local Address Family
+                        HostLocalPort = .GetWORD() ' (DWORD) Host Local Port
+                        HostLocalIP = .GetDWORD() ' (DWORD) Host Local IP
+                        .GetDWORD() ' (DWORD) 0
+                        .GetDWORD() ' (DWORD) 0
+                        GLOBALPID = MyPID
+        		PlayerList.Add GLOBALPID, BotName
+                        Game.JoinSuccess MyPID
+                End With
+        End Sub
+ 
+        Private Sub Recv_W3GS_REJECTJOIN(Data)
+                Dim Val
+                With DataBufferEx()
+                        .Data = Data
+                        Val = .GetDWORD()   ' (DWORD) Unknown
+			If Val = &H07 Then
+				AddGChat "Join rejected. The slot you requested was taken."
+				TestTimer.Enabled = True
+				TestTimer.Interval = 1
+				GameTimeoutTimer.Enabled = False
+			Else
+                        	AddGChat "Join rejected due to unknown error (" & Val & ")."
+			End If
+                End With
+        End Sub
+               
+        Private Sub Recv_W3GS_PLAYERINFO(Data)
+                Dim GameCount, PID, Name, AF, Port, IP, InAF, InPort, InIP, RealName
+                With DataBufferEx()
+                        .Data = Data
+                        GameCount = .GetDWORD() ' (DWORD) Join/create game count
+                        PID = .GetBYTE() ' (BYTE) Player ID
+                        Name = .GetString() ' (STRING) Name
+                        AF = .GetWORD() ' (WORD) External address family
+                        Port = .GetWORD() ' (WORD) External port
+                        IP = .GetDWORD() ' (DWORD) External IP
+                        .GetDWORD() ' (DWORD) 0
+                        .GetDWORD() ' (DWORD) 0
+                        InAF = .GetWORD() ' (WORD) Internal address family
+                        InPort = .GetWORD() ' (WORD) Internal port
+                        InIP = .GetDWORD() ' (DWORD) Internal IP
+                        .GetDWORD() ' (DWORD) 0
+                        .GetDWORD() ' (DWORD) 0
+                        If not PlayerList.Exists(CStr(PID)) Then 
+				PlayerList.Item(CStr(PID)) = Name
+			Else
+				AddGChat "An Error has occured with " & Name
+			End If
+                        AddGChat PlayerList.Item(CStr(PID)) & " has joined the game."
+                        Call UpdatePanel()
+                End With
+        End Sub
+ 
+        Private Sub Recv_W3GS_LEAVER(Data)
+                Dim PID
+                With DataBufferEx()
+                        .Data = Data
+                        PID = .GetByte
+                        If PlayerList.Exists(CStr(PID)) Then
+                                AddGChat PlayerList.Item(CStr(PID)) & " has left the game."
+                                PlayerList.Remove CStr(PID)
+                        Else
+                                AddGChat "An Unknown Player (" & CStr(PID) & ") has left the game."
+                        End If
+                        Call UpdatePanel()
+                End With
+        End Sub
+ 
+ 
+        Private Sub Recv_W3GS_CLIENTREADY(Data)
+                AddGChat "All clients have loaded the map."
+        End Sub
+ 
+        Private Sub Recv_W3GS_SLOTINFO(Data)
+                Dim SlotInfoSize, SlotCount, I, PID, DLLen, Status, IsComputer, TeamNum, ColorNum, _
+                RaceStatus, ComputerType, Handicap, HostGTC
+                With DataBufferEx()
+                        .Data = Data
+                        SlotInfoSize = .GetWORD()
+                        If SlotInfoSize > 0 Then
+                                SlotCount = .GetBYTE()
+                                        For I = 1 To SlotInfoSize
+                                                PID = .GetBYTE()
+                                                DLLen = .GetBYTE()
+                                                Status = .GetBYTE()
+                                                IsComputer = .GetBYTE()
+                                                TeamNum = .GetBYTE()
+                                                ColorNum = .GetBYTE()
+                                                RaceStatus = .GETBYTE()
+                                                ComputerType = .GetBYTE()
+                                                Handicap = .GetBYTE()
+                                        Next
+                                        HostGTC = .GetDWORD() ' (DWORD) Host tick count (0 om b.net)
+                                        .GetBYTE() ' (BYTE) 0 or 0xCC for ladder
+                                        .GetBYTE() ' (BYTE) slot count or 0xCC for ladder
+                        End If
+                End With
+        End Sub
+ 
+        Private Sub Recv_W3GS_START(Data)
+                If Failsafe Then 
+			AddGChat "Game Starting... Automatically aborting to avoid further errors."
+			Game.CloseAll
+		Else
+			AddGChat "Game Starting..."
+		End If
+        End Sub
+ 
+        Private Sub Recv_W3GS_LOADING(Data)
+                If Failsafe Then 
+                	AddGChat "The map is supposed to be loading... feature not installed in this version."
+                	AddGChat "Aborting..."
+                	Game.CloseAll
+		Else
+                	AddGChat "Pretending to have loaded the map..."
+                	SendPacket &H23, vbNullString
+		End If
+        End Sub
+   
+        Private Sub Recv_W3GS_MESSAGE(Data)
+                Dim RecvCount, I, Recv, Send, Message, Sender, Value, SenderID
+                With DataBufferEx()
+                        .Data = Data
+                        RecvCount = .GetBYTE()     ' (BYTE) Count of recievers
+                        ReDim Recv(RecvCount)
+                        For I = 0 To UBound(Recv) - 1
+                                Recv(I) = .GetBYTE()   ' (BYTE[RecvCount]) PIDs of Recievers
+                        Next
+                        SenderID = .GetBYTE()          ' (BYTE) Sender
+                        .GetBYTE()                 ' (BYTE) 0x10
+                        Message = .GetString()     ' (STRING) Message
+                End With
+                If PlayerList.Exists(CStr(SenderID)) Then Sender = PlayerList.Item(CStr(SenderID))
+		If LenB(Sender) = 0 Then Sender = BotName
+                AddGChat "<" & Sender & "> " & Message
+		Call Check_Message(Sender, SenderID, Message)
+        End Sub
+ 
+        Private Sub Recv_W3GS_CLIENTPING(Data)
+                AddGChat "Client Ping - If you come accross this, please contact Neco with the data log."
+        End Sub
+   
+        Private Sub Recv_W3GS_MAPCHECK(Data)
+                Dim MapPath, FileSize, Crc32
+                With DataBufferEx()
+                        .Data = Data
+                        .GetDWORD               ' (DWORD) 1
+                        MapPath = .GetString()  ' (STRING) Map path
+                        FileSize = .GetDWORD()  ' (DWORD) Size
+                        .GetDWORD               ' (DWORD) Unknown
+                        Crc32 = .GetDWORD()     ' (DWORD) CRC32
+                End With
+                Call Send_W3GS_MAPCHECK(FileSize)
+        End Sub
+
+	Sub Check_Message(Username, PID, Message)
+		If Left(Message, Len(BotVars.Trigger)) = BotVars.Trigger Then
+			Select Case LCase(Message)
+				Case BotVars.Trigger & "leave" : AddGChat "Leaving game..." : Game.CloseAll
+				Case Else : Call SSC.Command(Username, Message)
+			End Select
+		End If
+	End Sub
+			
+End Class

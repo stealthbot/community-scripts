@@ -1,0 +1,46 @@
+Option Explicit
+
+Script("Name")           = "AutoIgnore"
+Script("Author")         = "HarryGSn"
+Script("Major")          = "1"
+Script("Minor")          = "0"
+Script("Revision")       = "0"
+Script("Description")    = "Auto-Ignore Specific users on reconnect"
+Script("Last Modified")  = "5/4/12"
+
+Private IgnorePath, ScriptVersion
+
+Sub Event_Load()
+	IgnorePath = BotPath & "IgnSettings.ini"	
+	
+    ScriptVersion = "v" & Script("Major") & "." & Script("Minor") & "." & Script("Revision")	
+	AddChat RGB(255, 100, 0), "[AutoIgnore] • ["& Script("Author") &"]'s [" & Script("Name") & "] Loaded with success!"
+	
+	 If Not Setting("Version") = ScriptVersion Then
+          WriteConfigEntry "Settings", "version", ScriptVersion, IgnorePath
+          AddChat color.Magenta, Script("Name") & ": Updated to " & ScriptVersion & " with success!"
+     End If
+	 Call WriteSettings()
+	 
+End Sub
+
+Private Function Setting(Entry)
+     Setting = GetConfigEntry("Settings", Entry, IgnorePath)
+End Function
+
+Sub Event_LoggedOn(Username, Product)
+	Dim User, Users
+	Users = Setting("IgnoreUsers")
+	Users = Split(Users,",")
+	For Each User in Users
+		If Not Channel.GetUser(User).IsSquelched Then
+			Call Command(BotVars.Username, "/ignore " & User, True)
+		End If
+	Next
+End Sub
+
+Private Sub WriteSettings()
+	If Setting("IgnoreUsers") = vbNullString Then	 
+		  WriteConfigEntry "Settings", "IgnoreUsers", InputBox("Please enter the usernames that you want to be ignored/squelched on reconnect. [Use a comma (,) to seperate each user!]", Script("Name") & " by " & Script("Author"), "Insert Usernames"), IgnorePath
+	End If
+End Sub

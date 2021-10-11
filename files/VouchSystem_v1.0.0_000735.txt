@@ -1,0 +1,223 @@
+Script("Name")         = "VouchSystem"
+Script("Author")       = "FoXsTeR-"
+Script("Major")        = 1
+Script("Minor")        = 0
+Script("Revision")     = 0
+Script("Description")  = "Allows you to vouch users to your channel. Also bans unvouched users."
+Script("Abbreviation") = "VS"
+
+'/****
+'* MISCELLANEOUS
+'\***************
+
+Private Conn           '// Holds the Connection to the database
+Private foldPath       '// Holds the folder path
+Private dbPath         '// Holds the database path
+Private FSO            '// Holds the fso
+
+foldPath               = BotPath & "VouchSystem\"
+dbPath                 = foldPath & "users.mdb"
+
+Set FSO                = CreateObject("Scripting.FileSystemObject")
+
+
+'/****
+'* EVENTS
+'\******** 
+
+Sub Event_Load()
+     Dim Folder, File
+     
+     '// The main folder does not exist
+     If NOT FSO.FolderExists(foldPath) Then
+          Set Folder = FSO.CreateFolder(foldPath)
+          Set Folder = Nothing
+     End If
+ 
+     '// The database does not exist
+     If NOT FSO.FileExists(dbPath) Then
+          Call CreateDataBase()
+     End If
+     
+     CreateCommands()
+End Sub
+
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+     If NOT IsVouched(Username) Then
+          AddQ "/ban " & Username & " You are not vouched!"
+     End If
+End Sub
+
+
+Sub Event_Command(Command)
+     Dim Username : Username = Command.Username
+   
+     If LenB(Command.Username) = 0 Then Username = BotVars.Username
+     Select Case LCase(Command.Name)
+          Case "vouch"     : Call Vouch_cmd(Username, Command)
+          Case "unvouch"   : Call Unvouch_cmd(Username, Command)
+          Case "vouchinfo" : Call Vouchinfo_cmd(Username, Command)
+     End Select
+End Sub
+     
+     
+'/****
+'* COMMAND SUBS
+'\**************     
+
+Private Sub Vouch_cmd(Username, Command)
+     If NOT IsVouched(Username) Then Exit Sub
+   
+     '// The user argument is not vouched
+     If NOT IsVouched(Command.Argument("user")) Then
+          Connect()
+               Set rs = Conn.Execute("INSERT INTO `Users` (`user`, `vouched`, `vouched_by`, `vouched_at`) VALUES ('" & Command.Argument("user") & "', '" & True & "', '" & Username & "', '" & Date() & "')")
+               Command.Respond StringFormat("{0} has been vouched by {1}.", Command.Argument("user"), Username)
+          Conn.Close
+     Else
+          Connect()
+               Set rs = Conn.Execute("SELECT `vouched_by` FROM `users` WHERE `user`='" & Command.Argument("user") & "'")
+               Command.Respond StringFormat("{0} is already vouched by {1}.", Command.Argument("user"), rs.Fields(0))
+          Conn.Close
+     End If
+End Sub
+
+
+Private Sub Unvouch_cmd(Username, Command)
+     If NOT IsVouched(Username) Then Exit Sub
+     
+     If IsVouched(Command.Argument("user")) Then
+          Connect()
+               Set rs = Conn.Execute("DELETE * FROM `users` WHERE `user`='" & Command.Argument("user") & "'")
+          Conn.Close
+          
+          Command.Respond StringFormat("{0} has been unvouched by {1}.", Command.Argument("user"), Username)
+          
+          '// The bot is a channel operator
+          If Channel.GetUser(Username).Flags = 2 Then
+               '// If the user is online then ban him
+               If IsOnline(Command.Argument("user")) Then
+                    AddQ "/ban " & Command.Argument("user") & " You are not vouched!"
+               End If
+          End If
+     Else
+          Command.Respond StringFormat("{0} is currently not vouched.", Command.Argument("user"))
+     End If
+End Sub
+
+
+Private Sub Vouchinfo_cmd(Username, Command)
+     If NOT IsVouched(Username) Then Exit Sub
+     
+     Dim User
+     
+     '// An argument was defined
+     If Len(Command.Argument("user")) > 0 Then
+          User = Command.Argument("user")
+     Else
+          User = Username
+     End If
+     
+     If IsVouched(User) Then
+          Connect()
+               Set rs = Conn.Execute("SELECT * FROM `users` WHERE `user`='" & User & "'")
+               Command.Respond StringFormat("{0} was vouched the {1} by {2}.", User, rs.Fields(3), rs.Fields(2))
+          Conn.Close
+     Else
+          Command.Respond StringFormat("{0} is currently not vouched.", User)
+     End If
+End Sub
+
+
+'/****
+'* FUNCTIONS 
+'\***********
+     
+Private Function IsVouched(Username)
+     Connect()
+          IsVouched = False
+          Set rs = Conn.Execute("SELECT `vouched` FROM `users` WHERE `user` = '" & Username & "'")
+          If NOT (rs.BOF) AND NOT (rs.EOF) Then
+               Select Case CBool(rs.Fields(0))
+                    Case True
+                         IsVouched = True
+                    Case Else
+                         IsVouched = False
+               End Select
+          End If
+          
+          Set rs = Nothing
+     Conn.Close
+End Function     
+     
+
+'/****
+'* CUSTOM SUBS
+'\*************
+ 
+Private Sub CreateCommands()
+     Dim Command, Parameter
+     Dim BotOwner
+   
+     '// The command is available
+     If OpenCommand("vouch") Is Nothing Then
+          With CreateCommand("vouch")
+               .Description = "Vouches another user." 
+               .RequiredRank = 70
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("unvouch") Is Nothing Then
+          With CreateCommand("unvouch")
+               .Description = "Unvouches another user." 
+               .RequiredRank = 70
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("vouchinfo") Is Nothing Then
+          With CreateCommand("vouchinfo")
+               .Description = "Displays some vouch information." 
+               .RequiredRank = 0
+               Set Parameter = .NewParameter("user", True, "Word")
+               .Parameters.Add Parameter
+               .Save
+          End With
+          
+          BotOwner = InputBox("What is the name of the owner of the bot?", Script("Name"), "")
+          Connect()
+               Set rs = Conn.Execute("INSERT INTO `Users` (`user`, `vouched`, `vouched_by`, `vouched_at`) VALUES ('" & BotOwner & "', '" & True & "', '" & "Console" & "', '" & Date() & "')")
+          Conn.Close
+          
+          AddChat vbYellow, "[" & Script("Name") & "] The script was successfully installed..."
+     End If
+
+     Set Command = Nothing
+     Set Parameter = Nothing
+End Sub
+     
+     
+Private Sub Connect()
+     Set Conn = CreateObject("ADODB.Connection")
+     ConnStringProperty = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & dbPath
+     Conn.ConnectionString = ConnStringProperty
+     Conn.Open
+End Sub
+
+
+Private Sub CreateDataBase()
+     Dim Catalog
+     
+     Set Catalog = CreateObject("ADOX.Catalog")
+     Catalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & dbPath   
+
+     Connect()
+          Conn.Execute("CREATE TABLE `users` (`user` varchar(20), `vouched` varchar(4), `vouched_by` varchar(20), `vouched_at` varchar(20))") 
+     Conn.Close
+End Sub

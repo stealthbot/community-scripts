@@ -1,0 +1,89 @@
+Script("Name") = "UC"
+Script("Author") = "Tuck"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 1
+Script("Description") = "User Confidence"
+
+Private Conn, dbPath
+
+Sub Event_Load()
+    dbPath = BotPath() & "scripts\UC.mdb"
+    If CreateObject("Scripting.FileSystemObject").FileExists(dbPath) Then
+        Connect
+    Else
+        CreateObject("ADOX.Catalog").Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & dbPath
+        Connect
+        Conn.Execute("Create Table `Chars` (`Character Name` Varchar(15) Not Null, `Character Type` Varchar(15) Not Null, " & _
+                     "`Character Level` Int Not Null, `Character Difficulty` Int, `Username` Varchar(25) Not Null, " & _
+                     "`Alive` Int Not Null, `Created` Timestamp Not Null, `Modified` Timestamp Not Null)")
+    End If
+    If LenB(GetSettingsEntry("D2_New_User")) = 0 Then Call WriteSettingsEntry("D2_New_User", "Hi %name, I'm here to make you feel better.")
+    If LenB(GetSettingsEntry("D2_New_Type")) = 0 Then Call WriteSettingsEntry("D2_New_Type", "Hi %name, Have fun leveling your new %type.")
+    If LenB(GetSettingsEntry("D2_New_Level")) = 0 Then Call WriteSettingsEntry("D2_New_Level", "Congratulation, with the %lvl level(s) %name.")
+    If LenB(GetSettingsEntry("D2_New_Difficulty")) = 0 Then Call WriteSettingsEntry("D2_New_Difficulty", "Congratulation %name, your now in %difficulty.")
+    If LenB(GetSettingsEntry("D2_New_Account")) = 0 Then Call WriteSettingsEntry("D2_New_Account", "Hi %name, I like your new account name.")
+    If LenB(GetSettingsEntry("D2_New_State")) = 0 Then Call WriteSettingsEntry("D2_New_State", "I'm so sorry %name, i would have sacrificed my self to keep you alive.")
+End Sub
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+    If Not Left(Product, 2) = "D2" Or InStr(Message, "Open Character") > 0 Then Exit Sub
+    Character_Name = Channel.GetUser(Username).Stats.CharacterName
+    Character_Type = Channel.GetUser(Username).Stats.CharacterClass
+    Character_Level = Channel.GetUser(Username).Stats.Level
+    Character_Difficulty = Channel.GetUser(Username).Stats.CurrentDifficulty
+    Character_DifficultyID = Channel.GetUser(Username).Stats.CurrentDifficultyID
+    If Channel.GetUser(Username).Stats.IsCharacterDead Then Alive = 0 Else Alive = 1
+    Lvl = 0
+    Response = VbNullString
+    If Conn.Execute("Select Count(*) From `Chars` Where `Character Name`='" & Character_Name & "'").Fields(0) = 0 Then
+        Conn.Execute("Insert Into `Chars` (`Character Name`, `Character Type`, `Character Level`, `Character Difficulty`, `Username`, `Alive`, `Created`, " & _
+                                          "`Modified`) Values ('" & Character_Name & "', '" & Character_Type & "', '" & Character_Level & "', " & _
+                                          "'" & Character_DifficultyID & "', '" & Username & "', '" & Alive & "', '" & Now() & "', '" & Now() & "')")
+        Response = GetSettingsEntry("D2_New_User")
+    Else
+        Set Data = Conn.Execute("Select * From `Chars` Where `Character Name`='" & Character_Name & "'")
+        If Not Character_Type = Data.Fields(1) Or Character_Level < Data.Fields(2) Or (Not Alive = Data.Fields(5) And Alive = 1) Then
+            Response = GetSettingsEntry("D2_New_Type")
+        ElseIf Not Alive = Data.Fields(5) And Alive = 0 Then
+            Response = GetSettingsEntry("D2_New_State")
+        ElseIf Not LCase(Username) = LCase(Data.Fields(4)) Then
+            Response = GetSettingsEntry("D2_New_Account")
+        ElseIf CInt(Character_Level) > Data.Fields(2) Then
+            Response = GetSettingsEntry("D2_New_Level")
+            Lvl = CInt(Character_Level - Data.Fields(2))
+        End If
+        If Character_DifficultyID > Data.Fields(3) Then
+            If Len(Response) > 0 Then
+                If Right(Response, 1) = "." Then Response = Left(Response, Len(Response) - 1) & ", " & GetSettingsEntry("D2_New_Difficulty") Else Response = Response & ", " & GetSettingsEntry("D2_New_Difficulty")
+            Else
+                Response = GetSettingsEntry("D2_New_Difficulty")
+            End If
+        Else
+            If Len(Response) <= 0 Then Exit Sub
+        End If
+        Conn.Execute("Update `Chars` Set `Character Type`='" & Character_Type & "', `Character Level`='" & Character_Level & "', " & _
+                                        "`Character Difficulty`='" &  Character_DifficultyID & "', `Username`='" & Username & "', " & _
+                                        "`Alive`='" & Alive & "', `Modified`='" & Now() & "' Where `Character Name`='" & Character_Name & "'")
+        Set Data = Nothing
+    End If
+    Response = Replace(Response, "%name", Character_Name)
+    Response = Replace(Response, "%level", Character_Level)
+    Response = Replace(Response, "%difficulty", Character_Difficulty)
+    Response = Replace(Response, "%type", Character_Type)
+    Response = Replace(Response, "%username", Username)
+    Response = Replace(Response, "%lvl", Lvl)
+    If Len(Response) > 0 Then AddQ Response
+End Sub
+
+Private Sub Connect()
+    Set Conn = CreateObject("ADODB.connection")
+    Conn.ConnectionString = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & dbPath
+    Conn.Open
+End Sub
+
+Sub Event_Close()
+    On Error Resume Next
+    Conn.Close
+    Set Conn = Nothing
+End Sub

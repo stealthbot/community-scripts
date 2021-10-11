@@ -1,0 +1,357 @@
+Script("Name") = "Game Charter"
+Script("Author") = "Neco"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 0
+Script("Description") = "Allows a user to start a game charter. Other users can then sign up to join the game."
+
+'// Private variables
+Private GameCurrent, GameMax , GameNote, GameName, GameCreator, GameTime, CharterRunning '// Keeps game statistics
+Private userDict '// Holds users that have signed in a dictionary
+Private HostName, HostTrigger, HostMode '// Hostbot options
+
+'// Script Load
+Sub Event_Load()
+
+        '**** EDIT BELOW HERE ****'
+        HostName = "host" '// Your hostbots name
+        HostTrigger = "!" '// Your hostbots trigger
+        HostMode = "privby" '// The command to use to host ( a "privby" or "pubby" is recommended)
+
+        '**** DON'T EDIT BELOW HERE ****'
+
+        Call CreateCommands()
+        Set userDict = CreateObject("Scripting.Dictionary")
+        userDict.CompareMode = 1
+
+        CharterRunning = False
+CreateObj "LongTimer", "AnnounceTimer"
+End Sub '// Event_Load()
+
+'// This subroutine fires when a valid command name is given
+Sub Event_Command(Command)
+        Dim Args, User
+
+        Args = Command.Args
+        User = Command.Username
+
+        Select Case LCase(Command.Name)
+                Case LCase("new"): Call gcnew(Command, Args, User) '// New charter command
+                Case LCase("abort"): Call gccancel(Command, Args, User) '// Cancel charter command
+                Case LCase("sign"): Call gcsignup(Command, User) '// Sign command
+                Case LCase("messageall"): Call Gcmessageall(Command, Args, User) '// Message all command
+                Case LCase("check"): Call gccheck(Command, Args, User) '// Check command
+                Case LCase("info"): Call gcinfo(Command, Args, User) '// Charter InCharteration command
+                Case LCase("announce"): Call gcannounce(Command, Args, User) '// Charter announce command
+                Case LCase("checkall"): Call gccheckAll(Command, Args, User) '// Charter get signed command
+                Case LCase("startgame"): Call gcstartgame(Command, Args, User) '// Start game using charter's data command
+        End Select
+End Sub '// Event_Command()
+
+Private Sub gcnew(Command, Message, Username)
+        Dim Note, Players
+
+        If not (Command.IsValid) Then Exit Sub
+
+        If (CharterRunning) Then Command.Respond StringFormat("Un Joc facut de {0} deja ruleaza. {1}/{2} Slot Ramas.", GameCreator, GameCurrent, GameMax): Exit Sub
+        arr = Split(Message)
+
+        For i = 1 to UBound(arr)
+                Note = Note & arr(i) & " "
+        Next
+
+        Note = Trim(Note)
+        Players = arr(0)
+
+        If (LenB(Note) = 0) Then Note = "None"
+
+        Command.Respond StringFormat("Joc Creat! {0} sloturi libere. Mod: {1}.", Players, Note, Username)
+        GameTime = Now
+        GameCreator = Username
+        GameCurrent = 0
+        GameMax = Players
+        GameNote = Note
+        CharterRunning = True
+        userDict.RemoveAll
+End Sub '// New
+
+Private Sub gccancel(Command, Message, Username)
+
+        If not (Command.IsValid) Then Exit Sub
+
+        CharterRunning = False
+        AddQ StringFormat("/f m {0}'s game has been canceled due to: {1}", GameCreator, Message)
+        Command.Respond StringFormat("{0}'s game has been canceled due to: {1}", GameCreator, Message)
+        AddQ StringFormat("/w host1 !unhost")
+        For Each friend In Friends
+                If (userDict.Exists(friend.name)) Then AddQ StringFormat("/f r {0}", friend.name)
+        Next
+        GameTime = vbNullString
+        GameCreator = vbNullString
+        GameCurrent = vbNullString
+        GameMax = vbNullString
+        GameNote = vbNullString
+        userDict.RemoveAll
+        AnnounceTimer.Enabled = False
+End Sub '// Cancel
+
+
+Private Sub gcsignup(Command, Username)
+
+        If not (Command.IsValid) Then Exit Sub
+
+        If not (CharterRunning) Then Command.Respond StringFormat("Nici un joc nu ruleaza, va rugam asteptati."): Exit Sub
+        If (userDict.Exists(Username)) Then
+                Command.Respond StringFormat("Hey ({0}) Deja esti inregistrat.", Username)
+        Else
+                GameCurrent = GameCurrent + 1
+                If (1 > (GameMax - GameCurrent)) Then
+                        Command.Respond StringFormat("Jocul este plin ({0}/{0}).", GameMax)
+                        AddQ StringFormat("Jocul a inceput.", GameCreator)
+                        AddQ StringFormat("/w host2 !say .startgame")
+                        AddQ StringFormat("/w host1 !hs {0} {1}", Username, GameMax)
+                        Command.Respond StringFormat("Useri care sau inregistrat: {0} ({1}/{2})", GetList(), GameCurrent, GameMax)
+                        AnnounceTimer.Enabled = False
+                Else
+                        Command.Respond StringFormat("te-ai inregistrat in joc. {0} sloturi ramase.", GameMax - GameCurrent)
+                        userDict.Item(Username) = Username & " | " & Now
+                        AddQ StringFormat("/w host1 !pubby {0} -arsoDota""{1}"". Mod: {2}", Username, GameName, GameNote)
+                        AddQ StringFormat("/w host1 !closeall")                                
+                        AddQ StringFormat("/w host1 !hs {0} {1}", Username, GameCurrent)
+                        Command.Respond StringFormat("Useri care sau inregistrat: {0} ({1}/{2})", GetList(), GameCurrent, GameMax)
+                End If
+        End If
+End Sub '// gcSignup
+
+Private Sub messageall(Command, Message, Username)
+
+        If not (Command.IsValid) Then Exit Sub
+
+        If not (CharterRunning) Then Command.Respond StringFormat("Nici un joc nu este deschis."): Exit Sub
+        AddQ StringFormat("UPDATE from {0}: {1}", Username, Message)
+End Sub '// Message All
+
+Private Sub check(Command, Message, Username)
+        Dim Args, Name, Time
+
+        If not (Command.IsValid) Then Exit Sub
+
+        If not (CharterRunning) Then Command.Respond StringFormat("Nu sunt useri inregistrati in joc."): Exit Sub
+        If (userDict.Exists(Message)) Then
+                Args = Split(userDict.Item(Message), " | ")
+                Name = Args(0)
+                Time = Args(1)
+
+                
+                Command.Respond StringFormat("{0} signed up {1}m ago.", Name, DateDiff("n", Time, Now))
+        Else
+                Command.Respond StringFormat("{0} has not signed up.", Message)
+        End If
+End Sub '// Check
+
+Private Sub gcinfo(Command, Message, Username)
+        Dim Time
+
+        If not (Command.IsValid) Then Exit Sub
+
+        If not (CharterRunning) Then Command.Respond StringFormat("No signup Charters are currently running."): Exit Sub
+
+        Command.Respond StringFormat("{0}'s Charter ({1}) was created {2}m ago and has {3} slots remaining.", GameCreator, GameNote, DateDiff("n", GameTime, Now), GameMax - GameCurrent)
+End Sub '// Info
+
+Private Sub gcannounce(Command, Message, Username)
+
+        If not (Command.IsValid) Then Exit Sub
+
+        If not (CharterRunning) Then Command.Respond StringFormat("Nu sunt useri inregistrati in joc."): Exit Sub
+
+        If (IsNumeric(Message)) Then
+                If Message = 0 Then
+                        AnnounceTimer.Interval = 0
+                        AnnounceTimer.Enabled = False
+                        Command.Respond StringFormat("Charter Announce disabled.")
+                Else
+                        AnnounceTimer.Interval = Message
+                        AnnounceTimer.Enabled = True
+                        Command.Respond StringFormat("Charter Announce enabled.")
+                End If
+        Else
+                Command.Respond StringFormat("Enter an arguement with numeric value.")
+        End If
+End Sub '// gcAnnounce
+
+Private Sub gccheckAll(Command, Message, Username)
+
+        If not (Command.IsValid) Then Exit Sub
+
+        If not (CharterRunning) Then Command.Respond StringFormat("Nu sunt useri inregistrati in joc."): Exit Sub
+
+        If not (LenB(GetList()) = 0) Then Command.Respond StringFormat("Useri care sau inregistrat: {0} ({1}/{2})", GetList(), GameCurrent, GameMax)
+        If (LenB(GetList()) = 0) Then Command.Respond StringFormat("Nici un user nu sa inregistrat.")
+End Sub '// Check all
+
+Private Sub gcstartgame(Command, Message, Username)
+
+        If not (Command.IsValid) Then Exit Sub
+
+        If not (CharterRunning) Then Command.Respond StringFormat("Nu sunt useri inregistrati in joc."): Exit Sub
+
+        GameName = RandomCode()
+        AddQ StringFormat("/w {0} {1}{2} {3} {4}", HostName, HostTrigger, HostMode, GameCreator, GameName)
+        AddQ StringFormat("Userii inregistrati {0} pot intra in -arsoDota", GetList, GameName, GameNote)
+        CharterRunning = False
+
+        For Each friend In Friends
+                If (userDict.Exists(friend.name)) Then AddQ StringFormat("/f r {0}", friend.name)
+        Next
+        GameTime = vbNullString
+        GameCreator = vbNullString
+        GameCurrent = vbNullString
+        GameMax = vbNullString
+        GameNote = vbNullString
+        userDict.RemoveAll
+        AnnounceTimer.Enabled = False
+End Sub '// Start Game
+
+Private Sub CreateCommands()
+        Dim Command, Parameter
+
+        Set Command = OpenCommand("gcnew")
+        If ((Command Is Nothing)) Then
+                Set Command = CreateCommand("new")
+                With Command
+                        .RequiredRank = 100
+                        .Description = "Creates a new sign Charter."
+                        Set Parameter = .NewParameter("#", False, "word")
+                        Parameter.Description = "NUMBER OF PEOPLE REQUIRED TO SIGNUP UNTIL THE GAME CAN BEGIN."
+                        .Parameters.Add Parameter
+
+                        Set Parameter = .NewParameter("Notes", False, "string")
+                        Parameter.Description = "NOTES ABOUT THE Charter AN WHAT IT ENTITLES."
+                        .Parameters.Add Parameter
+                        .Save
+                End With
+        End If
+        Set Command = OpenCommand("gccancel")
+        If (Command Is Nothing) Then
+                Set Command = CreateCommand("abort")
+                With Command
+                        .RequiredRank = 100
+                        .Description = "Deletes an existing sign Charter."
+                        Set Parameter = .NewParameter("Reason", True, "word")
+                        Parameter.Description = "REASON FOR CANCELING THE SIGNUP Charter."
+                        .Parameters.Add Parameter
+                        .Save
+                End With
+        End If
+        Set Command = OpenCommand("gcsignup")
+        If (Command Is Nothing) Then
+                Set Command = CreateCommand("sign")
+                With Command
+                        .RequiredRank = 0
+                        .Description = "Adds the user to the bots friendslist and also adds them to the internal dictionary"
+                        .Save
+                End With
+        End If
+        Set Command = OpenCommand("gcmessageall")
+        If (Command Is Nothing) Then
+                Set Command = CreateCommand("messageall")
+                With Command
+                        .RequiredRank = 100
+                        .Description = "Whispers a message to all users on the list using the ""/f m""."
+                        Set Parameter = .NewParameter("Message", False, "string")
+                        Parameter.Description = "MESSAGE TO WHISPER USERS WITH."
+                        .Parameters.Add Parameter
+                        .Save
+                End With
+        End If
+        Set Command = OpenCommand("gccheck")
+        If (Command Is Nothing) Then
+                Set Command = CreateCommand("check")
+                With Command
+                        .RequiredRank = 0
+                        .Description = "Checks if a user has signed up yet."
+                        Set Parameter = .NewParameter("Name", False, "word")
+                        Parameter.Description = "User to check."
+                        .Parameters.Add Parameter
+                        .Save
+                End With
+        End If
+        Set Command = OpenCommand("gcinfo")
+        If (Command Is Nothing) Then
+                Set Command = CreateCommand("info")
+                With Command
+                        .RequiredRank = 0
+                        .Description = "Gives information about a currently running Charter."
+                        .Save
+                End With
+        End If
+        Set Command = OpenCommand("gcannounce")
+        If (Command Is Nothing) Then
+                Set Command = CreateCommand("announce")
+                With Command
+                        .RequiredRank = 100
+                        .Description = "Gives information about a currently running Charter."
+                        Set Parameter = .NewParameter("Time", False, "word")
+                        Parameter.Description = "Interval between announce messages."
+                        .Parameters.Add Parameter
+                        .Save
+                End With
+        End If
+        Set Command = OpenCommand("gccheckall")
+        If (Command Is Nothing) Then
+                Set Command = CreateCommand("checkall")
+                With Command
+                        .RequiredRank = 0
+                        .Description = "Shows all the users that have signed."
+                        .Save
+                End With
+        End If
+        Set Command = OpenCommand("gcstartgame")
+        If (Command Is Nothing) Then
+                Set Command = CreateCommand("startgame")
+                With Command
+                        .RequiredRank = 100
+                        .Description = "Starts the game using data from the Charter."
+                        .Save
+                End With
+        End If
+End Sub
+
+Sub AnnounceTimer_Timer()
+        Dim Time
+
+        If not (CharterRunning) Then AnnounceTimer.Enabled = False: Exit Sub
+        If (GameCurrent - GameMax = 0) Then AnnounceTimer.Enabled = False: Exit Sub
+
+        AddQ StringFormat("/me {0}'s Charter ({1}) was created {2}m ago and has {3} slots remaining.", GameCreator, GameNote, DateDiff("n", GameTime, Now), GameMax - GameCurrent)
+End Sub
+
+
+'// This function generates a random hexadecimal 4 character code that is used as the gamename
+Private Function RandomCode()
+        Dim string, code, num, arr
+
+        string ="0123456789"
+
+        For i = 1 to 4
+                Randomize
+                num = (Rnd * 15) + 1
+                code = code & Mid(string, num, 1)
+        Next
+
+        RandomCode = code
+End Function '// RandomCode()
+
+Private Function GetList()
+        Dim users, value
+
+        users = userDict.Keys
+
+        For i = 0 to UBound(users)
+                If (i = 0) Then value = users(i)
+                If not (i = 0) Then value = value & ", " & users(i)
+        Next
+
+        GetList = value
+End Function

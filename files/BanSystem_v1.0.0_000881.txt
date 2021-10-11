@@ -1,0 +1,99 @@
+Script("Name") = "BanSystem"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 0
+Script("Author") = "7thAce"
+
+Sub Event_Userjoins(Username, Flags, Message, Ping, Product, Level, OSS, Banned)
+If banned = False Then
+ BanName = Username
+ Username = Split(Username, "@")(0)
+ Username = replace(username, ")", ",")
+ Banlisted = GetConfigEntry("Banlist", Username, "Ban System.ini")
+ If Banlisted <> vbnullstring Then AddQ "/ban " & BanName & " BanScript: " & Banlisted
+End If 
+End Sub
+
+Sub Event_ServerInfo(Message)
+If instr(lcase(message), "unbanned") Then
+ Username = split(message)(0)
+ Username = split(username, "@")(0)
+ Username = replace(username, ")", ",")
+ WriteConfigEntry "Banlist", Username, vbnullstring, "Ban System.ini"
+ Addchat vbcyan, "Internally unbanned " & replace(Username, ",", ")") & "."
+ Command Botvars.Username, "/cbl", True
+End If
+
+If instr(lcase(message), "was banned") Then
+ Username = split(message)(0)
+ Username = split(username, "@")(0)
+ Username = replace(username, ")", ",")
+ If instr(message, "was banned by") Then
+  If right(message, 2) = ")." Then
+   Reason = split(message, " ", 6)(5)
+   Reason = right(reason, len(reason) - 1)
+   Reason = left(reason, len(reason) - 2)
+  Else
+   Reason = "None"
+  End If
+ End If
+ If instr(message, "BanScript:") Then reason = split(Reason, "BanScript:")(1)
+ WriteConfigEntry "Banlist", Username, reason, "Ban System.ini"
+ Addchat vbcyan, "Internally banned " & replace(Username, ",", ")") & "."
+End If
+End Sub
+
+Sub Event_pressedenter(text)
+ If left(lcase(text), 6) = "/iban " Then
+  VetoThisMessage()
+  If ubound(split(text)) < 2 Then
+   Text = Text & " Banned"
+   Reason = Split(text, " ", 3)(2)
+   Message = Split(text)(1) & " was banned internally. (" & Reason & ")"
+   Call Event_Serverinfo(message)
+  End If
+ End If
+ 
+ If left(lcase(text), 8) = "/iunban " Then
+  VetoThisMessage()
+  Message = Split(text)(1) & " was unbanned internally."
+  Call Event_Serverinfo(message)
+ End If
+ 
+ If lcase(text) = "/blist" or lcase(text) = "/banlist" or lcase(text) = "/bcount" Then
+  VetoThisMessage()
+  Set FSO = CreateObject("Scripting.FileSystemObject")
+  Set File = FSO.Opentextfile(Botpath & "Ban System.ini", 1, True)
+  List = vbnullstring
+  Lines = Split(File.Readall, vbnewline)
+  For i = 1 to ubound(lines) - 1
+   List = List & split(lines(i), "=")(0) & ", "
+  Next
+  If lcase(text) <> "/bcount" Then
+   AddChat vbmagenta, "Banned user list: " & left(list, len(list) - 2)
+  Else
+   Addchat vbmagenta, "Banned user count: " & ubound(lines) - 1
+  End If
+ End If 
+End Sub 
+
+Sub event_usertalk(Username, Flags, Message, Ping)
+ If left(lcase(Message), 6) = botvars.trigger & "iban " Then
+  Text = Replace(Message, botvars.trigger, "/")
+  Call event_Pressedenter(text)
+ End If
+ 
+ If left(lcase(Message), 8) = botvars.trigger & "iunban " Then
+  Text = Replace(Message, botvars.trigger, "/")
+  Call event_Pressedenter(text)
+ End If  
+End Sub
+
+'Sub Event_MessageQueued(MessageID, Message, Tag)
+'If left(lcase(message), 5) = "/ban " Then
+' User = Split(message, " ", 3)(1)
+' If User.PendingBan = True Then
+'  Queue.RemoveItem(MessageID)
+' End If
+'End If
+'End Sub

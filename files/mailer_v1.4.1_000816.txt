@@ -1,0 +1,765 @@
+Script("Name") = "mailer"
+Script("Author") = "The-Black-Ninja"
+Script("Major") = 1
+Script("Minor") = 4
+Script("Revision") = 1
+Script("Description") = "Extensive mail system."
+
+
+'// Change Log
+'//
+'//  :: v1.2 - v1.3 ::
+'//   ->  Rewrote how commands are parsed to better use the new scripting system.
+'//   ->  Added command to save a message to prevent it from being auto-deleted.
+'//   ->  Added console only command to purge the mail database of all messages.
+'//   ->  Added inbox command to read the next unread message.
+'//   ->  Added username who sent the message when using mymail. - Thanks smkyros
+'//   ->  Added command to mail members of a certain group in the database manager. - Thanks Roanapur
+'//   ->  Added the ability to allow multiple bots use the same datdabase. - Thanks C0RROSIVe
+'//  :: v1.0 - v1.2 ::
+'//   ->  Added ability to mail CRS members with a specified numerical rank - Thanks DemonicRuins
+
+Public mailConn
+Private mailFSO
+
+
+Sub Event_Load()
+
+   Call CreateCmds()
+   
+   Set mailFSO = CreateObject("Scripting.FileSystemObject")
+   If NOT mailFSO.FileExists(GetSettingsEntry("db_path")) Then
+      Call mail_createDB()
+   End If   
+   
+   Randomize
+End Sub
+
+Sub Event_Command(Command)
+
+   Select Case LCase(Command.Name)
+      Case "mail"      :Call mailCmd(Command)
+      Case "mailgroup" :Call mailgroupCmd(Command)
+      Case "mailcrs"   :Call mailCRSCmd(Command)
+      Case "delmail"   :Call delCmd(Command)
+      Case "mymail"    :Call mymailCmd(Command)
+      Case "savemail"  :Call savemailCmd(Command)
+      Case "purgedb"   :Call purgeDBCMD(Command)
+      Case "inbox"     :Call inboxCMD(Command)
+   End Select
+End Sub
+
+Sub Event_Userjoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+
+   Call mail_connect()
+   Set rs = mailConn.Execute("SELECT COUNT(`sent_to`) FROM `messages` WHERE `sent_to`='" & Username & "' AND `read`=" & 0)
+   If (rs.Fields(0)>0) Then AddQ "/w " & Username & " You have " & rs.Fields(0) & " new messages waiting. Type " & BotVars.Trigger & "mymail to retrieve."
+   
+   Set rs = Nothing
+   Call mail_close()
+End Sub
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)
+   
+   If Protocol = "BNCS" Then
+      Call mail_connect()
+      
+      Set rs = mailConn.Execute("SELECT `last_read`, `ID` FROM `messages`")
+      If NOT (rs.EOF OR rs.BOF) Then
+         Do Until rs.EOF            
+            If ABS(DateDiff("d", rs.Fields(0), Now)) >= INT(GetSettingsEntry("auto-purge")) Then mailConn.Execute("DELETE FROM `messages` WHERE `ID` = '" & rs.Fields(1) & "'")
+            rs.MoveNext
+         Loop
+      End If
+      
+      Call mail_close()
+   End If         
+End Sub
+
+
+
+Public Sub mail_createDB()
+
+   Set Catalog = CreateObject("ADOX.Catalog")
+   Catalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & GetSettingsEntry("db_path")
+
+   mail_connect()
+
+   mailConn.Execute("CREATE TABLE `messages` (`sent_to` varchar(30), `message` Text, `sent_from` varchar(30), `date` varchar(30), `read` INT, `priority` INT, `ID` varchar(10), `last_read` varchar(30), `saved` INT)")
+   Call mail_close
+End Sub
+
+Public Sub mail_connect()
+   
+   Set mailConn = CreateObject("ADODB.connection")
+   dsn = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & GetSettingsEntry("db_path")
+   mailConn.ConnectionString = dsn
+   
+   mailConn.Open  
+End Sub
+
+Public Sub mail_close()
+   
+   mailConn.Close    
+End Sub
+
+
+
+Private Sub mailgroupCMD(cmd)
+
+   If cmd.HasAccess AND cmd.IsValid Then      
+      If Len(cmd.Argument("Message")) > 270 Then
+         cmd.Respond "Message to be mailed is too long. All messages must be under 271 characters."
+         Exit Sub                  
+      End If
+      
+      If IsNumeric(cmd.Argument("Priority")) Then
+         If cmd.Argument("Priority") > 3 Then
+            sP = 3
+         Else
+            sP = cmd.Argument("Priority")
+         End If
+      Else
+         sP = 1
+      End If
+      
+      Call mail_connect
+      x=0
+      For Each mem In GetUserDatabase
+         If GetDBEntry(mem.Name).IsInGroup(cmd.Argument("Group")) Then
+            x=x+1
+            mailConn.Execute("INSERT INTO `messages` (`sent_to`, `message`, `sent_from`, `date`, `read`, `priority`, `ID`, `last_read`, `saved`) " & _
+               "VALUES ('" & mem.Name & "', '" & cmd.Argument("Message") & "', '" & cmd.Username & "', '" & Now & "', " & 0 & ", " & sP & ", '" & GetUniqueID & "', '" & Now & "', " & 0 & ")")                     
+         End If
+      Next
+      
+      cmd.Respond "Mail sent to " & x & " members in the group " & cmd.Argument("Group") & "."
+      Call mail_close      
+   End If
+End Sub
+
+Private Sub mailCRSCMD(cmd)
+
+   If cmd.IsValid AND cmd.HasAccess Then
+     On Error Resume Next
+         On Error Resume Next
+         If Scripts("crs").crsConn IS Nothing then
+            If (Err.Number <> 0) Then
+               Err.Clear
+               cmd.Respond "Unable to send mail to the CRS rank. The CRS script is not installed or has been disabled."
+               Exit Sub
+            End If
+         End If
+         
+         If Len(cmd.Argument("Message")) > 270 Then
+            cmd.Respond "Message to be mailed is too long. All messages must be under 271 characters."
+            Exit Sub                  
+         End If
+         
+         If IsNumeric(cmd.Argument("Priority")) Then
+            If cmd.Argument("Priority") > 3 Then
+               sP = 3
+            Else
+               sP = cmd.Argument("Priority")
+            End If
+         Else
+            sP = 1
+         End If
+         
+         Set rs = Scripts("crs").crsConn.Execute("SELECT `name` FROM `members` WHERE `rank` = " & cmd.Argument("CRS#"))
+         If NOT (rs.EOF OR rs.BOF) Then
+            x=0
+            Call mail_connect()
+            Do Until rs.EOF
+               x=x+1
+               mailConn.Execute("INSERT INTO `messages` (`sent_to`, `message`, `sent_from`, `date`, `read`, `priority`, `ID`, `last_read`, `saved`) " & _
+                  "VALUES ('" & rs.Fields(0) & "', '" & cmd.Argument("Message") & "', '" & LCase(cmd.Username) & "', '" & Now & "', " & 0 & ", " & sP & ", '" & GetUniqueID & "', '" & Now & "', " & 0 & ")")               
+               rs.MoveNext
+            Loop
+            cmd.Respond "Mail sent to " & x & " CRS members."
+            Call mail_close()
+         Else
+            cmd.Respond "There are no CRS members with that rank."
+         End If     
+   End If
+End Sub
+
+Private Sub inboxCMD(cmd)
+
+   If cmd.HasAccess Then
+      Call mail_connect()
+      
+      Set rs = mailConn.Execute("SELECT * FROM `messages` WHERE `sent_to`='" & cmd.Username & "' AND `read`=" & 0)
+      If NOT (rs.EOF OR rs.BOF) Then
+         AddQ "/w " & cmd.Username & " Sent from " & rs.Fields(2) & " (" & rs.Fields(3) & ") " & rs.Fields(6) & ": " & FormatMsg(rs.Fields(1), 1)
+         mailConn.Execute("UPDATE `messages` SET `read` = 1 WHERE `ID` = '" & rs.Fields(6) & "'")
+      Else
+         cmd.Respond "You do not have any unread messages at this time."
+      End If
+      
+      Call mail_Close()
+   End If    
+End Sub
+
+Private Sub purgeDBCMD(cmd)
+
+   If NOT cmd.IsLocal Then Exit Sub
+   
+   Call mail_connect()
+   mailConn.Execute("DELETE * FROM `messages`")
+   
+   cmd.Respond "All mail messages have been removed."
+   
+   Call mail_close()   
+End Sub
+
+Private Sub savemailCmd(cmd)
+
+   If cmd.IsValid AND cmd.HasAccess Then   
+      Call mail_connect()      
+      
+      Set rs = mailConn.Execute("SELECT COUNT(*) FROM `messages` WHERE `ID` = '" & cmd.Argument("ID") & "'")
+      If rs.Fields(0) > 0 Then
+         mailConn.Execute("UPDATE `messages` SET `saved` = 1 WHERE `ID` = '" & cmd.Argument("ID") & "'")
+         cmd.Respond "Message has been saved."
+      Else
+         cmd.Respond "That message does not exist."
+      End If
+      
+      Call mail_close()
+   End If
+End Sub
+
+Private Sub mailCmd(cmd)
+
+   If cmd.IsValid Then
+      If cmd.HasAccess Then
+         Select Case Lcase(cmd.Argument("Username/peons/grunts/shams/allclan"))
+            Case "peons"
+               If BotVars.Clan = vbNullString Then
+                  cmd.Respond "Console is not currently in a clan and cannot send mail to any Peons."
+                  Exit Sub
+               End If
+               
+               If Len(cmd.Argument("Message")) > 270 Then
+                  cmd.Respond "Message to be mailed is too long. All messages must be under 271 characters."
+                  Exit Sub                  
+               End If
+               
+               If IsNumeric(cmd.Argument("Priority")) Then
+                  If cmd.Argument("Priority") > 3 Then
+                     sP = 3
+                  Else
+                     sP = cmd.Argument("Priority")
+                  End If
+               Else
+                  sP = 1
+               End If
+               
+               Call mail_connect
+               x=0
+               For Each mem In Clan.Members
+                  If mem.Rank=0 OR mem.Rank=1 Then
+                     x=x+1
+                     mailConn.Execute("INSERT INTO `messages` (`sent_to`, `message`, `sent_from`, `date`, `read`, `priority`, `ID`, `last_read`, `saved`) " & _
+                        "VALUES ('" & mem.Name & "', '" & cmd.Argument("Message") & "', '" & cmd.Username & "', '" & Now & "', " & 0 & ", " & sP & ", '" & GetUniqueID & "', '" & Now & "', " & 0 & ")")                     
+                  End If
+               Next
+               
+               cmd.Respond "Mail sent to " & x & " peons."               
+               Call mail_close
+               
+            Case "grunts"
+               If BotVars.Clan = vbNullString Then
+                  cmd.Respond "Console is not currently in a clan and cannot send mail to any Peons."
+                  Exit Sub
+               End If
+               
+               If Len(cmd.Argument("Message")) > 270 Then
+                  cmd.Respond "Message to be mailed is too long. All messages must be under 271 characters."
+                  Exit Sub                  
+               End If
+               
+               If IsNumeric(cmd.Argument("Priority")) Then
+                  If cmd.Argument("Priority") > 3 Then
+                     sP = 3
+                  Else
+                     sP = cmd.Argument("Priority")
+                  End If
+               Else
+                  sP = 1
+               End If
+               
+               Call mail_connect
+               x=0
+               For Each mem In Clan.Members
+                  If mem.Rank=2 Then
+                     x=x+1
+                     mailConn.Execute("INSERT INTO `messages` (`sent_to`, `message`, `sent_from`, `date`, `read`, `priority`, `ID`, `last_read`, `saved`) " & _
+                        "VALUES ('" & mem.Name & "', '" & cmd.Argument("Message") & "', '" & cmd.Username & "', '" & Now & "', " & 0 & ", " & sP & ", '" & GetUniqueID & "', '" & Now & "', " & 0 & ")")                     
+                  End If
+               Next
+               
+               cmd.Respond "Mail sent to " & x & " grunts."               
+               Call mail_close
+               
+            Case "shams"
+               If BotVars.Clan = vbNullString Then
+                  cmd.Respond "Console is not currently in a clan and cannot send mail to any Peons."
+                  Exit Sub
+               End If
+               
+               If Len(cmd.Argument("Message")) > 270 Then
+                  cmd.Respond "Message to be mailed is too long. All messages must be under 271 characters."
+                  Exit Sub                  
+               End If
+               
+               If IsNumeric(cmd.Argument("Priority")) Then
+                  If cmd.Argument("Priority") > 3 Then
+                     sP = 3
+                  Else
+                     sP = cmd.Argument("Priority")
+                  End If
+               Else
+                  sP = 1
+               End If
+               
+               Call mail_connect
+               x=0
+               For Each mem In Clan.Members
+                  If mem.Rank=3 Then
+                     x=x+1
+                     mailConn.Execute("INSERT INTO `messages` (`sent_to`, `message`, `sent_from`, `date`, `read`, `priority`, `ID`, `last_read`, `saved`) " & _
+                        "VALUES ('" & mem.Name & "', '" & cmd.Argument("Message") & "', '" & cmd.Username & "', '" & Now & "', " & 0 & ", " & sP & ", '" & GetUniqueID & "', '" & Now & "', " & 0 & ")")                     
+                  End If
+               Next
+               
+               cmd.Respond "Mail sent to " & x & " shamans."               
+               Call mail_close  
+
+            Case "allclan"
+               If BotVars.Clan = vbNullString Then
+                  cmd.Respond "Console is not currently in a clan and cannot send mail to any Peons."
+                  Exit Sub
+               End If
+               
+               If Len(cmd.Argument("Message")) > 270 Then
+                  cmd.Respond "Message to be mailed is too long. All messages must be under 271 characters."
+                  Exit Sub                  
+               End If
+               
+               If IsNumeric(cmd.Argument("Priority")) Then
+                  If cmd.Argument("Priority") > 3 Then
+                     sP = 3
+                  Else
+                     sP = cmd.Argument("Priority")
+                  End If
+               Else
+                  sP = 1
+               End If
+               
+               Call mail_connect
+               x=0
+               For Each mem In Clan.Members
+                  x=x+1
+                  mailConn.Execute("INSERT INTO `messages` (`sent_to`, `message`, `sent_from`, `date`, `read`, `priority`, `ID`, `last_read`, `saved`) " & _
+                     "VALUES ('" & mem.Name & "', '" & cmd.Argument("Message") & "', '" & cmd.Username & "', '" & Now & "', " & 0 & ", " & sP & ", '" & GetUniqueID & "', '" & Now & "', " & 0 & ")")                                       
+               Next
+               
+               cmd.Respond "Mail sent to " & x & " clan members."               
+               Call mail_close                 
+
+            Case Else               
+               If Len(cmd.Argument("Message")) > 270 Then
+                  cmd.Respond "Message to be mailed is too long. All messages must be under 271 characters."
+                  Exit Sub                  
+               End If
+               
+               If IsNumeric(cmd.Argument("Priority")) Then
+                  If cmd.Argument("Priority") > 3 Then
+                     sP = 3
+                  Else
+                     sP = cmd.Argument("Priority")
+                  End If
+               Else
+                  sP = 1
+               End If
+               
+               Call mail_connect()
+               
+               mailConn.Execute("INSERT INTO `messages` (`sent_to`, `message`, `sent_from`, `date`, `read`, `priority`, `ID`, `last_read`, `saved`) " & _
+                  "VALUES ('" & cmd.Argument("Username/peons/grunts/shams/allclan") & "', '" & cmd.Argument("Message") & "', '" & LCase(cmd.Username) & "', '" & Now & "', " & 0 & ", " & sP & ", '" & GetUniqueID & "', '" & Now & "', " & 0 & ")")                  
+               cmd.Respond "Mail sent to "" " & cmd.Argument("Username/peons/grunts/shams/allclan") & " """
+               Call mail_close()
+         End Select
+      End If
+   End If
+End Sub
+
+Private Sub delCmd(Command)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         Select Case LCase(Command.Argument("ID/all/old"))
+            Case "all"
+               Call mail_connect()
+               
+               Set rs = mailConn.Execute("SELECT `sent_to` FROM `messages` WHERE `sent_to` = '" & Lcase(Command.Username) & "'")
+               If NOT (rs.EOF OR rs.BOF) Then
+                  Set x = mailConn.Execute("SELECT COUNT(*) FROM `messages` WHERE `sent_to` = '" & Lcase(Command.Username) & "'")
+                  Do Until rs.EOF
+                     mailConn.Execute("DELETE FROM `messages` WHERE `sent_to` = '" & Lcase(Command.Username) & "'")
+                     rs.MoveNext
+                  Loop
+                  
+                  Command.Respond x.Fields(0) & " messages were deleted from your inbox."
+               Else
+                  Command.Respond "You do not have any mail messages at this time."
+               End If             
+               Call mail_close()
+               
+            Case "old"
+               Call mail_connect()
+               
+               Set rs = mailConn.Execute("SELECT `sent_to` FROM `messages` WHERE `sent_to` = '" & Lcase(Command.Username) & "' AND `read` = " & 1 & " AND `saved`=" & 0)
+               If NOT (rs.EOF OR rs.BOF) Then
+                  Set x = mailConn.Execute("SELECT COUNT(*) FROM `messages` WHERE `sent_to` = '" & Lcase(Command.Username) & "' AND `read` = " & 1 & " AND `saved`=" & 0)
+                  Do Until rs.EOF
+                     mailConn.Execute("DELETE FROM `messages` WHERE `sent_to` = '" & Lcase(Command.Username) & "' AND `read` = " & 1 & " AND `saved`=" & 0)
+                     rs.MoveNext
+                  Loop
+                  
+                  Command.Respond x.Fields(0) & " messages were deleted from your inbox."
+               Else
+                  Command.Respond "You do not have any mail messages at this time."
+               End If               
+               Call mail_close()
+               
+            Case Else
+               Call mail_connect()
+               
+               Set rs = mailConn.Execute("SELECT `ID`, `sent_to` FROM `messages` WHERE `ID` = '" & Command.Argument("ID/all/old") & "'")
+               If NOT (rs.EOF OR rs.BOF) Then
+                  If LCase(rs.Fields(1)) = Lcase(Command.Username) Then
+                     mailConn.Execute("DELETE FROM `messages` WHERE `ID` = '" & Command.Argument("ID/all/old") & "'")
+                     Command.Respond "Message " & Command.Argument("ID/all/old") & " deleted."
+                  Else
+                     Command.Respond "You do not have permission to access that message."
+                  End If
+               Else
+                  Command.Respond "Message " & Command.Argument("ID/all/old") & " does not exist."
+               End If
+               Call mail_close()               
+         End Select
+      End If
+   End If
+End Sub
+
+Private Sub mymailCmd(cmd)
+
+   If cmd.IsValid Then
+      If cmd.HasAccess Then
+         Call mail_connect()
+         
+         If cmd.Argument("ID") = vbNullString Then
+            Set rs = mailConn.Execute("SELECT COUNT(*) FROM `messages` WHERE `sent_to` = '" & Lcase(cmd.Username) & "'")
+            If rs.Fields(0) = 0 Then      
+               cmd.Respond "You do not have any mail messages at this time."
+               Exit Sub
+            Else
+               If rs.Fields(0) > 2 Then
+                  Set rs = mailConn.Execute("SELECT `ID`, `priority`, `read`, `sent_from` FROM `messages` WHERE `sent_to` = '" & Lcase(cmd.Username) & "' ORDER BY `read` ASC, `priority` DESC, `date` ASC")
+                  Do Until rs.EOF                     
+                     Select Case rs.Fields(1)
+                        Case 3
+                           If rs.Fields(2) = 1 Then
+                              text = text & rs.Fields(0) & " (" & rs.Fields(3) & " - Urgent-old), "
+                           Else
+                              text = text & rs.Fields(0) & " (" & rs.Fields(3) & " - Urgent), "
+                           End If
+                        Case 2
+                           If rs.Fields(2) = 1 Then
+                              text = text & rs.Fields(0) & " (" & rs.Fields(3) & " - Attention-old), "
+                           Else
+                              text = text & rs.Fields(0) & " (" & rs.Fields(3) & " - Attention), "
+                           End If
+                        Case 1
+                           If rs.Fields(2) = 1 Then                        
+                              text = text & rs.Fields(0) & " (" & rs.Fields(3) & " - old), "
+                           Else
+                              text = text & rs.Fields(0) & " (" & rs.Fields(3) & "), "
+                           End If
+                     End Select
+                     rs.MoveNext
+                  Loop
+                  
+                  text = Left(text, Len(text)-2)
+                  If cmd.Username = BotVars.Username Then
+                     cmd.Respond "You have " & UBound(Split(text, ", "))+1 & " messages: " & text
+                  Else
+                     AddQ "/w " & cmd.Username & " You have " & UBound(Split(text, ", "))+1 & " messages: " & text
+                  End If
+               Else
+                  Set rs = mailConn.Execute("SELECT * FROM `messages` WHERE `sent_to` = '" & Lcase(cmd.Username) & "' ORDER BY `priority` DESC")
+                  Do Until rs.EOF
+                     text = text & "Sent from " & rs.Fields(2) & " (" & rs.Fields(3) & ") " & rs.Fields(6) & ": " & FormatMsg(rs.Fields(1), 1) & ", "
+                     mailConn.Execute("UPDATE `messages` SET `read` = 1 WHERE `ID` = '" & rs.Fields(6) & "'")
+                     rs.MoveNext
+                  Loop
+                  
+                  text = Left(text, Len(text)-2)               
+                  If cmd.Username = BotVars.Username Then
+                     cmd.Respond text
+                  Else
+                     AddQ "/w " & cmd.Username & " You have " & UBound(Split(text, ", "))+1 & " messages: " & text
+                  End If          
+               End If
+            End If
+         Else
+            Set rs = mailConn.Execute("SELECT * FROM `messages` WHERE `ID` = '" & cmd.Argument("ID") & "'")
+            If NOT (rs.EOF OR rs.BOF) Then
+               If LCase(rs.Fields(0)) = Lcase(cmd.Username) Then
+                  If cmd.Username = BotVars.Username Then
+                     cmd.Respond "Sent from " & rs.Fields(2) & " (" & rs.Fields(3) & ") " & rs.Fields(6) & ": " & FormatMsg(rs.Fields(1), 1)
+                  Else
+                     AddQ "/w " & cmd.Username & " Sent from " & rs.Fields(2) & " (" & rs.Fields(3) & ") " & rs.Fields(6) & ": " & FormatMsg(rs.Fields(1), 1)
+                  End If
+                  mailConn.Execute("UPDATE `messages` SET `read`=1, `last_read` = '" & Now & "' WHERE `ID` = '" & cmd.Argument("ID") & "'")
+               Else
+                  cmd.Respond "You do not have permission to access that message."
+               End If
+            Else
+               cmd.Respond "Message " & cmd.Argument("ID") & " does not exist."
+            End If       
+         End If
+         
+         Call mail_close()
+      End If
+   End If
+End Sub
+   
+   
+Private Sub CreateCmds()
+
+   If GetSettingsEntry("auto-purge") = vbNullString Then
+      WriteSettingsEntry "'// Days a user's mail message may go unread until it is automatically removed from the database.", vbNullString
+      WriteSettingsEntry "auto-purge", 30
+   End If
+   
+   If GetSettingsEntry("db_path") = vbNullString Then
+      defVal = BotPath & "MailDatabase.mdb"
+      iBox = InputBox("Please enter the path for the mailer script database. Pressing Cancel will accept the default path." & vbNewLine & vbNewLine & vbNewLine & _
+         CHR(149) & "To allow different bots to access the same database; be sure to have all bots reference the same database.", "Mailer Script", defVal)   
+      If iBox = vbNullString Then iBox = defVal            
+      WriteSettingsEntry "'// Path for your mail database. If you want to have bots on different realms/channels share the same database, make sure all of them are referencing the same database.", vbNullString         
+      WriteSettingsEntry "db_path", iBox
+   End If   
+
+   Set cmd = OpenCommand("mailgroup")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("mailgroup")
+		With cmd
+			.Description = "Sends mail to a specified group."
+			.RequiredRank = 200
+
+			Set Parameter = .NewParameter("Priority", True, "Number")
+			With Parameter
+            .Description = "Levels range from 1 to 3; 1=lowest, 3=highest"
+         End With
+			.Parameters.Add Parameter             
+         
+			Set Parameter = .NewParameter("Group", False, "Word")
+			.Parameters.Add Parameter  
+         
+			Set Parameter = .NewParameter("Message", False, "String")     
+			.Parameters.Add Parameter   
+
+         .Save
+      End With
+   End If
+   
+   Set cmd = OpenCommand("mailcrs")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("mailcrs")
+		With cmd
+			.Description = "Sends mail to a specified CRS rank."
+			.RequiredRank = 200
+
+			Set Parameter = .NewParameter("Priority", True, "Number")
+			With Parameter
+            .Description = "Levels range from 1 to 3; 1=lowest, 3=highest"
+         End With
+			.Parameters.Add Parameter             
+         
+			Set Parameter = .NewParameter("CRS#", False, "Number")
+			.Parameters.Add Parameter  
+         
+			Set Parameter = .NewParameter("Message", False, "String")     
+			.Parameters.Add Parameter   
+
+         .Save
+      End With
+   End If   
+   
+   Set cmd = OpenCommand("mail")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("mail")
+		With cmd
+			.Description = "Sends mail to an individual, entire clan, or clan rank."
+			.RequiredRank = 200
+
+			Set Parameter = .NewParameter("Priority", True, "Number")
+			With Parameter
+            .Description = "Levels range from 1 to 3; 1=lowest, 3=highest"
+         End With
+			.Parameters.Add Parameter            
+         
+			Set Parameter = .NewParameter("Username/peons/grunts/shams/allclan", False, "Word")
+			With Parameter
+            .Description = "Specifies mailing to a single user, all peons/grunts/shamans, entire clan."
+         End With
+			.Parameters.Add Parameter         
+         
+			Set Parameter = .NewParameter("Message", False, "String")
+			With Parameter
+            .Description = "The message that is to be sent."
+         End With         
+			.Parameters.Add Parameter
+
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("delmail")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("delmail")
+		With cmd
+			.Description = "Deletes a message associated with the ID number."
+			.RequiredRank = 200
+
+			Set Parameter = .NewParameter("ID/all/old", False, "Word")
+			With Parameter
+            .Description = "Delete; a specific message ID, all messages for the user, all old messages."
+         End With
+			.Parameters.Add Parameter
+			.Save
+		End With
+	End If   
+   
+   Set cmd = OpenCommand("mymail")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("mymail")
+		With cmd
+			.Description = "Lists all the mail messages for the user. If too many messages, will only display message ID and who it was from."
+			.RequiredRank = 200
+         
+			Set Parameter = .NewParameter("ID", True, "Word")
+			With Parameter
+            .Description = "Reads a specific email associated to that ID."
+         End With
+			.Parameters.Add Parameter         
+         
+			.Save
+		End With
+	End If
+   
+   Set cmd = OpenCommand("inbox")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("inbox")
+		With cmd
+			.Description = "Automatically reads the next unread message in your inbox."
+			.RequiredRank = 200           
+			.Save
+		End With
+	End If   
+   
+   Set cmd = OpenCommand("savemail")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("savemail")
+		With cmd
+			.Description = "Allows you to save the mail associated to the specified ID to prevent from being auto-removed."
+			.RequiredRank = 200
+         
+			Set Parameter = .NewParameter("ID", False, "Word")
+			.Parameters.Add Parameter         
+         
+			.Save
+		End With
+	End If   
+   
+   Set cmd = OpenCommand("purgedb")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("purgedb")
+		With cmd
+			.Description = "Removes all the mail from the database. This command is for the console only."
+			.RequiredRank = -1              
+			.Save
+		End With
+	End If      
+End Sub
+
+
+
+Private Function FormatMsg(msg, sType)
+
+   Select Case sType
+      Case 0
+         FormatMsg = Replace(msg, "'", CHR(216))
+      Case 1
+         FormatMsg = Replace(msg, CHR(216), "'")
+   End Select
+End Function
+
+Private Function GetUniqueID()
+
+   '// ID format: #A#A = 46376 different combinations
+   Set rs = mailConn.Execute("SELECT COUNT(*) FROM `messages`")
+   If rs.Fields(0) > 0 Then
+     '// Guard against an infinite loop
+      infGuard = 200
+      y = 0
+      
+      Do Until sFound
+         y = y+1                 
+         x = vbNullString
+         
+         '// If a match can't be found, increase the length of the unique ID
+         If y >= infGuard Then
+            z = 6
+         Else
+            z = 4
+         End If
+         
+         For i = 1 To z
+            If i Mod 2 > 0 Then
+               x = x & Int(((9 + 1) - 0) * Rnd + 0)
+            Else
+               alpha = Array("A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z")
+               x = x & alpha(Int(((UBound(alpha) + 1) - LBound(alpha)) * Rnd + LBound(alpha)))
+            End If
+         Next
+                  
+         Set rs = mailConn.Execute("SELECT `ID` FROM `messages` WHERE `ID` = '" & x & "'")
+         Do Until rs.EOF
+            If rs.Fields(0) = x Then
+               sMatch = True
+               Exit Do
+            End If
+            rs.MoveNext
+         Loop
+         
+         If NOT sMatch Then sFound = True
+      Loop
+   Else
+      For i = 1 To 4
+         If i Mod 2 > 0 Then
+            x = x & Int(((9 + 1) - 0) * Rnd + 0)
+         Else
+            alpha = Array("A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z")
+            x = x & alpha(Int(((UBound(alpha) + 1) - LBound(alpha)) * Rnd + LBound(alpha)))
+         End If
+      Next
+   End If
+   
+   GetUniqueID = x
+End Function

@@ -1,0 +1,145 @@
+Script("Name") = "ClanInvitation"
+Script("Author") = "GurkenKinG"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 2
+Script("Description") = "Invites members, kicks inactive members."
+
+Sub Event_Load()
+	If GetSettingsEntry("Access_joinclan") = vbNullString or GetSettingsEntry("Access_invite") = vbNullString or GetSettingsEntry("DaysInactive") = vbNullString Then
+		CreateSettings()
+	end if
+End Sub
+
+Private Function GetBotRealm()
+	Select Case LCase(Left(BotVars.Server, 6))
+		Case "63.241", "uswest"
+			GetBotRealm = "Lordaeron"
+		Case "63.240", "useast"
+			GetBotRealm = "Azeroth"
+		Case "213.24", "europe"
+			GetBotRealm = "Northrend"
+		Case "211.23", "asia.b"
+			GetBotRealm = "Kalimdor"
+		Case Else
+
+			GetBotRealm = "Lordaeron"
+	End Select
+End Function
+
+Private Function GetPortal(realm)
+	'for Kalimdor use asialadders, else use classic
+	If realm = "4" Then GetPortal = "asialadders." Else GetPortal = "classic."
+End Function
+
+Private Sub CreateSettings()
+	WriteSettingsEntry "Access_joinclan", 0
+	WriteSettingsEntry "Access_invite", 40
+	WriteSettingsEntry "DaysInactive", 30
+	AddChat vbOrange, "ClanInvitation Commands: Settings loaded in scripts\scripts.ini"
+End Sub
+
+
+Private Function GetNumberOfPages(Content)
+	Dim x, y, sPage, sPages
+	y = 1
+	sPages = Split(Content, "PageNo=")
+	For Each sPage In sPages
+		x = Left(sPage, 1)
+		If x > y Then
+			y = x
+		End If
+	Next
+	GetNumberOfPages = y
+End Function
+
+Private Function FilterUni(laString)
+	laString = Replace(laString, "%5b", "[")
+	laString = Replace(laString, "%5d", "]")
+	FilterUni = laString
+End Function
+
+Private Function inactMember(Content)
+	Dim T(2), x, y
+	
+	myRealm = GetBotRealm
+	inactivity = 0
+	kickedUser = vbNullstring
+	
+	For x = 1 To GetNumberOfPages(Content)
+		sContent = SciNet.OpenURL("http://" & GetPortal(myRealm) & "battle.net/war3/ladder/w3xp-clan-profile.aspx?Gateway="& myRealm & "&ClanTag="& BotVars.Clan & "&PageNo="& x)
+		z = 1
+		If Instr(LCase(sContent), " days") Then
+			For y = 1 to UBound(Split(sContent, " Days"))
+				z = Instr(z + 1, sContent, " Days")
+				T(0) = InstrRev(sContent, ">", z) + 1
+				T(1) = Replace(Replace(Replace(Mid(sContent, T(0), z - T(0)), CHR(9), vbNullString), vbcrlf, vbNullString), CHR(32), vbNullString)
+				q = Instr(z - 500, sContent, "PlayerName=")
+				T(2) = Mid(sContent, q + 11, Instr(q + 1, sContent, ">") - q - 12)
+				Name=FilterUni(T(2))
+				If CInt(T(1)) >= CInt(GetSettingsEntry("DaysInactive")) Then
+					If IsSafelisted(Name)=false then
+						If CInt(T(1))>inactivity then
+							inactivity = CInt(T(1))
+							kickedUser = Name
+						end if
+					End if
+				End If
+			Next
+		End If
+	Next
+	
+	inactMember=kickedUser
+
+End Function
+
+Sub Event_Usertalk(Username, Flags, Message, Ping)
+	
+	if Left(Message, Len(BotVars.Trigger)) = BotVars.Trigger and NOT message = BotVars.Trigger then
+		cmd = Split(Mid(Message, (Len(BotVars.Trigger) + 1)))(0)
+
+		Select Case LCase(cmd)
+			Case "joinclan"
+				If GetDBEntry(Username).Rank < CInt(GetSettingsEntry("Access_joinclan")) then
+					Exit Sub
+				else
+					if Clan.Members.Count < 100 Then
+						Command BotVars.Username, "/invite " & Username, True
+					else
+						mContent = SciNet.OpenURL("http://classic.battle.net/war3/ladder/w3xp-clan-profile.aspx?Gateway=" & GetBotRealm & "&ClanTag=" & BotVars.Clan)
+						if NOT inactMember(mContent) = vbNullString then
+							Clan.GetMember(inactMember(mContent)).KickOut
+							Command BotVars.Username, "/invite " & Username, True
+						else
+							AddQ "Sorry, but the Clan is full!"
+						end if
+					end if
+				end if
+			Case "invite"
+				If GetDBEntry(Username).Rank < CInt(GetSettingsEntry("Access_invite")) then
+					Exit Sub
+				else
+					If Ubound(Split(Message)) = 1 then
+						UserToInvite = Split(Message)(1)
+					else
+						AddQ "/w " & Username & " Wrong command syntax! The right syntax for this command is '.invite [username]'."
+						Exit Sub
+					end if
+					if Clan.Members.Count < 100 Then
+						AddQ "/w " & Username & " Ok, I will invite " & UserToInvite & " to the clan. Invite being sent."
+						Command BotVars.Username, "/invite " & UserToInvite, True
+					else
+						mContent = SciNet.OpenURL("http://classic.battle.net/war3/ladder/w3xp-clan-profile.aspx?Gateway=" & GetBotRealm & "&ClanTag=" & BotVars.Clan)
+						if NOT inactMember(mContent) = vbNullString then
+							Clan.GetMember(inactMember(mContent)).KickOut
+							Command BotVars.Username, "/invite " & UserToInvite, True
+						else
+							AddQ "Sorry, but the Clan is full!"
+						end if
+					end if
+				end if
+		End Select
+		
+	End if	
+
+End Sub

@@ -1,0 +1,642 @@
+#include "\Scoring.txt"
+Script("Name") = "Ultimate Rock Paper Scissors"
+Script("Major") = 1
+Script("Minor") = 3
+Script("Author") = "Neco"
+Script("Description") = "Allows users to play against the computer in a game of Ultimate Rock Paper Scissors."
+Script("Abbreviation") = "RPS"
+
+'-------------START OF CUSTOMIZABLE OPTIONS-------------'
+' A prefix that goes at the start of everything said.
+' Examples: "/me ", "[BOT]"
+Public Prefix : Prefix = vbNullString
+
+' The name that the bot gives as the computer player
+Public CN : CN = "Verus"
+
+'--------------END OF CUSTOMIZABLE OPTIONS--------------'
+
+Public Hands, Scoring
+
+Sub Event_Load()
+	Set Scoring = New ScoringSystem
+	Scoring.Setup Script("Abbreviation")
+
+	Call Load_Main()
+End Sub
+
+Sub Event_Command(Command)
+	Select Case LCase(Command.Name)
+		Case "rps" 	: Call Command_RPS(Command)
+		Case "rpslist"  : Call Command_RPSLIST(Command)
+		Case "rpsdata"  : Call Command_RPSDATA(Command)
+		Case "rpsscore" : Call Command_RPSSCORE(Command)
+	End Select
+End Sub
+
+Sub Command_RPS(Command)
+	Dim PlayerHand, ComputerHand, ComputerName, PlayerName, WinnerID, Result, Hand, WinnerName, LoserName, LoserID
+
+	Hand = Trim(Command.Argument("Hand"))
+
+	If GetHandID(Hand) = 0 Then
+		Command.Respond StringFormat("{0}Invalid hand. Type {1}rpslist to get a list of valid hands.", Prefix, BotVars.Trigger)
+		Exit Sub
+	End If
+
+	If Command.IsLocal Then 
+		PlayerName = BotVars.Username
+	Else
+		PlayerName = Command.Username
+	End If
+
+	PlayerHand = GetHandID(Hand)
+
+	ComputerName = CN
+	ComputerHand = CInt((Rnd * 24) + 1)
+
+	Scoring.Write PlayerName, "Played", Scoring.Read(PlayerName, "Played") + 1
+
+	Command.Respond StringFormat("{0}{1} has chosen {2}.", Prefix, ComputerName, GetHandName(ComputerHand))
+	WinnerID = GetWinner(PlayerHand, ComputerHand)
+	If WinnerID = 0 Then
+		Scoring.Write PlayerName, "Drawn", Scoring.Read(PlayerName, "Drawn") + 1
+		Command.Respond StringFormat("{0}Its a draw!", Prefix)
+	Else
+		Select Case WinnerID
+			Case PlayerHand
+				Scoring.Write PlayerName, "Score", Scoring.Read(PlayerName, "Score") + 1
+				Scoring.Write PlayerName, "Won", Scoring.Read(PlayerName, "Won") + 1
+				WinnerName = PlayerName
+				LoserName = ComputerName
+				LoserID = ComputerHand
+			Case ComputerHand
+				Scoring.Write PlayerName, "Score", Scoring.Read(PlayerName, "Score") - 1
+				Scoring.Write PlayerName, "Lost", Scoring.Read(PlayerName, "Lost") + 1
+				WinnerName = ComputerName
+				LoserName = PlayerName
+				LoserID = PlayerHand
+		End Select
+		Command.Respond StringFormat("{0}{1}'s {2} {3} {4}'s {5}!", Prefix, WinnerName, GetHandName(WinnerID), GetReason(WinnerID, LoserID), LoserName, GetHandName(LoserID))
+	End If
+End Sub
+
+Sub Command_RPSLIST(Command)
+	Dim Value
+	Value = "Hands: "
+	For i = 1 to 25
+		Value = StringFormat("{0}{1}, ", Value, GetHandName(i))
+	Next
+	Value = Left(Value, (Len(Value) - 2))
+	Value = StringFormat("{0}{1}.", Prefix, Value)
+	Command.Respond Value
+	Value = vbNullString
+End Sub
+
+Sub Command_RPSDATA(Command)
+	Dim Hand
+
+	Hand = Command.Argument("Hand")
+
+	If Not GetHandID(Hand) = 0 Then
+		Dim Value
+		Value = StringFormat("{0}{1} beats: ", Prefix, GetHandName(GetHandID(Hand)))
+		For i = 1 to 25
+			If GetWinner(GetHandID(Hand), i) = GetHandID(Hand) Then
+				Value = StringFormat("{0}{1}, ", Value, GetHandName(i))
+			End If
+		Next
+		Value = Left(Value, (Len(Value) - 2))
+		Command.Respond StringFormat("{0}{1}.", Prefix, Value)
+		Value = vbNullString
+	Else
+		Command.Respond StringFormat("{0}Invalid hand. Type {1}rpslist to get a list of valid hands.", Prefix, BotVars.Trigger)
+	End If
+
+	Hand = vbNullString
+End Sub
+
+Sub Command_RPSSCORE(Command)
+	Dim Username : Username = Command.Argument("Username")
+	Dim Score, Won, Lost, Drawn, Played, PlayedString
+	
+	If LenB(Username) = 0 Then
+		If Command.IsLocal Then 
+			Username = BotVars.Username
+		Else
+			Username = Command.Username
+		End If
+
+		Score = Scoring.Read(Username, "Score")
+		Won = Scoring.Read(Username, "Won")
+		Lost = Scoring.Read(Username, "Lost")
+		Drawn = Scoring.Read(Username, "Drawn")
+		Played = Scoring.Read(Username, "Played")
+
+		If Played = 1 Then
+			PlayedString = vbNullString
+		Else
+			PlayedString = "s"
+		End If
+
+		Command.Respond StringFormat("{0}Your [{1}] Score: {2} (W: {3} L: {4} D: {5}). Played {6} game{7}.", Prefix, Script("Abbreviation"), Score, Won, Lost, Drawn, Played, PlayedString)
+	Else
+		Score = Scoring.Read(Username, "Score")
+		Won = Scoring.Read(Username, "Won")
+		Lost = Scoring.Read(Username, "Lost")
+		Drawn = Scoring.Read(Username, "Drawn")
+		Played = Scoring.Read(Username, "Played")
+
+		If Played = 1 Then
+			PlayedString = vbNullString
+		Else
+			PlayedString = "s"
+		End If
+
+		Command.Respond StringFormat("{0}{1}'s [{2}] Score: {3} (W: {4} L: {5} D: {6}). Played {7} game{8}.", Prefix, Username, Script("Abbreviation"), Score, Won, Lost, Drawn, Played, PlayedString)
+	End If
+	Score = vbNullString
+End Sub
+
+Public Sub Load_Main()
+	Dim Command, Parameter
+	Set Command = OpenCommand("rps")
+	If Command Is Nothing Then
+		AddChat 10061943, "[", 16777215, Script("Abbreviation"), 10061943, "] ", 9470064, "Creating commands..."
+ 		Set Command = CreateCommand("rps")
+ 		With Command
+  			.Description = "Plays a game of Rock Paper Scissors against the computer."        
+  			.RequiredRank = 1
+  			Set Parameter = .NewParameter("Hand", False, "Word")
+  			.Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+	Set Command = OpenCommand("rpsdata")
+	If Command Is Nothing Then
+ 		Set Command = CreateCommand("rpsdata")
+ 		With Command
+  			.Description = "Allows players to test what a hand beats."        
+  			.RequiredRank = 1
+  			Set Parameter = .NewParameter("Hand", False, "Word")
+  			.Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+	Set Command = OpenCommand("rpslist")
+	If Command Is Nothing Then
+ 		Set Command = CreateCommand("rpslist")
+ 		With Command
+  			.Description = "Gives a list of all 25 different playable hands."        
+  			.RequiredRank = 1
+			.Save
+		End With
+	End If
+
+	Set Command = OpenCommand("rpsscore")
+	If Command Is Nothing Then 
+ 		Set Command = CreateCommand("rpsscore")
+ 		With Command
+  			.Description = "Returns the score of the given user."  
+  			Set Parameter = .NewParameter("Username", False, "Word")
+  			.Parameters.Add Parameter      
+  			.RequiredRank = 1
+			.Save
+		End With
+		AddChat 10061943, "[", 16777215, Script("Abbreviation"), 10061943, "] ", 9470064, "Setup is complete."
+	End If
+	
+	Set Command = Nothing
+	Set Parameter = Nothing
+
+	Set Hands = CreateObject("Scripting.Dictionary")
+	For i = 1 to 25
+		Dim Data
+		For j = 1 to 12
+			Dim Value
+			Value = (i + j)
+			If Value > 25 Then Value = Value - 25
+			Data = Data & Value & " "
+			Value = 0
+		Next
+		Hands.Add i, Trim(Data)
+		Data = 0
+	Next
+End Sub
+
+Public Function GetHandID(HandName)
+	Select Case UCase(HandName)
+		Case "ROCK"		:	GetHandID = 1
+		Case "SUN"		:	GetHandID = 2
+		Case "FIRE"		:	GetHandID = 3
+		Case "SCISSORS"	:	GetHandID = 4
+		Case "AXE"		:	GetHandID = 5
+		Case "SNAKE"	:	GetHandID = 6
+		Case "MONKEY"	:	GetHandID = 7
+		Case "WOMAN"	:	GetHandID = 8
+		Case "MAN"		:	GetHandID = 9
+		Case "TREE"		:	GetHandID = 10
+		Case "COCKROACH":	GetHandID = 11
+		Case "WOLF"		:	GetHandID = 12
+		Case "SPONGE"	:	GetHandID = 13
+		Case "PAPER"	:	GetHandID = 14
+		Case "MOON"		:	GetHandID = 15
+		Case "AIR"		:	GetHandID = 16
+		Case "BOWL"		:	GetHandID = 17
+		Case "WATER"	:	GetHandID = 18
+		Case "ALIEN"	:	GetHandID = 19
+		Case "DRAGON"	:	GetHandID = 20
+		Case "DEVIL"	:	GetHandID = 21
+		Case "LIGHTNING":	GetHandID = 22
+		Case "NUKE"		:	GetHandID = 23
+		Case "DYNAMITE"	:	GetHandID = 24
+		Case "GUN"		:	GetHandID = 25
+		Case Else		:	GetHandID = 0
+	End Select
+End Function
+
+Public Function GetHandName(HandID)
+	Select Case HandID
+		Case 1		: 	GetHandName =  "Rock"
+		Case 2		: 	GetHandName =  "Sun"
+		Case 3		: 	GetHandName =  "Fire"
+		Case 4		: 	GetHandName =  "Scissors"
+		Case 5		: 	GetHandName =  "Axe"
+		Case 6		: 	GetHandName =  "Snake"
+		Case 7		: 	GetHandName =  "Monkey"
+		Case 8		: 	GetHandName =  "Woman"
+		Case 9		: 	GetHandName =  "Man"
+		Case 10		: 	GetHandName =  "Tree"
+		Case 11		: 	GetHandName =  "Cockroach"
+		Case 12		: 	GetHandName =  "Wolf"
+		Case 13		: 	GetHandName =  "Sponge"
+		Case 14		: 	GetHandName =  "Paper"
+		Case 15		: 	GetHandName =  "Moon"
+		Case 16		: 	GetHandName =  "Air"
+		Case 17		: 	GetHandName =  "Bowl"
+		Case 18		: 	GetHandName =  "Water"
+		Case 19		: 	GetHandName =  "Alien"
+		Case 20		: 	GetHandName =  "Dragon"
+		Case 21		: 	GetHandName =  "Devil"
+		Case 22		: 	GetHandName =  "Lightning"
+		Case 23		: 	GetHandName =  "Nuke"
+		Case 24		: 	GetHandName =  "Dynamite"
+		Case 25		: 	GetHandName =  "Gun"
+		Case Else	:	GetHandName =  "Invalid"
+	End Select
+End Function
+
+Public Function GetWinner(FirstHandID, SecondHandID)
+	Dim Result
+	With Hands
+		If FirstHandID = SecondHandID Then
+			GetWinner = 0
+		Elseif .Exists(FirstHandID) And .Exists(SecondHandID) Then
+			Dim Array, Check
+			Check = False
+			Array = Split(Hands.Item(FirstHandID))
+			For i = 0 to UBound(Array)
+				If CInt(SecondHandID) = CInt(Array(i)) Then
+					Result = FirstHandID
+					Exit For
+				End If
+			Next
+			If Result = 0 Then Result = SecondHandID
+		End If
+	End With
+	GetWinner = Result
+End Function
+
+'Reasons
+
+Public Function GetReason(W, L)
+	Select Case W & " " & L
+		' Rock
+		Case "1 2" : GetReason = "shades"
+		Case "1 3" : GetReason = "pounds out"
+		Case "1 4" : GetReason = "smashes"
+		Case "1 5" : GetReason = "chips"
+		Case "1 6" : GetReason = "crushes"
+		Case "1 7" : GetReason = "crushes"
+		Case "1 8" : GetReason = "crushes"
+		Case "1 9" : GetReason = "crushes"
+		Case "1 10" : GetReason = "blocks roots of"
+		Case "1 11" : GetReason = "squishes"
+		Case "1 12" : GetReason = "crushes"
+		Case "1 13" : GetReason = "crushes"
+		' Sun
+		Case "2 3" : GetReason = "made of"
+		Case "2 4" : GetReason = "melts"
+		Case "2 5" : GetReason = "melts"
+		Case "2 6" : GetReason = "warms"
+		Case "2 7" : GetReason = "warms"
+		Case "2 8" : GetReason = "warms"
+		Case "2 9" : GetReason = "warms"
+		Case "2 10" : GetReason = "feeds"
+		Case "2 11" : GetReason = "warms"
+		Case "2 12" : GetReason = "warms"
+		Case "2 13" : GetReason = "dries up"
+		Case "2 14" : GetReason = "shines through"
+		' Fire
+		Case "3 4" : GetReason = "melts"
+		Case "3 5" : GetReason = "forges"
+		Case "3 6" : GetReason = "burns"
+		Case "3 7" : GetReason = "burns"
+		Case "3 8" : GetReason = "burns"
+		Case "3 9" : GetReason = "burns"
+		Case "3 10" : GetReason = "burns"
+		Case "3 11" : GetReason = "burns"
+		Case "3 12" : GetReason = "burns"
+		Case "3 13" : GetReason = "burns"
+		Case "3 14" : GetReason = "burns"
+		Case "3 15" : GetReason = "burns in the light of the"
+		' Scissors
+		Case "4 5" : GetReason = "sharper than"
+		Case "4 6" : GetReason = "stab"
+		Case "4 7" : GetReason = "stab"
+		Case "4 8" : GetReason = "cuts the hair of"
+		Case "4 9" : GetReason = "cuts the hair of"
+		Case "4 10" : GetReason = "carves into"
+		Case "4 11" : GetReason = "stab"
+		Case "4 12" : GetReason = "cuts the hair of"
+		Case "4 13" : GetReason = "cuts up"
+		Case "4 14" : GetReason = "cut"
+		Case "4 15" : GetReason = "reflect"
+		Case "4 16" : GetReason = "swish through"
+		' Axe
+		Case "5 6" : GetReason = "chops"
+		Case "5 7" : GetReason = "cleaves"
+		Case "5 8" : GetReason = "cleaves"
+		Case "5 9" : GetReason = "cleaves"
+		Case "5 10" : GetReason = "chops"
+		Case "5 11" : GetReason = "chops"
+		Case "5 12" : GetReason = "cleaves"
+		Case "5 13" : GetReason = "chops"
+		Case "5 14" : GetReason = "slices"
+		Case "5 15" : GetReason = "reflects"
+		Case "5 16" : GetReason = "flies through"
+		Case "5 17" : GetReason = "chops"
+		' Snake
+		Case "6 7" : GetReason = "bites"
+		Case "6 8" : GetReason = "bites"
+		Case "6 9" : GetReason = "bites"
+		Case "6 10" : GetReason = "lives in"
+		Case "6 11" : GetReason = "eats"
+		Case "6 12" : GetReason = "bites"
+		Case "6 13" : GetReason = "swallows"
+		Case "6 14" : GetReason = "nests in"
+		Case "6 15" : GetReason = "nocturnal with"
+		Case "6 16" : GetReason = "breathes"
+		Case "6 17" : GetReason = "sleeps in"
+		Case "6 18" : GetReason = "drinks"
+		' Monkey
+		Case "7 8" : GetReason = "flings poop at"
+		Case "7 9" : GetReason = "flings poop at"
+		Case "7 10" : GetReason = "lives in"
+		Case "7 11" : GetReason = "eats"
+		Case "7 12" : GetReason = "enrages"
+		Case "7 13" : GetReason = "rips up"
+		Case "7 14" : GetReason = "rips up"
+		Case "7 15" : GetReason = "screeches at"
+		Case "7 16" : GetReason = "breathes"
+		Case "7 17" : GetReason = "smashes"
+		Case "7 18" : GetReason = "drinks"
+		Case "7 19" : GetReason = "infuriates"
+		' Woman
+		Case "8 9" : GetReason = "tempts"
+		Case "8 10" : GetReason = "plants"
+		Case "8 11" : GetReason = "steps on"
+		Case "8 12" : GetReason = "tames"
+		Case "8 13" : GetReason = "cleans with"
+		Case "8 14" : GetReason = "writes on"
+		Case "8 15" : GetReason = "aligns with"
+		Case "8 16" : GetReason = "breathes"
+		Case "8 17" : GetReason = "eats from"
+		Case "8 18" : GetReason = "drinks"
+		Case "8 19" : GetReason = "disproves"
+		Case "8 20" : GetReason = "subdues"
+		' Man
+		Case "9 10" : GetReason = "plants"
+		Case "9 11" : GetReason = "steps on"
+		Case "9 12" : GetReason = "tames"
+		Case "9 13" : GetReason = "cleans with"
+		Case "9 14" : GetReason = "writes on"
+		Case "9 15" : GetReason = "travels to"
+		Case "9 16" : GetReason = "breathes"
+		Case "9 17" : GetReason = "eats from"
+		Case "9 18" : GetReason = "drinks"
+		Case "9 19" : GetReason = "disproves"
+		Case "9 20" : GetReason = "slays"
+		Case "9 21" : GetReason = "exorcises"
+		' Tree
+		Case "10 11" : GetReason = "shelters"
+		Case "10 12" : GetReason = "shelters"
+		Case "10 13" : GetReason = "outlives"
+		Case "10 14" : GetReason = "creates"
+		Case "10 15" : GetReason = "blocks"
+		Case "10 16" : GetReason = "produces"
+		Case "10 17" : GetReason = "wood creates"
+		Case "10 18" : GetReason = "drinks"
+		Case "10 19" : GetReason = "ensnares ship of"
+		Case "10 20" : GetReason = "shelters"
+		Case "10 21" : GetReason = "imprisons"
+		Case "10 22" : GetReason = "attacts"
+		' Cockroach
+		Case "11 12" : GetReason = "sleeps in fur of"
+		Case "11 13" : GetReason = "nests in"
+		Case "11 14" : GetReason = "nests between"
+		Case "11 15" : GetReason = "is nocturnal with"
+		Case "11 16" : GetReason = "breathes"
+		Case "11 17" : GetReason = "hides under"
+		Case "11 18" : GetReason = "drinks"
+		Case "11 19" : GetReason = "stows away with"
+		Case "11 20" : GetReason = "eats eggs of"
+		Case "11 21" : GetReason = "enrages"
+		Case "11 22" : GetReason = "hides from"
+		Case "11 23" : GetReason = "survives"
+		' Wolf
+		Case "12 13" : GetReason = "chews up"
+		Case "12 14" : GetReason = "chews up"
+		Case "12 15" : GetReason = "howls at"
+		Case "12 16" : GetReason = "breathes"
+		Case "12 17" : GetReason = "drinks from"
+		Case "12 18" : GetReason = "drinks"
+		Case "12 19" : GetReason = "chases"
+		Case "12 20" : GetReason = "outruns"
+		Case "12 21" : GetReason = "bites"
+		Case "12 22" : GetReason = "outruns"
+		Case "12 23" : GetReason = "is a codename for"
+		Case "12 24" : GetReason = "outruns"
+		' Sponge
+		Case "13 14" : GetReason = "soaks"
+		Case "13 15" : GetReason = "looks like"
+		Case "13 16" : GetReason = "uses pockets of"
+		Case "13 17" : GetReason = "cleans"
+		Case "13 18" : GetReason = "absorbs"
+		Case "13 19" : GetReason = "intrigues"
+		Case "13 20" : GetReason = "cleanses"
+		Case "13 21" : GetReason = "cleanses"
+		Case "13 22" : GetReason = "conducts"
+		Case "13 23" : GetReason = "cleans"
+		Case "13 24" : GetReason = "soaks"
+		Case "13 25" : GetReason = "cleans"
+		' Paper
+		Case "14 15" : GetReason = "can show image of"
+		Case "14 16" : GetReason = "fans"
+		Case "14 17" : GetReason = "maches"
+		Case "14 18" : GetReason = "floats on"
+		Case "14 19" : GetReason = "disproves"
+		Case "14 20" : GetReason = "rebukes"
+		Case "14 21" : GetReason = "rebukes"
+		Case "14 22" : GetReason = "defines"
+		Case "14 23" : GetReason = "defines"
+		Case "14 24" : GetReason = "encases"
+		Case "14 25" : GetReason = "outlaws"
+		Case "14 1" : GetReason = "covers"
+		' Moon
+		Case "15 16" : GetReason = "has no"
+		Case "15 17" : GetReason = "shaped like"
+		Case "15 18" : GetReason = "has no"
+		Case "15 19" : GetReason = "houses"
+		Case "15 20" : GetReason = "shines on"
+		Case "15 21" : GetReason = "terrifies"
+		Case "15 22" : GetReason = "far above"
+		Case "15 23" : GetReason = "too far for"
+		Case "15 24" : GetReason = "suffocates"
+		Case "15 25" : GetReason = "illuminates"
+		Case "15 1" : GetReason = "shines on"
+		Case "15 2" : GetReason = "eclipses"
+		' Air
+		Case "16 17" : GetReason = "tips over"
+		Case "16 18" : GetReason = "evaporates"
+		Case "16 19" : GetReason = "chokes"
+		Case "16 20" : GetReason = "freezes"
+		Case "16 21" : GetReason = "chokes"
+		Case "16 22" : GetReason = "creates"
+		Case "16 23" : GetReason = "blows astray"
+		Case "16 24" : GetReason = "blows out"
+		Case "16 25" : GetReason = "tarnishes"
+		Case "16 1" : GetReason = "erodes"
+		Case "16 2" : GetReason = "cools heat from"
+		Case "16 3" : GetReason = "blows out"
+		' Bowl
+		Case "17 18" : GetReason = "contains"
+		Case "17 19" : GetReason = "shapes craft of"
+		Case "17 20" : GetReason = "drowns"
+		Case "17 21" : GetReason = "blesses"
+		Case "17 22" : GetReason = "focuses"
+		Case "17 23" : GetReason = "encases core of"
+		Case "17 24" : GetReason = "splashes"
+		Case "17 25" : GetReason = "splashes"
+		Case "17 1" : GetReason = "once made of"
+		Case "17 2" : GetReason = "focuses"
+		Case "17 3" : GetReason = "snuffs out"
+		Case "17 4" : GetReason = "covers"
+		' Water
+		Case "18 19" : GetReason = "is toxic to"
+		Case "18 20" : GetReason = "drowns"
+		Case "18 21" : GetReason = "blesses"
+		Case "18 22" : GetReason = "conducts"
+		Case "18 23" : GetReason = "short-circuits"
+		Case "18 24" : GetReason = "douses"
+		Case "18 25" : GetReason = "rusts"
+		Case "18 1" : GetReason = "erodes"
+		Case "18 2" : GetReason = "reflects"
+		Case "18 3" : GetReason = "puts out"
+		Case "18 4" : GetReason = "rusts"
+		Case "18 5" : GetReason = "rusts"
+		' Alien
+		Case "19 20" : GetReason = "vaporizes"
+		Case "19 21" : GetReason = "non-believer in"
+		Case "19 22" : GetReason = "shoots"
+		Case "19 23" : GetReason = "defuses"
+		Case "19 24" : GetReason = "defuses"
+		Case "19 25" : GetReason = "force-fields against"
+		Case "19 1" : GetReason = "vaporizes"
+		Case "19 2" : GetReason = "destroys"
+		Case "19 3" : GetReason = "fuses"
+		Case "19 4" : GetReason = "force-fields against"
+		Case "19 5" : GetReason = "force-fields against"
+		Case "19 6" : GetReason = "mutates"
+		' Dragon
+		Case "20 21" : GetReason = "commands"
+		Case "20 22" : GetReason = "breathes"
+		Case "20 23" : GetReason = "lived before"
+		Case "20 24" : GetReason = "flosses with"
+		Case "20 25" : GetReason = "immune to"
+		Case "20 1" : GetReason = "rests upon"
+		Case "20 2" : GetReason = "blots out"
+		Case "20 3" : GetReason = "breathes"
+		Case "20 4" : GetReason = "immune to"
+		Case "20 5" : GetReason = "immune to"
+		Case "20 6" : GetReason = "spawns"
+		Case "20 7" : GetReason = "chars"
+		' Devil
+		Case "21 22" : GetReason = "casts"
+		Case "21 23" : GetReason = "inspires"
+		Case "21 24" : GetReason = "inspires"
+		Case "21 25" : GetReason = "inpsires"
+		Case "21 1" : GetReason = "hurls"
+		Case "21 2" : GetReason = "curses"
+		Case "21 3" : GetReason = "breathes"
+		Case "21 4" : GetReason = "immune to"
+		Case "21 5" : GetReason = "immune to"
+		Case "21 6" : GetReason = "eats"
+		Case "21 7" : GetReason = "enrages"
+		Case "21 8" : GetReason = "tempts"
+		' Lightning
+		Case "22 23" : GetReason = "defuses"
+		Case "22 24" : GetReason = "ignites"
+		Case "22 25" : GetReason = "melts"
+		Case "22 1" : GetReason = "splits"
+		Case "22 2" : GetReason = "storm blocks"
+		Case "22 3" : GetReason = "starts"
+		Case "22 4" : GetReason = "melts"
+		Case "22 5" : GetReason = "melts"
+		Case "22 6" : GetReason = "strikes"
+		Case "22 7" : GetReason = "strikes"
+		Case "22 8" : GetReason = "strikes"
+		Case "22 9" : GetReason = "strikes"
+		' Nuke
+		Case "23 24" : GetReason = "outclasses"
+		Case "23 25" : GetReason = "outclasses"
+		Case "23 1" : GetReason = "incinerates"
+		Case "23 2" : GetReason = "has power of a"
+		Case "23 3" : GetReason = "starts massive"
+		Case "23 4" : GetReason = "incinerates"
+		Case "23 5" : GetReason = "incinerates"
+		Case "23 6" : GetReason = "incinerates"
+		Case "23 7" : GetReason = "incinerates"
+		Case "23 8" : GetReason = "incinerates"
+		Case "23 9" : GetReason = "incinerates"
+		Case "23 10" : GetReason = "incinerates"
+		' Dynamite
+		Case "24 25" : GetReason = "outclasses"
+		Case "24 1" : GetReason = "explodes"
+		Case "24 2" : GetReason = "smoke blocks out"
+		Case "24 3" : GetReason = "starts"
+		Case "24 4" : GetReason = "explodes"
+		Case "24 5" : GetReason = "explodes"
+		Case "24 6" : GetReason = "explodes"
+		Case "24 7" : GetReason = "explodes"
+		Case "24 8" : GetReason = "explodes"
+		Case "24 9" : GetReason = "explodes"
+		Case "24 10" : GetReason = "explodes"
+		Case "24 11" : GetReason = "explodes"
+		' Gun
+		Case "25 1" : GetReason = "targets"
+		Case "25 2" : GetReason = "shoots at"
+		Case "25 3" : GetReason = "fires at"
+		Case "25 4" : GetReason = "destroys"
+		Case "25 5" : GetReason = "chips"
+		Case "25 6" : GetReason = "shoots"
+		Case "25 7" : GetReason = "shoots"
+		Case "25 8" : GetReason = "shoots"
+		Case "25 9" : GetReason = "shoots"
+		Case "25 10" : GetReason = "targets"
+		Case "25 11" : GetReason = "shoots"
+		Case "25 12" : GetReason = "shoots"
+	End Select
+End Function

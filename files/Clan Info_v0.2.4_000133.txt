@@ -1,0 +1,360 @@
+'// Clan Info
+'// Created by Shubit 21/10/2009
+'// Thanks to the one who wrote the old plugin, I used much of the old source
+
+'***************************
+'// SCRIPT INFO
+
+Script("Name") = "Clan Info"
+Script("Author") = "Shubit and Unknown"
+Script("Major") = 0
+Script("Minor") = 2
+Script("Revision") = 4
+Script("Description") = "This script will add commands for clan information (clan name, leaders and shamans, members and inactivity of them)"
+
+'***************************
+'// CHANGELOGS
+
+
+'***************************
+'// GLOBAL VARIABLES
+
+Private aRealms(4)
+Private DaysInactive
+
+' Realms:
+'  0    - Bot's Realm
+'  1	- Northrend - Europe
+'  2	- Azeroth - USEast
+'  3	- Lordaeron - USWest
+'  4	- Kalimdor	- China
+
+'***************************
+'// BOT EVENTS
+
+Sub Event_Load()
+
+	If GetSettingsEntry("Revision") = vbNullString Then 'first start
+		CreateSettings()
+		CreateCommands()
+	ElseIf Int(GetSettingsEntry("Revision")) < Script("Revision") Then 'new version
+		CreateSettings()
+		CreateCommands()
+	End If
+
+	'fill array of realms
+	aRealms(0) = GetBotRealm
+	aRealms(1) = "Northrend"
+	aRealms(2) = "Azeroth"
+	aRealms(3) = "Lordaeron"
+	aRealms(4) = "Kalimdor"
+
+	DaysInactive = 8
+End Sub
+
+Sub Event_Command(Command)
+    If(Command.Docs.Owner = Script("Name")) Then
+		If SciNet.StillExecuting Then Exit Sub
+		If Command.IsValid And Command.HasAccess Then
+			If (Len(Command.Argument("Clantag")) < 2) Or (Len(Command.Argument("Clantag")) > 7) Then
+				Command.Respond "Clan tags must be between two and four characters long."
+			Else
+				ReturnInformation Command
+			End If
+		Else
+			Command.Respond "Proper syntax for this command is: claninfo <clan tag>, clanname <clan tag>, clanchief <clan tag>, clanshamans <clan tag>, clanmembers <clan tag>, latestmember <clan tag> or clanactivity <clan tag>"
+		End If
+	End If
+End Sub 
+
+'***************************
+'// PRIVATE SUBS/FUNCTIONS
+
+Private Sub ReturnInformation(Command)
+	Dim mRealm, mRealmS, mClantag
+	
+	'get clantag and maybe realm out of argument
+	If InStr(Command.Argument("Clantag")," ") Then
+		msg = Split(Command.Argument("Clantag")," ")
+		mClantag = msg(0)
+		If msg(1) > -1 And msg(1) < 5 Then
+			mRealm = msg(1)
+		Else
+			mRealm = 0
+		End If
+	Else
+		mClantag = Command.Argument("Clantag")
+		mRealm = 0
+	End If
+	
+	'download clan profile
+	mContent = SciNet.OpenURL("http://" & GetPortal(mRealm) & "battle.net/war3/ladder/w3xp-clan-profile.aspx?Gateway=" & aRealms(mRealm) & "&ClanTag=" & mClantag)
+
+	msRealm = aRealms(mRealm)
+
+	'information output
+	If Instr(LCase(mContent), LCase(mClantag)) > 0 Then
+		Select Case LCase(Command.Name)
+
+			Case "claninfo":
+				sGI = GetInfo(mRealm, mContent, mClantag, 6)
+				Command.Respond "Clan: "& GetInfo(mRealm, mContent, mClantag, 2) & " ["& UCase(mClantag) & "@" & msRealm & "] was created on "& GetInfo(mRealm, mContent, mClantag, 1) & ", it is currently led by "& GetInfo(mRealm, mContent, mClantag, 3) & " and has "& GetInfo(mRealm, mContent, mClantag, 5) & " members ("& Split(sGI)(0) & " grunts, "& Split(sGI)(1) & " peons) "& Split(sGI)(2) & " members have been inactive for more than a week."
+				Command.Respond "It's shamans are: "& GetInfo(mRealm, mContent, mClantag, 4) & " and its newest member is " & GetInfo(mRealm, mContent, mClantag, 7) & "."
+
+			Case "clanname":
+				Command.Respond GetInfo(mRealm, mContent, mClantag, 2) & " ["& UCase(mClantag) & "@" & msRealm & "] created on "& GetInfo(mRealm, mContent, mClantag, 1)
+
+			Case "clanchief", "clanleader":
+				Command.Respond "Clan "& UCase(mClantag) & "@" & msRealm & "'s Chieftain: "& GetInfo(mRealm, mContent, mClantag, 3)
+			
+			Case "clanshamans":
+				Command.Respond "Clan "& UCase(mClantag) & "@" & msRealm & "'s Shamans: "& GetInfo(mRealm, mContent, mClantag, 4)
+			
+			Case "clanmembers":
+				sGI = GetInfo(mRealm, mContent, mClantag, 6)
+				Command.Respond "Clan "& UCase(mClantag) & "@" & msRealm & "'s Member Count: "& GetInfo(mRealm, mContent, mClantag, 5) & " members ("& Split(sGI)(0) & " grunts, "& Split(sGI)(1) & " peons) "& Split(sGI)(2) & " members have been inactive for more than a week."
+			
+			Case "latestmember":
+				Command.Respond "Clan "& UCase(mClantag) & "@" & msRealm & "'s Latest Member: "& GetInfo(mRealm, mContent, mClantag, 7)
+			
+			Case "clanactivity":
+				Command.Respond "Clan "& UCase(mClantag) & "@" & msRealm & "'s Clan Activity: " & GetInfo(mRealm, mContent, mClantag, 8)
+			
+		End Select
+	Else
+		Command.Respond "Battle.net has no record of Clan "& UCase(mClantag) & "@" & msRealm & " or the Battle.net website is down!"
+	End If
+End Sub
+
+Private Function GetInfo(mRealm, Content, ClanTag, Info)
+	Dim T(2), x, y, sShamans, msRealm, iGrunt, iPeon
+	msRealm = aRealms(mRealm)
+	Select Case Info
+		Case 1
+			T(0) = Instr(Content, "Creation Date: ")
+			T(1) = Instr(T(0), Content, ">") + 1
+			T(2) = Instr(T(1), Content, "<") - 1
+			GetInfo = Mid(Content, T(1), T(2) - T(1))
+		Case 2
+			T(0) = Instr(Content, " - Clan Profile")
+			T(1) = InstrRev(Content, "- ", T(0)) + 2
+			GetInfo = Mid(Content, T(1), T(0) - T(1))
+		Case 3
+			T(0) = Instr(Content, "rank4")
+			T(1) = Instr(T(0), Content, "PlayerName=") + 11
+			T(2) = Instr(T(1), Content, ">") - 1
+			GetInfo = Replace(Replace(Mid(Content, T(1), T(2) - T(1)), "%5b", "["), "%5d", "]")
+		Case 4
+			T(1) = 1
+			If Instr(Content, "rank3") Then
+				For x = 1 to UBound(Split(Content, "rank3"))
+					y = Instr(T(1), Content, "rank3")
+					T(0) = Instr(y, Content, "PlayerName=") + 11
+					T(1) = Instr(T(0), Content, ">") - 1
+					sShamans = sShamans & Mid(Content, T(0), T(1) - T(0)) & ", "
+				Next
+				GetInfo = Replace(Replace(Left(sShamans, Len(sShamans) - 2), "%5b", "["), "%5d", "]")
+			Else
+				GetInfo = "None"
+			End If
+		Case 5
+			T(0) = Instr(Content, " Players")
+			T(1) = InstrRev(Content, ">", T(0)) + 1
+			GetInfo = Mid(Content, T(1), T(0) - T(1))
+		Case 6
+			iGrunt = 0
+			iPeon = 0
+			iInactive = 0
+			For i = 1 to GetNumberOfPages(Content)
+				sContent = SciNet.OpenURL("http://" & GetPortal(mRealm) & "battle.net/war3/ladder/w3xp-clan-profile.aspx?Gateway="& msRealm & "&ClanTag="& ClanTag & "&PageNo="& i)
+				If Instr(LCase(sContent), "rank2") Then
+					iGrunt = iGrunt + UBound(Split(LCase(sContent), "rank2"))
+				End If
+				If Instr(LCase(sContent), "rank0") Then
+					iPeon = iPeon + UBound(Split(LCase(sContent), "rank0"))
+				End If
+				If Instr(LCase(sContent), "rank1") Then
+					iPeon = iPeon + UBound(Split(LCase(sContent), "rank1"))
+				End If
+				y = 1
+				If Instr(LCase(sContent), " days") Then
+					For x = 1 to UBound(Split(sContent, " Days"))
+						y = Instr(y + 1, sContent, " Days")
+						T(0) = InstrRev(sContent, ">", y) + 1
+						T(1) = Replace(Replace(Mid(sContent, T(0), y - T(0)), "		", ""), vbcrlf, "")
+						If CInt(T(1)) >= DaysInactive Then
+							iInactive = iInactive + 1
+						End If
+					Next
+				End If
+			Next
+			GetInfo = iGrunt & " "& iPeon & " "& iInactive
+		Case 7
+			sContent = SciNet.OpenURL("http://" & GetPortal(mRealm) & "battle.net/war3/ladder/w3xp-clan-profile.aspx?Gateway="& msRealm & "&ClanTag="& ClanTag & "&SortField=joined&SortDir=DESC")
+			T(0) = Instr(sContent, "PlayerName=") + 11
+			T(1) = Instr(T(0), sContent, ">") - 1
+			If InStr(Mid(sContent, T(0), T(1) - T(0)), " ") Then GetInfo = "<Unknown>" Else GetInfo = filterUni(Mid(sContent, T(0), T(1) - T(0)))
+		Case 8
+			inactiveMembers = 0
+			inactiveMemberList = ""
+			For x = 1 To GetNumberOfPages(Content)
+				sContent = SciNet.OpenURL("http://" & GetPortal(mRealm) & "battle.net/war3/ladder/w3xp-clan-profile.aspx?Gateway="& msRealm & "&ClanTag="& ClanTag & "&PageNo="& x)
+				z = 1
+				If Instr(LCase(sContent), " days") Then
+					For y = 1 to UBound(Split(sContent, " Days"))
+						z = Instr(z + 1, sContent, " Days")
+						T(0) = InstrRev(sContent, ">", z) + 1
+						T(1) = Replace(Replace(Mid(sContent, T(0), z - T(0)), "		", ""), vbcrlf, "")
+						q = Instr(z - 500, sContent, "PlayerName=")
+						T(2) = Mid(sContent, q + 11, Instr(q + 1, sContent, ">") - q - 12)
+						If CInt(T(1)) >= DaysInactive Then
+							inactiveMembers = inactiveMembers + 1
+							If inactiveMemberList = "" Then inactiveMemberList = T(2) & ": " & T(1) Else inactiveMemberList = inactiveMemberList & ", " & T(2) & ": " & T(1)
+						End If
+					Next
+				End If
+			Next
+			If inactiveMembers = 0 Then GetInfo = "No inactive members found." Else GetInfo = inactiveMembers & " inactive members found:  " & filterUni(inactiveMemberList)
+	End Select
+End Function
+
+Private Function GetBotRealm()
+	Select Case LCase(Left(BotVars.Server, 6))
+		Case "63.241", "uswest"
+			GetBotRealm = "Lordaeron"
+		Case "63.240", "useast"
+			GetBotRealm = "Azeroth"
+		Case "213.24", "europe"
+			GetBotRealm = "Northrend"
+		Case "211.23", "asia.b"
+			GetBotRealm = "Kalimdor"
+		Case Else
+			GetBotRealm = "Lordaeron"
+	End Select
+End Function
+ 
+Private Function GetNumberOfPages(Content)
+	Dim x, y, sPage, sPages
+	y = 1
+	sPages = Split(Content, "PageNo=")
+	For Each sPage In sPages
+		x = Left(sPage, 1)
+		If x > y Then
+			y = x
+		End If
+	Next
+	GetNumberOfPages = y
+End Function
+ 
+Private Function GetPortal(realm)
+	'for Kalimdor use asialadders
+	If realm = "4" Then GetPortal = "asialadders." Else GetPortal = "classic."
+End Function
+ 
+Private Function FilterUni(laString)
+	laString = Replace(laString, "%5b", "[")
+	laString = Replace(laString, "%5d", "]")
+	FilterUni = laString
+End Function
+
+Private Sub CreateSettings()
+	WriteSettingsEntry "Revision", Script("Revision")
+	
+	AddChat 13447834, "Custom Clan Commands: Settings loaded in scripts\scripts.ini"
+End Sub
+
+Private Sub CreateCommands()
+	
+    Dim Command, Parameter
+
+	Set Command = CreateCommand("claninfo")
+	With Command
+		Set Parameter = .NewParameter("Clantag", False, "Clantag")
+		With Parameter
+			.Description = "The tag of the clan."
+        End With
+        .Parameters.Add Parameter
+		.Description = "Displays some general information about the clan."
+		.RequiredRank = 0
+		.Save
+	End With
+	
+	Set Command = CreateCommand("clanname")
+	With Command
+		Set Parameter = .NewParameter("Clantag", False, "Clantag")
+		With Parameter
+			.Description = "The tag of the clan."
+        End With
+        .Parameters.Add Parameter
+		.Description = "Displays the name of the clan."
+		.RequiredRank = 0
+		.Save
+	End With
+	
+	Set Command = CreateCommand("clanchief")
+	With Command
+		Set Parameter = .NewParameter("Clantag", False, "Clantag")
+		With Parameter
+			.Description = "The tag of the clan."
+        End With
+        .Parameters.Add Parameter
+		.Aliases.Add "clanleader"
+		.Description = "Tells your the name of the clanchieftain."
+		.RequiredRank = 0
+		.Save
+	End With
+	
+	Set Command = CreateCommand("clanshamans")
+	With Command
+		Set Parameter = .NewParameter("Clantag", False, "Clantag")
+		With Parameter
+			.Description = "The tag of the clan."
+        End With
+        .Parameters.Add Parameter
+		.Description = "Lists all shamans."
+		.RequiredRank = 0
+		.Save
+	End With
+	
+	Set Command = CreateCommand("clanmembers")
+	With Command
+		Set Parameter = .NewParameter("Clantag", False, "Clantag")
+		With Parameter
+			.Description = "The tag of the clan."
+        End With
+        .Parameters.Add Parameter
+		.Description = "Lists number of grunts, peon."
+		.RequiredRank = 0
+		.Save
+	End With
+	
+	Set Command = CreateCommand("latestmember")
+	With Command
+		Set Parameter = .NewParameter("Clantag", False, "Clantag")
+		With Parameter
+			.Description = "The tag of the clan."
+        End With
+        .Parameters.Add Parameter
+		.Description = "Displays the name of the lastest member joined the clan."
+		.RequiredRank = 0
+		.Save
+	End With
+	
+	Set Command = CreateCommand("clanactivity")
+	With Command
+		Set Parameter = .NewParameter("Clantag", False, "Clantag")
+		With Parameter
+			.Description = "The tag of the clan."
+        End With
+        .Parameters.Add Parameter
+		.Description = "Displays a list of all inactive members."
+		.RequiredRank = 0
+		.Save
+	End With
+	
+    Set Parameter = Nothing
+    Set Command = Nothing
+
+	AddChat 13447834, "     Commands (claninfo, clanname, clanchief, clanshamans, clanmembers, latestmember, clanactivity) successfully created."
+End Sub
+

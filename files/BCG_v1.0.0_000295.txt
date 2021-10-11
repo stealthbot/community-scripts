@@ -1,0 +1,848 @@
+Script("Name") = "BCG"
+Script("Author") = "iBeJT"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 0
+
+
+'COMMANDS AND HOW THEY WORK:
+'For these examples, my trigger is going to be ' * '
+' *login      'Logs that person into the bot if they have required amount of access
+' *logout     'Logs that person out
+' *myinfo     'Displays the person who executed the commands info
+' *myinfo <RUN TYPE>    'Displays more specific information about said run type. Run types are: baal, chaos, rush
+' *getinfo <ACCOUNT>    'Its just like *myinfo but for the person who u type in there
+' *top         'Displays the top overall runners (Accumulated Baal/Chaos/Rush
+' *top <RUN TYPE>       'Displays top runners for that run type
+' *runs         'Displays current games that are up
+' *fastest <RUN TYPE>   'Displays the top 3 fastest runners (by AVERAGE run time) for that run type
+' *slowest <RUN TYPE>   'Displays the top 3 slowest runners (by AVERAGe run time) for that run type
+' *tig                  'When whispered from a runner in game, will tell runner their current run time so far
+' *reset <TYPE>         'Deletes all run data for specified type: chaos, baal, rush, all
+' *fakers               'Gives a list of users who just whispered the bot that they joined a game but didnt actually leave channel
+' *forcelogout <ACCOUNT> 'Logs whoevers account that is out from the bot
+' *blacklist <ACCOUNT<  'Stops that person from being able to access any bot commands
+
+
+'FILEPATHS MAY BE CHANGED TO WHEREVER YOU WISH THEM TO BE SAVED AT, JUST DONT CHANGE ANYTHING BEFORE THE ' = '
+Set xFSO = CreateObject("Scripting.FileSystemObject")
+BRFile = BotPath() & "BaalRunzDat.txt"
+CRFile = BotPath() & "ChaosRunzDat.txt"
+GRFile = BotPath() & "RushRunDat.txt"
+RunFile = BotPath() & "Runners.txt"
+RunnerFile = BotPath() & "CurrentRunners.txt"
+ChannelFile = BotPath() & "ChannelList.txt"
+FakerFile = BotPath() & "FakeRunners.txt"
+BlackListFile = BotPath() & "BlackListed.txt"
+
+
+ClanChannel = "Clan JT"     'WILL PUT W/E YOU PUT IN THERE INTO THE 'LOCATION' SECTION IN THE BOTS PROFILE
+
+
+'True/False
+MinTime = True          'IF TRUE, THEN TIMES BELOW A CERTAIN AMOUNT (IN SECONDS) WILL NOT BE RECORDED
+MaxTime = True          'IF TRUE, THEN TIMES ABOVE A CERTAIN AMOUNT (IN SECONDS) WILL NOT BE RECORDED
+
+'Time is done in seconds.
+BaalMax = 270               'MAX BAAL TIME THAT WILL BE RECORDED, ANY TIME AFTER THIS IS NOT RECORDED
+BaalMin = 45                'MIN BAAL TIME THAT WILL BE RECORDDED, ANY TIME BEFORE THIS WILL NOT BE RECORDED
+ChaosMax = 330              'MAX CHAOS TIME THAT WILL BE RECORDED, ANY TIME AFTER THIS IS NOT RECORDED
+ChaosMin = 60               'MIN CHAOS TIME THAT WILL BE RECORDED, ANY TIME BEFORE THIS WILL NOT BE RECORDED
+RushMax = 345345345345      'MAX RUSH TIME THAT WILL BE RECORDED, ANY TIME AFTER THIS IS NOT RECORDED
+RushMin = 120               'MIN RUSH TIME THAT WILL BE RECORDED, ANY TIME BEFORE THIS IS NOT RECORDED
+
+const vers = "1.0"    'Just for profile, doesnt really do shit
+'VARIABLE COMMANDS
+LoginCmd = "login"          'W/E THEY TYPE TO LOGIN
+LogoutCmd = "logout"        'W/E THEY TYPE TO LOGOUT
+MyInfoCmd = "myinfo"        'W/E THEY TYPE TO SEE THEIR STATS
+GetInfoCmd = "getinfo "     'W/E THEY TYPE TO SEE SOMEONE ELSES STATS, EX. *getinfo InstertAcctName
+CurrentCmd = "runs"         'W/E THEY TYPE TO DISPLAY CURRENT RUNS  
+ProfileCmd = "updateprofile"'W/E THEY TYPE TO UPDATE PROFILE
+
+
+
+
+'********************************************************************************************************
+'********************************************************************************************************
+'**************** DO NOT EDIT THIS CODE. IF YOU DO AND IT FUCKS UP, DONT CRY TO ME ABOUT IT *************
+'********************************************************************************************************
+'********************************************************************************************************
+
+Public Runner(100,7), bitchdidntdoit, runsfrom1, Gamesz(30), DisplayRuns, BlackListed, RunnerCounter, Runnerq(100,5)
+
+Sub Event_LoggedOn(Username, Product)
+AddQ "/options igw"
+Call bcg_ProfileUpdater()
+End Sub
+
+Sub Event_Load()
+DisplayRuns = True
+BlackListed = False
+RunnerCounter = 0
+CreateObj "LongTimer", "ChannelPassTimer"
+ChannelPassTimer.Interval = 1800
+CreateObj "LongTimer", "xTimer"
+xTimer.Interval = 2400
+xTimer.Enabled = True
+CreateObj "LongTimer", "RunSpamBlock"
+RunSpamBlock.Interval = 30
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+Msg = LCase(Message)
+Dim Fakerz(50)
+Dim Runnas(100)
+member = LCase(Username)
+checking = Split(member, "@")
+
+If Left(Message, 1) = BotVars.Trigger Then
+  GetDBEntry Username, xA, xF
+  Call bcg_BlackList(member, 1)
+  If BlackListed = False Then
+    If Msg = BotVars.Trigger & CurrentCmd Then
+      If DisplayRuns = True Then
+        DisplayRuns = False
+        RunSpamBlock.Enabled = True
+        Call bcg_RunDisplay()
+      End If
+    ElseIf xA > 10 Then
+      If Msg = BotVars.Trigger & LoginCmd Then
+        If InStr(member, "@azeroth") Then
+          AddQ "Stfu your not even on D2"
+        Else
+          Call bcg_Login(member)
+        End If
+      ElseIf Msg = BotVars.Trigger & LogoutCmd Then
+        Person = Username
+        Call bcg_LogOut(member)
+      ElseIf InStr(Msg, MyInfoCmd) Then
+        If InStr(Message, "baal") Then
+          Call bcg_GetSpecificInfo(member, BRFile, "baal")
+        ElseIf InStr(Message, "chaos") Then
+          Call bcg_GetSpecificInfo(member, CRFile, "chaos")
+        ElseIf InStr(Message, "rush") Then
+          Call bcg_GetSpecificInfo(member, GRFile, "rush")
+        Else
+          Call bcg_GetInfo(member, 0, 1)
+        End If
+      ElseIf InStr(Message, GetInfoCmd) Then
+        Personz = Split(Message, GetInfoCmd)
+        Personzs = LCase(Personz(1))
+        Call bcg_GetInfo(Personzs, 1, 1)
+      ElseIf Msg = BotVars.Trigger & ProfileCmd AND xA >= 50 Then
+        Call bcg_ProfileUpdater()
+        AddQ "Profile Updated"
+      ElseIf InStr(Message, "top") Then
+        If InStr(Message, "baal") Then
+          Call bcg_TopThree(BRFile, "baal", 0)
+        ElseIf InStr(Message, "chaos") Then
+          Call bcg_TopThree(CRFile, "chaos", 0)
+        ElseIf InStr(Message, "rush") Then
+          Call bcg_TopThree(GRFile, "rush", 0)
+        Else
+          Call bcg_TopOverall()
+        End If
+      ElseIf Msg = BotVars.Trigger & "fakers" Then
+        Set xFile = xFSO.OpenTextFile(FakerFile, 1, True)
+        i = 0
+        Do While NOT xFile.AtEndOfStream
+          Fakerz(i) = xFile.ReadLine
+          i = i + 1
+        Loop
+        xFile.Close
+        For z = 0 To i - 1
+          FakersList = FakersList & " " & Fakerz(z)
+        Next
+        AddQ "Fake Runners: " & FakersList
+      ElseIf InStr(Message, "fastest") Then
+        If InStr(Message, "baal") Then
+          Call bcg_FastestRunners("baal", BRFile)
+        ElseIf InStr(Message, "chaos") Then
+          Call bcg_FastestRunners("chaos", CRFile)
+        ElseIf InStr(Message, "rush") Then
+          Call bcg_FastestRunners("rush", GRFile)
+        End If
+      ElseIf InStr(Message, "slowest") Then
+        If InStr(Message, "baal") Then
+          Call bcg_SlowestRunners("baal", BRFile)
+        ElseIf InStr(Message, "chaos") Then
+          Call bcg_SlowestRunners("chaos", CRFile)
+        ElseIf InStr(Message, "rush") Then
+          Call bcg_slowestRunners("rush", GRFile)
+        End If
+      ElseIf InStr(Message, "reset ") AND xA >= 100 Then
+        If InStr(Message, "baal") Then
+          If xFSO.FileExists(BRFile) Then xFSO.DeleteFile(BRFile)
+          AddQ "All baal run data was cleared."
+        ElseIf InStr(Message, "chaos") Then
+          If xFSO.FileExists(CRFile) Then xFSO.DeleteFile(CRFile)
+          AddQ "All chaos run data was cleared."
+        ElseIf InStr(Message, "rush") Then
+          If xFSO.FileExists(GRFile) Then xFSO.DeleteFile(GRFile)
+          AddQ "All rush data was cleared."
+        ElseIf InStr(Message, "all") Then
+          If xFSO.FileExists(BRFile) Then xFSO.DeleteFile(BRFile)
+          If xFSO.FileExists(CRFile) Then xFSO.DeleteFile(CRFile)
+          If xFSO.FileExists(GRFile) Then xFSO.DeleteFile(GRFile)
+          AddQ "All run data was cleared."
+        End If
+      ElseIf InStr(Msg, BotVars.Trigger & "blacklist ") > 0 AND xA >= 100 Then
+        PersonBlacklisted = Split(Msg, BotVars.Trigger & "blacklist ")
+        Call bcg_BlackList(PersonBlacklisted(1), 0)
+      ElseIf InStr(Msg, BotVars.Trigger & "forcelogout ") > 0 AND xA >= 100 Then
+        Persondz = Split(Msg, BotVars.Trigger & "forcelogout ")
+        Call bcg_LogOut(Persondz(1))
+      End If
+    End If
+  End If
+End If
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+Msg = LCase(Message)
+member = LCase(Username)
+'Your friend DeathStorm(OD) entered a Diablo II Lord of Destruction game called Odpk.
+If Msg = BotVars.Trigger & "tig" Then
+  For a = 0 To RunnerCounter
+    If Runner(a,0) = member Then
+      TimeIG = DateDiff("s",Runner(a,2),Now())
+      TimeInGame = bcg_TimeGetter(TimeIG)
+      AddQ "/w *" & Username & " Your current run time is: " & TimeInGame
+    End If
+  Next
+End If
+
+If InStr(Msg, "diablo ii lord of destruction game called") > 0 OR InStr(Msg, "dans une partie de diablo ii lord of destruction") > 0 Then
+  If InStr(Msg, "dans une") Then
+    GameName = Split(Msg, " entré dans une partie Diablo II Lord of Destruction nommé ")
+  Else
+    GameName = Split(Msg, " entered a diablo ii lord of destruction game called ")
+  End If
+  For y = 0 To RunnerCounter
+    If Runner(y,0) = member Then
+      If Runner(y,3) = True Then
+        AddQ "/w *" & Username & " Fake runs? Ok blacklisted."
+        Call bcg_BlackList(Username, 0)
+        Set xFile = xFSO.OpenTextFile(FakerFile, 8, True)
+        xFile.WriteLine Username
+        xFile.Close
+      Else
+        If InStr(GameName(1), "baal") Then
+          AddQ "New Baal Game: " & GameName(1) & " Run by: " & Username
+          Call bcg_UpdateRunner(member, "baal", GameName(1))
+        ElseIf InStr(GameName(1), "chaos") Then
+          AddQ "New Chaos Game: " & GameName(1) & " Run by: " & Username
+          Call bcg_UpdateRunner(member, "chaos", GameName(1))
+        ElseIf InStr(GameName(1), "rush") Then
+          AddQ "Rush being done in: " & GameName(1) & " Rush by: " & Username
+          Call bcg_UpdateRunner(member, "rush", GameName(1))
+        Else
+          Call bcg_LogOut(member)
+        End If
+      End If
+    End If
+  Next
+ElseIf InStr(Msg, "has exited battle.net.") Then
+  Call bcg_LogOut(member)
+End If
+End Sub
+
+Sub xTimer_Timer()
+Call bcg_ProfileUpdater()
+End Sub
+ 
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+persona = LCase(Username)
+RunnerID = -1
+For x = 0 To RunnerCounter
+  If Runner(x,0) = persona Then
+    If Runner(x,4) = "chaos" OR Runner(x,4) = "baal" OR Runner(x,4) = "rush" Then
+      DateCheckers = DateDiff("s",Runner(x,2),Now())
+      GoodTime = True
+      RunnerID = x
+      If Runner(x,4) = "baal" Then
+        If Int(DateCheckers) >= Int(BaalMax) AND MaxTime = True Then
+         AddQ "/w *" & persona & " Your baal run was overtimed, and will not be recorded."
+          GoodTime = False
+        ElseIf Int(DateCheckers) < Int(BaalMin) AND MinTime = True Then
+          AddQ "/w *" & persona & " Your baal run was undertimed, and will not be recorded."
+          GoodTime = False
+        End If
+      ElseIf Runner(x,4) = "chaos" Then
+        If Int(DateCheckers) >= Int(ChaosMax) AND MaxTime = True Then
+          AddQ "/w *" & persona & " Your chaos run was overtimed, and will not be recorded."
+          GoodTime = False
+        ElseIf Int(DateCheckers) < Int(ChaosMin) AND MinTime = True Then
+          AddQ "/w " & persona & " Your chaos run was undertimed, and will not be recorded."
+          GoodTime = False
+        End If
+      ElseIf Runner(x,4) = "rush" Then
+        If Int(DateCheckers) >= Int(RushMax) AND MaxTime = True Then
+          AddQ "/w *" & persona & " Your rush was overtimed, and will not be recorded."
+         GoodTime = False
+        ElseIf Int(DateCheckers) < Int(RushMin) AND MinTime = True Then
+          AddQ "/w *" & persona & " Your rush was undertime, and will not be recorded."
+          GoodTime = False
+        End If
+      End If
+      If GoodTime = True Then
+        If Int(DateCheckers) > Int(60) Then
+          Minutez = Int(DateCheckers) / 60
+          Secondz = DateCheckers - Int(Minutez) * 60
+        Else
+          Minutez = 0
+          Secondz = Int(DateCheckers)
+        End If
+        UpdateName = LCase(Username)
+        If Runner(x,4) = "baal" Then
+          AddQ "/w " & persona & " Your baal run took " & Int(Minutez) & " minutes and " & Secondz & " seconds."
+          Call bcg_runUpdater(BRFile, UpdateName, DateCheckers)
+        ElseIf Runner(x,4) = "chaos" Then
+          AddQ "/w " & persona & " Your chaos run took " & Int(Minutez) & " minutes and " & Secondz & " seconds."
+          Call bcg_runUpdater(CRFile, UpdateName, DateCheckers)
+        ElseIf Runner(x,4) = "rush" Then
+          AddQ "/w " & persona & " Your rush took " & Int(Minutez) & " minutes and " & Secondz & " seconds."
+          Call bcg_runUpdater(GRFile, UpdateName, DateCheckers)
+        End If
+      End If
+    End If
+  End If
+Next
+If NOT RunnerID = -1 Then
+  Runner(RunnerID,4) = 0
+  Runner(RunnerID,3) = True
+End If
+End Sub
+
+Sub Event_UserLeaves(Username, Flags)
+For x = 0 To RunnerCounter
+  If Runner(x,0) = LCase(Username) Then
+    Runner(x,3) = False
+  End If
+Next
+End Sub
+
+Sub RunSpamBlock_Timer()
+DisplayRuns = True
+RunSpamBlock.Enabled = False
+AddChat vbGreen, psBold & "Run spam delay ended."
+End Sub 
+
+Sub bcg_BlackList(member, action)
+AlreadyBlackListed = 0
+BlackListed = False
+Set xFile = xFSO.OpenTextFile(BlackListFile, 1, True)
+Do While NOT xFile.AtEndOfStream
+  Linez = xFile.ReadLine
+  If Linez = member Then
+    If action = 0 Then AlreadyBlacklisted = 1
+    If action = 1 Then BlackListed = True
+  End If
+Loop
+xFile.Close
+If action = 0 Then
+  If AlreadyBlacklisted = 1 Then
+    AddQ "User is already blacklisted."
+  Else
+    Set xFile = xFSO.OpenTextFile(BlackListFile, 8, True)
+    xFile.WriteLine member
+    xFile.Close
+    AddQ "User was blacklisted."
+  End If
+End If
+End Sub 
+
+'==================== BCG FUNCTIONS ==========================
+
+Function bcg_RunDisplay()
+BaalGameCounter = 0
+ChaosGameCounter = 0
+RushGameCounter = 0
+For x = 0 To RunnerCounter
+  If Runner(x,4) = "baal" Then
+    TimeUp = bcg_TimeUp(Runner(x,2))
+    BaalGames = BaalGames & ": " & Runner(x,0) & " in " & Runner(x,1) & "(" & TimeUp & ")"
+    BaalGameCounter = BaalGameCounter + 1
+  ElseIf Runner(x,4) = "chaos" Then
+    TimeUp = bcg_TimeUp(Runner(x,2))
+    ChaosGames = ChaosGames & ": " & Runner(x,0) & " in " & Runner(x,1) & "(" & TimeUp & ")"
+    ChaosGameCounter = ChaosGameCounter + 1
+  ElseIf Runner(x,4) = "rush" Then
+    TimeUp = bcg_TimeUp(Runner(x,2))
+    RushGames = RushGames & ": " & Runner(x,0) & " in " & Runner(x,1) & "(" & TimeUp & ")"
+    RushGameCounter = RushGameCounter + 1
+  End If
+If BaalGameCounter > 0 Then
+  AddQ "Current Baal Games (" & BaalGameCounter & "): " & BaalGames
+End If
+If ChaosGameCounter > 0 Then
+  AddQ "Current Chaos Games (" & ChaosGameCounter & "): " & ChaosGames
+End If
+If RushGameCounter > 0 Then
+  AddQ "Current Rush Games (" & RushGameCounter & "): " & RushGames
+End If
+Next
+If BaalGameCounter = 0 AND ChaosGameCounter = 0 AND RushGameCounter = 0 Then
+  AddQ "There are " & RunnerCounter & " runners logged in, and 0 games at this time."
+End If
+End Function
+
+Function bcg_TimeUp(TimeToBeSplit)
+Timed = DateDiff("s",TimeToBesplit,Now())
+If Int(Timed) >= Int(60) Then
+  Minutez = Int(Timed) / 60
+  Secondz = Timed - Int(Minutez) * 60
+Else
+  Minutez = 0
+  Secondz = Timed
+End If
+If Int(Minutez) >= Int(60) Then
+  Hourz = Int(Minutez) / 60
+  Minutez = Minutez - Int(Hourz) * 60
+  Timez = Int(Hourz) & ":" & Int(Minutez) & ":" & Int(Secondz)
+Else
+  Timez = Int(Minutez) & ":" & Int(Secondz)
+End If
+bcg_TimeUp = Timez
+End Function 
+
+
+Function bcg_UpdateRunner(member, types, GameName)
+FoundRunner = False
+For x = 0 To RunnerCounter
+  If Runner(x,0) = member Then
+    Runner(x,2) = Now()
+    Runner(x,1) = GameName
+    Runner(x,4) = types
+    FoundRunner = True
+  End If
+Next
+If FoundRunner = False Then
+  AddChat vbRed, vbBold & "ERROR: User not found."
+End If
+End Function
+
+
+Function bcg_Login(member)
+Loggedin = False
+For z = 0 To RunnerCounter
+  If Runner(z,0) = member Then
+    AddQ "You are already logged in."
+    Loggedin = True
+  End If
+Next
+If Loggedin = False Then
+  Call bcg_RunnerList(member)
+  AddQ "/f a " & member
+  AddQ "You are now logged in."
+  RunnerCounter = RunnerCounter + 1
+  Runner(RunnerCounter,0) = member
+  Runner(RunnerCounter,1) = 0
+  Runner(RunnerCounter,2) = 0
+  Runner(RunnerCounter,3) = True
+  Runner(RunnerCounter,4) = 0
+End If
+End Function
+
+Function bcg_RunnerList(member)
+AlreadyRunner = False
+Set xFile = xFSO.OpenTextFile(RunFile, 1, True)
+Do While NOT xFile.AtEndOfStream
+  CurrentLine = xFile.ReadLine
+  If member = CurrentLine Then
+    AlreadyRunner = True
+  End If
+Loop
+xFile.Close
+If AlreadyRunner = True Then
+  Exit Function
+Else
+  Set xFile = xFSO.OpenTextFile(RunFile, 8, True)
+  xFile.WriteLine member
+  xFile.Close
+End If
+End Function
+'==============================================================
+
+'==================== BCG LOGOUT FUNCTION =================
+Function bcg_LogOut(member)
+Loggedin = False
+Dim TempRunner(100,7)
+For z = 0 To RunnerCounter
+  If Runner(z,0) = member Then
+    Loggedin = True
+  Else
+    TempRunner(z,0) = Runner(z,0)
+    TempRunner(z,1) = Runner(z,1)
+    TempRunner(z,2) = Runner(z,2)
+    TempRunner(z,3) = Runner(z,3)
+    TempRunner(z,4) = Runner(z,4)
+  End If   
+Next
+If Loggedin = False Then
+  AddQ "You were never logged in."
+  Erase TempRunner
+Else
+  AddQ "/f r " & member
+  AddQ member & " has logged out."
+  RunnerCounter = RunnerCounter - 1
+  Erase Runner
+  For q = 0 To RunnerCounter
+    Runner(q,0) = TempRunner(q,0)
+    Runner(q,1) = TempRunner(q,1)
+    Runner(q,2) = TempRunner(q,2)
+    Runner(q,3) = TempRunner(q,3)
+    Runner(q,4) = TempRunner(q,4)
+  Next
+End If
+End Function
+'=====================================================================
+
+
+'========== BCG FUNCTION TO UPDATE RUN FILES =====================
+Function bcg_runUpdater(Path, member, RunTime)
+TempPath = BotPath() & "TempFile.txt"
+Set file = xFSO.OpenTextFile(Path, 1, True)
+Set TempFilezz = xFSO.OpenTextFile(TempPath, 8, True)
+Updated = False
+Do While Not file.AtEndOfStream
+  CurrentRunner = Split(file.ReadLine, ":::")
+  If member = CurrentRunner(0) Then
+    TempFilezz.WriteLine member & ":::" & Int(CurrentRunner(1)) + 1 & ":::" & RunTime + CurrentRunner(2)
+    Updated = True
+  Else
+    TempFilezz.WriteLine CurrentRunnerz
+  End If
+Loop
+If Updated = False Then TempFilezz.WriteLine member & ":::1:::" & RunTime
+file.Close
+TempFilezz.Close
+xFSO.DeleteFile(Path)
+Set TempFilez = xFSO.OpenTextFile(TempPath, 1, True)
+Set file = xFSO.OpenTextFile(Path, 8, True)
+Do While Not TempFilez.AtEndOfStream
+  file.WriteLine TempFilez.ReadLine
+Loop
+TempFilez.Close
+file.Close
+xFSO.DeleteFile(TempPath)
+End Function
+'==============================================================
+
+'======= FUNCTION TO GET INFORMATION ON A MEMBERS RUN DATA ============
+Function bcg_GetInfo(member, action, i)
+WasFound = False
+Set xFile = xFSO.OpenTextFile(BRFile, 1, True)
+Do While NOT xFile.AtEndOfStream
+  CurrentRunnerz = xFile.ReadLine
+  CurrentRunner = Split(CurrentRunnerz, ":::")
+  If member = CurrentRunner(0) Then
+    BRunsDone = CurrentRunner(1)
+    BRTime = CurrentRunner(2)
+    WasFound = True
+  End If
+Loop
+xFile.Close
+If WasFound = False Then BRunsDone = 0
+WasFound = False
+Set xFile = xFSO.OpenTextFile(CRFile, 1, True)
+Do While NOT xFile.AtEndOfStream
+  CurrentRunnerz = xFile.ReadLine
+  CurrentRunner = Split(CurrentRunnerz, ":::")
+  If member = CurrentRunner(0) Then
+    CRunsDone = CurrentRunner(1)
+    CRTime = CurrentRunner(2)
+    WasFound = True
+  End If
+Loop
+xFile.Close
+If WasFound = False Then CRunsDone = 0
+WasFound = False
+Set xFile = xFSO.OpenTextFile(GRFile, 1, True)
+Do While NOT xFile.AtEndOfStream
+  CurrentRunnerz = xFile.ReadLine
+  CurrentRunner = Split(CurrentRunnerz, ":::")
+  If member = CurrentRunner(0) Then
+    GRunsDone = CurrentRunner(1)
+    GRTime = CurrentRunner(2)
+    WasFound = True
+  End If
+Loop
+xFile.Close
+If WasFound = False Then GRunsDone = 0
+TotalRunzz = Int(BRunsDone) + Int(CRunsDone) + Int(GRunsDone)
+If NOT action = "2" Then
+  BRTimes = bcg_TimeGetter(BRTime)
+  CRTimes = bcg_TimeGetter(CRTime)
+  GRTimes = bcg_TimeGetter(GRTime)
+End If
+If action = "0" Then
+  AddQ "You've done " & TotalRunzz & " runs: " & BRunsDone & " Baal runs [" & BRTimes & "] " & CRunsDone & " chaos runs [" & CRTimes & "] " & GRunsDone & " rushes [" & GRTimes & "]"
+Elseif action = "1" Then
+  AddQ member & " has done " & TotalRunzz & " runs: " & BRunsDone & " Baal runs [" & BRTimes & "] " & CRunsDone & " chaos runs [" & CRTimes & "] " & GRunsDone & " rushes [" & GRTimes & "]"
+Elseif action = "2" Then
+  Runnerq(i,1) = TotalRunzz
+ElseIf action = "3" Then
+  AllData = TotalRunzz & "::" & BRunsDone & "::" & BRTimes & "::" & CRunsDone & "::" & CRTimes & "::" & GRunsDone & "::" & GRTimes
+  Return AllData  
+End If
+End Function
+'=============================================
+
+'====== FUNCTION TO GET THE TOP 3 OVERALL RUNNERS DATA ========
+Function bcg_TopOverall()
+
+Set xFile = xFSO.OpenTextFile(RunFile, 1, True)
+i = 0
+Do While Not xFile.AtEndOfStream
+  Runnerq(i,0) = xFile.ReadLine
+  Call bcg_GetInfo(Runnerq(i,0), 2, i)
+  i = i + 1
+Loop
+xFile.Close
+Firstz = 0
+Secondz = 0
+Thirdz = 0
+For z = 0 to i
+  If Firstz < Runnerq(z,1) Then
+    Thirdz = Secondz
+    Secondz = Firstz
+    Top3 = Top2
+    Top2 = Top1
+    Firstz = Runnerq(z,1)
+    Top1 = Runnerq(z,0)
+  ElseIf Secondz < Runnerq(z,1) Then
+    Thirdz = Secondz
+    Top3 = Top2
+    Secondz = Runnerq(z,1)
+    Top2 = Runnerq(z,0)
+  ElseIf Thirdz < Runnerq(z,1) Then
+    Thirdz = Runnerq(z,1)
+    Top3 = Runnerq(z,0)
+  End If
+Next
+AddQ "Top 3 Overall runners. 1st: " & Top1 & " with " & Firstz & " runs. 2nd: " & Top2 & " with " & Secondz & " runs. 3rd: " & Top3 & " with " & Thirdz & " runs."
+End Function
+'===============================================================
+
+'==================== FUNCTION TO UPDATE BOTS PROFILE WITH NEW RUN DATA =============================
+
+Function bcg_ProfileUpdater()
+
+TotalBR = 0
+Set xfile = xFSO.OpenTextFile(BRFile, 1, True)
+Do While NOT xfile.AtEndOfStream
+  CurrentLine = xfile.ReadLine
+  Runcount = Split(CurrentLine, ":::")
+  TotalBR = TotalBR + Runcount(1)
+Loop
+xfile.Close
+  
+TotalCR = 0
+Set zfile = xFSO.OpenTextFile(CRFile, 1, True)
+Do While NOT zfile.AtEndOfStream
+  Runcount = Split(zfile.ReadLine, ":::")
+  TotalCR = TotalCR + Runcount(1)
+Loop
+zfile.Close
+
+TotalGR = 0
+Set qfile = xFSO.OpenTextFile(GRFile, 1, True)
+Do While NOT qfile.AtEndOfStream
+  Runcount = Split(qfile.ReadLine, ":::")
+  TotalGR = TotalGR + Runcount(1)
+Loop
+qfile.Close
+
+Set wFile = xFSO.OpenTextFile(RunFile, 1, True)
+runnercount = 0
+Do While NOT wFile.AtEndOfStream
+  eh = wFile.ReadLine
+  runnercount = runnercount + 1
+Loop
+wFile.Close
+
+Totals = TotalBR + TotalCR + TotalGR
+SetBotProfile "~JT~", ClanChannel, "BCG version " & vers & " Created by: ÿc! JT" & vbCrLf & "ÿc2Total Runners: " & runnercount & vbCrLf & "ÿc!Total Baal Runs: "  & TotalBR & vbCrLf & "ÿc;Total Chaos Runs: " & TotalCR & vbCrLf & "ÿc!Total Rushes: " & TotalGR & vbCrLf & "ÿc:Total: " & Totals
+AddChat vbOrange, "Baal/Chaos/Grush info updated in profile."
+End Function
+'=========================================================
+
+
+
+'================== FUNCTION TO GET TOP 3 RUNNER DATA FOR A SPECIFIED TYPE OF RUN ==================
+Function bcg_TopThree(Path, typez, action)
+
+Set xFile = xFSO.OpenTextFile(Path, 1, True)
+Firstz = 0
+Secondz = 0
+Thirdz = 0
+Do While NOT xFile.AtEndOfStream
+  CurrentRunner = Split(xFile.ReadLine, ":::")
+  If Int(Firstz) < Int(CurrentRunner(1)) Then
+    Thirdz = Secondz
+    Secondz = Firstz
+    Top3 = Top2
+    Top2 = Top1
+    Firstz = CurrentRunner(1)
+    Top1 = CurrentRunner(0)
+  ElseIf Int(Secondz) < Int(CurrentRunner(1)) Then
+    Thirdz = Secondz
+    Top3 = Top2
+    Secondz = CurrentRunner(1)
+    Top2 = CurrentRunner(0)
+  ElseIf Int(Thirdz) < Int(CurrentRunner(1)) Then
+    Thirdz = CurrentRunner(1)
+    Top3 = CurrentRunner(0)
+  End If
+Loop
+xFile.Close
+If action = "0" Then
+  AddQ "Top " & typez & " runners. 1st: " & Top1 & " with " & Firstz & " runs. 2nd: " & Top2 & " with " & Secondz & " runs. 3rd: " & Top3 & " with " & Thirdz & " runs."
+ElseIf action = "1" Then
+  runsfrom1 = Firstz
+End If
+End Function
+'=========================================================
+
+'============= FUNCTION TO GET INFORMATION ABOUT A SPECIFIED USER =================
+Function bcg_GetSpecificInfo(member, file, typez)
+
+WasFound = False
+Set xFile = xFSO.OpenTextFile(file, 1, True)
+Do While NOT xFile.AtEndOfStream
+  CurrentRunner = Split(xFile.ReadLine, ":::")
+  If member = CurrentRunner(0) Then
+    TheRunsDone = CurrentRunner(1)
+    TheTime = CurrentRunner(2)
+    WasFound = True
+  End If
+Loop
+xFile.Close
+If WasFound = False Then
+  TheRunsDone = 0
+  Call bcg_TopThree(file, typez, 1)
+  runsfromtop = Int(runsfrom1) - Int(TheRunsDone)
+  AddQ "You haven't done any " & typez & " runs. You are " & runsfromtop & " runs from #1 " & typez & " runner."
+  Exit Function
+End If
+TheTimes = bcg_TimeGetter(TheTime)
+AverageTimer = TheTime / TheRunsDone
+AverageTime = bcg_TimeGetter(AverageTimer)
+Call bcg_TopThree(file, typez, 1)
+runsfromtop = Int(runsfrom1) - Int(TheRunsDone)
+If runsfromtop = 0 Then
+  AddQ "You've done " & TheRunsDone & " " & typez & " with " & AverageTime & " average run time and " & TheTimes & " total run time. You are the top " & typez & " runner."
+Else
+  AddQ "You've done " & TheRunsDone & " " & typez & " with " & AverageTime & " average run time and " & TheTimes & " total run time. You are " & runsfromtop & " runs from #1 " & typez & " runner."
+End If
+End Function 
+'===========================================================
+
+
+
+'========================= FUNCTIONS FOR THE FASTEST AND FUNCTION FOR THE SLOWEST RUN OF SPECIFIED TYPE ============
+Function bcg_FastestRunners(typez, Path)
+
+Set xFile = xFSO.OpenTextFile(Path, 1, True)
+Firstz = 99999999999999999
+Secondsz = 999999999999999999
+Thirdz = 999999999999999999
+Do While NOT xFile.AtEndOfStream
+  CurrentRunner = Split(xFile.ReadLine, ":::")
+  RunnersSpeed = Int(CurrentRunner(2)) / Int(CurrentRunner(1))
+  If Int(Firstz) > Int(RunnersSpeed) Then
+    Thirdz = Secondsz
+    Secondsz = Firstz
+    Top3 = Top2
+    Top2 = Top1
+    Firstz = RunnersSpeed
+    Top1 = CurrentRunner(0)
+  ElseIf Int(Secondsz) > Int(RunnersSpeed) Then
+    Thirdz = Secondsz
+    Top3 = Top2
+    Secondsz = RunnersSpeed
+    Top2 = CurrentRunner(0)
+  ElseIf Int(Thirdz) > Int(RunnersSpeed) Then
+    Thirdz = RunnersSpeed
+    Top3 = CurrentRunner(0)
+  End If
+Loop
+xFile.Close
+FirstzTime = bcg_TimeGetter(Firstz)
+SecondszTime = bcg_TimeGetter(Secondsz)
+ThirdzTime = bcg_TimeGetter(Thirdz)
+If Len(Top1) < 1 Then
+  Top1 = "-"
+  FirstzTime = "-"
+End If
+If Len(Top2) < 1 Then
+  Top2 = "-"
+  SecondszTime = "-"
+End If
+If Len(Top3) < 1 Then
+  Top3 = "-"
+  ThirdzTime = "-"
+End If
+AddQ "Fastest " & typez & " runners. 1st: " & Top1 & " with " & FirstzTime & " runs. 2nd: " & Top2 & " with " & SecondszTime & " runs. 3rd: " & Top3 & " with " & ThirdzTime & " runs."
+End Function 
+
+
+Function bcg_SlowestRunners(typez, Path)
+
+Set xFile = xFSO.OpenTextFile(Path, 1, True)
+Firstz = 0
+Secondsz = 0
+Thirdz = 0
+Do While NOT xFile.AtEndOfStream
+  CurrentRunner = Split(xFile.ReadLine, ":::")
+  RunnersSpeed = Int(CurrentRunner(2)) / Int(CurrentRunner(1))
+  If Int(Firstz) < Int(RunnersSpeed) Then
+    Thirdz = Secondsz
+    Secondsz = Firstz
+    Top3 = Top2
+    Top2 = Top1
+    Firstz = RunnersSpeed
+    Top1 = CurrentRunner(0)
+  ElseIf Int(Secondsz) < Int(RunnersSpeed) Then
+    Thirdz = Secondsz
+    Top3 = Top2
+    Secondsz = RunnersSpeed
+    Top2 = CurrentRunner(0)
+  ElseIf Int(Thirdz) < Int(RunnersSpeed) Then
+    Thirdz = RunnersSpeed
+    Top3 = CurrentRunner(0)
+  End If
+Loop
+xFile.Close
+FirstzTime = bcg_TimeGetter(Firstz)
+SecondszTime = bcg_TimeGetter(Secondsz)
+ThirdzTime = bcg_TimeGetter(Thirdz)
+AddQ "Slowest " & typez & " runners. 1st: " & Top1 & " with " & FirstzTime & " runs. 2nd: " & Top2 & " with " & SecondszTime & " runs. 3rd: " & Top3 & " with " & ThirdzTime & " runs."
+End Function 
+'=============================================================================
+
+
+
+'======= FUNCTION THAT SPLITS UP TIME IN SECONDS TO APPROPRIATE HOURS/MINUTES/SECONDS ===============
+Function bcg_TimeGetter(TimeToBeSplit)
+
+If Int(TimeToBeSplit) >= Int(60) Then
+  Minutez = Int(TimeToBeSplit) / 60
+  Secondz = TimeToBeSplit - Int(Minutez) * 60
+Else
+  Minutez = 0
+  Secondz = TimeToBeSplit
+End If
+If Int(Minutez) >= Int(60) Then
+  Hourz = Int(Minutez) / 60
+  Minutez = Minutez - Int(Hourz) * 60
+  Timez = Int(Hourz) & " hrs, " & Int(Minutez) & " mins, " & Int(Secondz) & " sec"
+Else
+  Timez = Int(Minutez) & " mins, " & Int(Secondz) & " sec"
+End If
+bcg_TimeGetter = Timez
+End Function 
+'==============================================================

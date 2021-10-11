@@ -1,0 +1,130 @@
+'// Dynamic Friendlist
+'// Created by Shubit 21/11/2009
+
+'***************************
+'// SCRIPT INFO
+
+Script("Name") = "Dynamic Friendlist"
+Script("Author") = "Shubit"
+Script("Major") = 0
+Script("Minor") = 2
+Script("Revision") = 4
+Script("Description") = "This script will add clanmates to your friendlist on log on and remove them after logging off"
+
+'***************************
+'// BOT EVENTS
+
+Sub Event_Load()
+
+	If GetSettingsEntry("Revision") = vbNullString Then
+		CreateSettings()
+		CreateCommands()
+	ElseIf Int(GetSettingsEntry("Revision")) < Script("Revision") Then
+		CreateSettings()
+		CreateCommands()
+	End If
+
+	For Each friend In Friends
+		If Not friend.IsOnline Then
+			AddQ "/f remove " & friend.Name
+        End If	   
+	Next
+	
+	For each user in Clan.Members
+		if user.IsOnline And Not IsInFriends(user.Name) then
+			AddQ "/f add " & user.Name
+		End If
+	Next
+End Sub
+
+'// Triggers When a user logs on/off
+'// Triggers When a Users Rank Changes
+Sub Event_ClanMemberUpdate(Username, Rank, Online)
+	If Online And not IsInFriends(Username) Then
+		AddQ "/f add " & Username
+	End If
+	
+	If not Online And IsInFriends(Username) Then
+		AddQ "/f remove " & Username
+	End If
+End Sub
+
+Sub Event_Command(Command)
+    If(Command.Docs.Owner = Script("Name")) Then
+        Select Case LCase(Command.Name)
+			Case "friends":
+                If Command.IsValid And Command.HasAccess Then
+                    Command.Respond "Members currently online: " & GetFriendList
+				End If
+			Case "clanwisper", "cw":
+                If Command.IsValid And Command.HasAccess Then
+                    AddQ "/f m " & Command.Username & ": " & Command.Argument("Message")
+				End If
+        End Select
+    End If
+End Sub
+
+'***************************
+'// PRIVATE SUBS/FUNCTIONS
+
+Private Function IsInFriends(Username)
+	IsInFriends = False
+	Username = LCase(Username)
+	
+	For Each friend In Friends
+		If Username = LCase(friend.Name) Then
+			IsInFriends = True
+		End If
+	Next
+	
+	IsInFriends = IsInFriends Or InStr(";" & LCase(GetSettingsEntry("NoFriends")) & ";",";" & Username & ";") <> 0
+	
+	If Username = LCase(BotVars.Username) Then
+		IsInFriends = True
+	End If
+End Function
+
+Private Function GetFriendList()
+	GetFriendList = ""
+
+	For Each friend In Friends
+		GetFriendList = GetFriendList & friend.Name & ", "
+	Next
+End Function
+
+Private Sub CreateSettings()
+	WriteSettingsEntry "Revision", Script("Revision")
+	WriteSettingsEntry "NoFriends", ""
+	
+	AddChat 13447834, "Custom Clan Commands: Settings loaded in scripts\scripts.ini"
+End Sub
+
+Private Sub CreateCommands()
+	
+    Dim Command, Parameter
+
+ 	Set Command = CreateCommand("onlinemembers")
+	With Command
+		.Aliases.Add "oms"
+		.Aliases.Add "friends"
+		.RequiredRank = 0
+		.Description = "Displays the friendlist of the bot which should include all online clan members."
+		.Save
+    End With 
+	
+	Set Command = CreateCommand("clanwisper")
+	With Command
+		.Aliases.Add "cw"
+		.RequiredRank = 0
+		.Description = "Wispers your message to all online clanmembers"
+		Set Parameter = .NewParameter("Message", False, "String")
+		Parameter.Description = "The Message to all online clan members"
+		.Parameters.Add Parameter
+		.Save
+    End With 
+	
+    Set Parameter = Nothing
+    Set Command = Nothing
+
+	AddChat 13447834, "     Commands (friends, clanwisper) successfully created."
+End Sub

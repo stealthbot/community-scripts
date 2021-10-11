@@ -1,0 +1,87 @@
+Script("Name") = "Test"
+Script("Author") = "Hdx"
+Script("Major") = 1
+Script("Minor") = 1
+Script("Revision") = 1
+Script("Description") = "Test"
+
+Const SID_CHATEVENT = &H0F
+Const EID_INFO      = &H12
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)
+    Dim inBuff
+    Set inBuff = SSC.DataBufferEx()
+    inBuff.Data = Mid(Data, 5) 'Remove the 1st 4 bytes, the BNCS Header
+    If UCase(Protocol) = "BNCS" Then
+        Select Case ID
+            Case SID_CHATEVENT: Call RECV_SID_CHATEVENT(inBuff)
+        End Select
+    End If
+End Sub
+
+'====================================
+'SID_CHATEVENT (0x0F) S->C
+'====================================
+' (DWORD) Event ID
+' (DWORD) User's Flags
+' (DWORD) Ping
+' (DWORD) IP Address (Defunct)
+' (DWORD) Account number (Defunct)
+' (DWORD) Registration Authority (Defunct)
+' (STRING) Username
+' (STRING) Text
+'====================================
+Private Sub RECV_SID_CHATEVENT(inBuff)
+    Dim EventID
+    Dim Flags
+    Dim Ping
+    Dim IPAddr
+    Dim AcctNum
+    Dim RegAuth
+    Dim Username
+    Dim Text
+    Dim outBuff
+    
+    With inBuff
+        EventID  = .GetDWORD()
+        Flags    = .GetDWORD()
+        Ping     = .GetDWORD()
+        IPAddr   = .GetDWORD()
+        AcctNum  = .GetDWORD()
+        RegAuth  = .GetDWORD()
+        Username = .GetString()
+        Text     = .GetString()
+    End With
+    
+    Set outBuff = SSC.DataBufferEx()
+    
+    With outBuff
+        'We need to add in a dummy BNCS header, so that the bot knows which packet this is
+        .InsertByte  &HFF 'BNCS Magic Byte
+        .InsertByte  SID_CHATEVENT
+        .InsertWord  0 'This really isnt important
+        
+        .InsertDWORD EventID
+        .InsertDWORD Flags
+        .InsertDWORD Ping
+        .InsertDWORD IPAddr
+        .InsertDWORD AcctNum
+        .InsertDWORD RegAuth
+        .InsertNTString CStr(Username)
+    End With
+    
+    'AddChat vbYellow, StringFormat("Chat Event ID: 0x{0} Username: {1} Text: {2}", Right("00" & Hex(EventID), 2), Username, Text)
+    
+    Select Case EventID
+        Case EID_INFO:
+            If StrComp(Text, "no one hears you.", vbTextCompare) = 0 Then
+                outBuff.InsertNTString "Nobody hears your dumbass!"
+                VetoThisMessage
+                SSC.ForceBNCSPacketParse(outBuff.Data)
+            End If
+    End Select
+    
+    outBuff.Clear
+    Set outBuff = Nothing
+    
+End Sub

@@ -1,0 +1,343 @@
+Script("Name")        = "WarningSystem"
+Script("Author")      = "FoXsTeR-"
+Script("Major")       = 1
+Script("Minor")       = 0
+Script("Revision")    = 1
+Script("Description") = "Allows you warn users."
+
+Private dbPath, FSO, Conn, tbOn, msgPrefix
+dbPath                = BotPath & "warnings.mdb"
+Set FSO               = CreateObject("Scripting.FileSystemObject")
+
+
+'/****
+'* CHANGELOG
+'\***********
+
+'v1.01
+'   - Added setting GEmote_on (Global Emote).
+
+'/****
+'* EVENTS
+'\******** 
+
+Sub Event_Load()
+     Dim File
+ 
+     If NOT FSO.FileExists(dbPath) Then
+          Call CreateDB()
+     End If
+     
+     CreateCMDs()
+     
+     If GetSettingsEntry("Timeban_on") = "Y" Then
+          tbOn = True
+     Else
+          tbOn = False
+     End If
+     
+     If GetSettingsEntry("GlobalEmote_on") = "Y" Then
+          msgPrefix = "/me •"
+     Else
+          msgPrefix = "•"
+     End If
+End Sub
+
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+     Call CheckWarns(Username)
+End Sub
+
+
+Sub Event_Command(Command)
+     Dim Username : Username = Command.Username
+     Dim User : User = Command.Argument("user")
+   
+     If LenB(Command.Username) = 0 Then Username = BotVars.Username
+     If Command.WasWhispered Then Exit Sub
+     If NOT Command.IsValid Then Exit Sub
+     If NOT Command.HasAccess Then Exit Sub
+     
+     Select Case LCase(Command.Name)
+          Case "warn"      : Call Warn_cmd(Username, Command, User)
+          Case "warns"     : Call Warns_cmd(Username, Command)
+          Case "warninfo"  : Call Warninfo_cmd(Username, Command)
+          Case "removeall" : Call RemoveAll_cmd(Username, Command)
+          Case "reset"     : Call Reset_cmd(Username, Command)
+     End Select
+End Sub
+     
+     
+'/****
+'* COMMAND SUBS
+'\**************  
+
+Private Sub Warn_cmd(Username, Command, User)
+     Dim WarnReason, TotalWarns
+     Dim WarnIDs, WarnsAmount
+
+     If NOT IsNumeric(Command.Argument("percent")) Then
+          AddQ msgPrefix & "The amount of warns must be numeric"
+          Exit Sub
+     End If
+     
+     If NOT Len(Command.Argument("reason")) > 120 Then
+          Connect()
+               Set rs = Conn.Execute("SELECT COUNT (*) FROM `Users` WHERE `Name` = '" & User & "'")
+               If rs.Fields(0) = 1 Then
+                    Set rs = Conn.Execute("SELECT `Warns` FROM `Users` WHERE `Name` = '" & User & "'")
+                    TotalWarns = rs.Fields(0)
+                    Set rs = Conn.Execute("SELECT COUNT (*) FROM `Warns`")
+                    WarnIDs = rs.Fields(0)
+                    Set rs = Conn.Execute("SELECT `Total_warns` FROM `Users` WHERE `Name` = '" & User & "'")
+                    WarnsAmount = rs.Fields(0)
+                    Set rs = Conn.Execute("SELECT `Warn_IDs` FROM `Users` WHERE `Name` = '" & User & "'")
+                    
+                    Set rs = Conn.Execute("UPDATE `Users` SET `Warns` = '" & TotalWarns + Command.Argument("percent") & "', `Last_warned` = '" & Now() & "', `Last_warn` = '" & Command.Argument("percent") & "', `Warn_IDs` = '" & rs.Fields(0) & WarnIDs + 1 & ", ', `Warned_by` = '" & Username & "', `Total_warns` = '" & WarnsAmount + 1 & "' WHERE `Name` = '" & User & "'")
+                    If Len(Command.Argument("reason")) > 0 Then
+                         WarnReason = Command.Argument("reason")
+                    Else
+                         WarnReason = "Not supplied"
+                    End If
+                    
+                    Set rs = Conn.Execute("SELECT COUNT (*) FROM `Warns`")
+                    Set rs = Conn.Execute("INSERT INTO `Warns` (`ID`, `Warn_reason`, `Warn_amount`, `Warn_user`, `Warn_time`, `Warner`) VALUES ('" & rs.Fields(0) + 1 & "', '" & WarnReason & "', '" & Command.Argument("percent") & "', '" & User & "', '" & Now() & "', '" & Username & "')")
+                    
+                    AddQ msgPrefix & " " & User & " has been warned by " & Username & ". Amount: [" & Command.Argument("percent") & "%] Reason: [" & WarnReason & "] Total Amount: [" & TotalWarns + Command.Argument("percent") & "%]"
+               Else
+                    Set rs = Conn.Execute("SELECT COUNT (*) FROM `Warns`")
+                    Set rs = Conn.Execute("INSERT INTO `Users` (`Name`, `Warns`, `Last_warned`, `Last_warn`, `Warn_IDs`, `Warned_by`, `Total_warns`) VALUES ('" & User & "', '" & Command.Argument("percent") & "', '" & Now() & "', '" & Command.Argument("percent") & "', '" & rs.Fields(0) + 1 & ", ', '" & Username & "', '" & 1 & "')")
+                    If Len(Command.Argument("reason")) > 0 Then
+                         WarnReason = Command.Argument("reason")
+                    Else
+                         WarnReason = "Not supplied"
+                    End If
+                    
+                    Set rs = Conn.Execute("SELECT COUNT (*) FROM `Warns`")
+                    Set rs = Conn.Execute("INSERT INTO `Warns` (`ID`, `Warn_reason`, `Warn_amount`, `Warn_user`, `Warn_time`, `Warner`) VALUES ('" & rs.Fields(0) + 1 & "', '" & WarnReason & "', '" & Command.Argument("percent") & "', '" & User & "', '" & Now() & "', '" & Username & "')")
+                    
+                    AddQ msgPrefix & " " & User & " has been warned by " & Username & ". Amount: [" & Command.Argument("percent") & "%] Reason: [" & WarnReason & "] Total Amount: [" & Command.Argument("percent") & "%]"
+               End If
+          Conn.Close
+     Else
+          AddQ msgPrefix & "The supplied reason [" & Command.Argument("reason") & "] is too long. Maximum characters is 120"
+          Exit Sub
+     End If
+
+     Call CheckWarns(User)
+End Sub
+
+
+Private Sub Warns_cmd(Username, Command)
+     Dim User, WarnIDs
+     
+     If Len(Command.Argument("user")) > 0 Then
+          User = Command.Argument("user")
+     Else
+          User = Username
+     End If
+
+     Connect()
+          Set rs = Conn.Execute("SELECT * FROM `Users` WHERE `Name` = '" & User & "'")
+          If NOT (rs.BOF) AND NOT (rs.EOF) Then
+               WarnIDs = Left(rs.Fields(4), Len(rs.Fields(4)) - 2)
+               AddQ msgPrefix & "Info on user [" & User & "] Total Amount: [" & rs.Fields(1) & "%] Last Warned: [" & rs.Fields(2) & " by " & rs.Fields(5) & "] Last Amount: [" & rs.Fields(3) & "%] Total Warns: [" & rs.Fields(6) & "] Warn IDs: [" & WarnIDs & "]"
+          Else     
+               AddQ msgPrefix & " " & User & " has not been warned yet"
+          End If
+     Conn.Close     
+End Sub    
+    
+     
+Private Sub Warninfo_cmd(Username, Command)
+     Connect()
+          Set rs = Conn.Execute("SELECT * FROM `Warns` WHERE `ID` = '" & Command.Argument("id") & "'")
+          If NOT (rs.BOF) AND NOT (rs.EOF) Then
+               If rs.Fields(1) = "This warn has been removed. It does not exist anymore" Then
+                    AddQ msgPrefix & "Warn ID #" & Command.Argument("id") & " has existed, but it has been removed"
+               Else
+                    AddQ msgPrefix & "Info on ID [#" & rs.Fields(0) & "] Warning User: [" & rs.Fields(5) & "] Warned User: [" & rs.Fields(3) & "] Amount: [" & rs.Fields(2) & "%] Reason: [" & rs.Fields(1) & "] Warn Time: [" & rs.Fields(4) & "]"
+               End If
+          Else
+               AddQ msgPrefix & "Warn ID #" & Command.Argument("id") & " does not exist"
+          End If
+     Conn.Close
+End Sub
+          
+
+Private Sub RemoveAll_cmd(Username, Command)       
+     Dim User, WarnIDs
+     
+     If Len(Command.Argument("user")) > 0 Then
+          User = Command.Argument("user")
+     Else
+          User = Username
+     End If
+     
+     Connect()
+          Set rs = Conn.Execute("SELECT * FROM `Users` WHERE `Name` = '" & User & "'")
+          If NOT (rs.BOF) AND NOT (rs.EOF) Then
+               If rs.Fields(6) > 0 Then
+                    AddQ msgPrefix & " " & Username & " has just removed all " & User & "'s warns"
+                    Call RemoveEverything(User)
+               Else
+                    AddQ msgPrefix & " " & User & " has not been warned yet"
+               End If    
+          Else
+               AddQ msgPrefix & " " & User & " has not been warned yet"
+          End If
+     Conn.Close
+End Sub
+
+
+Private Sub Reset_cmd(Username, Command)
+     Connect()
+          Set rs = Conn.Execute("DELETE * FROM `Users`")
+          Set rs = Conn.Execute("DELETE * FROM `Warns`")
+          
+          AddQ msgPrefix & " " & Username & " has successfully reset everything"
+     Conn.Close
+End Sub
+     
+
+'/****
+'* CUSTOM SUBS
+'\*************
+
+Private Sub RemoveEverything(Username)
+     Set rs = Conn.Execute("SELECT * FROM `Users` WHERE `Name` = '" & Username & "'")
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          WarnIDs = Left(rs.Fields(4), Len(rs.Fields(4)) - 2)
+          WarnIDs = Split(WarnIDs, ", ")
+          For I = 0 To UBound(WarnIDs)
+               Set rs = Conn.Execute("UPDATE `Warns` SET `Warn_reason` = 'This warn has been removed. It does not exist anymore' WHERE `ID` = '" & WarnIDs(I) & "'")
+          Next
+          
+          Set rs = Conn.Execute("DELETE * FROM `Users` WHERE `Name` = '" & Username & "'")
+     End If
+End Sub
+
+
+Private Sub CheckWarns(Username)
+     Connect()
+          Set rs = Conn.Execute("SELECT `Warns` FROM `Users` WHERE `Name` = '" & Username & "'")
+          If NOT (rs.BOF) AND NOT (rs.EOF) Then
+               If rs.Fields(0) >= 100 Then
+                    If tbOn = True Then
+                         Call Command(BotVars.Username, "/timeban " & Username & " d/7 " & "Warning limit exceeded", True)
+                         AddQ msgPrefix & " " & Username & " has been timebanned for 7 days. Removing all " & Username & "'s warns..."
+                         Set rs = Conn.Execute("DELETE * FROM `Users` WHERE `Name` = '" & Username & "'")
+                    Else
+                         Call Command(BotVars.Username, "/ban " & Username & " Warning limit exceeded", True)
+                         AddQ msgPrefix & " " & Username & " has been banned for exceeding the warning limit"
+                    End If
+               End If
+          End If
+     Conn.Close
+End Sub
+
+
+Private Sub CreateCMDs()
+     Dim Command, Parameter
+   
+     '// The command is available
+     If OpenCommand("warn") Is Nothing Then
+          With CreateCommand("warn")
+               .Description = "Warns a user." 
+               .RequiredRank = 70
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("percent", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("reason", True, "String")
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("warns") Is Nothing Then
+          With CreateCommand("warns")
+               .Description = "Displays a user's warns." 
+               .RequiredRank = 0
+               Set Parameter = .NewParameter("user", True, "Word")
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("warninfo") Is Nothing Then
+          With CreateCommand("warninfo")
+               .Description = "Displays information about a warn ID." 
+               .RequiredRank = 0
+               Set Parameter = .NewParameter("id", False, "Word")
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("removeall") Is Nothing Then
+          With CreateCommand("removeall")
+               .Description = "Removes all of a user's warns." 
+               .RequiredRank = 70
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("reset") Is Nothing Then
+          With CreateCommand("reset")
+               .Description = "Deletes everything." 
+               .RequiredRank = 70
+               .Save
+          End With
+     End If
+
+     Set Command = Nothing
+     Set Parameter = Nothing
+End Sub
+     
+     
+Private Sub Connect()
+     Set Conn = CreateObject("ADODB.Connection")
+     ConnStringProperty = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & dbPath
+     Conn.ConnectionString = ConnStringProperty
+     Conn.Open
+End Sub
+
+
+Private Sub CreateDB()
+     Dim response
+
+     Set Catalog = CreateObject("ADOX.Catalog")
+     Catalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & dbPath   
+
+     Connect()
+          Conn.Execute("CREATE TABLE `Users` (`Name` varchar(20), `Warns` INT, `Last_warned` varchar(25), `Last_warn` varchar(20), `Warn_IDs` varchar(120), `Warned_by` varchar(20), `Total_warns` INT)") 
+          Conn.Execute("CREATE TABLE `Warns` (`ID` varchar(20), `Warn_reason` varchar(120), `Warn_amount` varchar(20), `Warn_user` varchar(20), `Warn_time` varchar(25), `Warner` varchar(20))") 
+     Conn.Close
+     
+     response = MsgBox("Do you have the Timeban- or FoXsTeR-'s DotA League Script enabled?", vbYesNo, Script("Name"))     
+      
+     If response = vbYes Then
+          response = "Y"
+     Else
+          response = "N"
+     End If
+     
+     WriteSettingsEntry "Timeban_on (info)", "Y/N: Do you have the Timeban- or FoXsTeR-'s DotA League Script enabled?"
+     WriteSettingsEntry "Timeban_on", response
+     Set response = Nothing
+     
+     response = MsgBox("Do you want to emote all messages?", vbYesNo, Script("Name"))     
+      
+     If response = vbYes Then
+          response = "Y"
+     Else
+          response = "N"
+     End If
+     
+     WriteSettingsEntry "GlobalEmote_on (info)", "Y/N: Do you want to emote all messages?"
+     WriteSettingsEntry "GlobalEmote_on", response
+     Set response = Nothing
+End Sub

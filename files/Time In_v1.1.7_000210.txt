@@ -1,0 +1,144 @@
+Script("Name") = "Time In"
+Script("Author") = "Neco"
+Script("Major") = 1
+Script("Minor") = 1
+Script("Revision") = 7
+Script("Description") = "Shows how long a specified user has been in the channel."
+
+'//Variables **DO NOT CHANGE**
+Private Access, Command, TimeUsers, Info
+Sub Event_Load()
+'// ___________________________________________________________
+'//|                                                                                                  |
+'//|                  HERE YOU CAN EDIT SOME VARIABLES                  |
+'//|                                                                                                  |                             
+'//|This is where you put the access required to use this command.             |
+        Access = 5
+'//|                                                                                                  |
+'//|You can customize the command.                                                     |
+        Command = "timein"
+'//|                                                                                                  |
+'//|Here you can choose to display info when a sub triggers.                      |
+        Info = False
+'//|                                                                                                  |
+'//|For any questions or problems, post it at                                            |
+'//| stealthbot.net/forum/index.php?/topic/1585-tistimeinscript-by-neco/    |
+'//|___________________________________________________________|
+'//|                                                                                                  |
+'//|                               CHANGE LOG                                               |
+'//|                                                                                                  |
+'//|1.1.7 - Changed info display to be "False" by default.                           |
+'//|1.1.6 - Added comments and changed info display to an option.            |
+'//|1.1.5 - Added customizable command name.                                      |
+'//|1.1.4 - Added FirstRun sub to display the scripts name on bot startup.   |
+'//|1.1.3 - Added an additional sub to accomodate a whispered command.   |
+'//|1.1.2 - Fixed Info bugs that came up when a user had incorrect access.  |
+'//|1.1.1 - Added Info that displayed when something was triggered.          |
+'//|1.1.0 - Rewrote script to avoid further errors.                                   |
+'//|1.0.1 - Fixed multiple errors with the dictionary components.               |
+'//|1.0.0 - Started on script, made dictionaries and basic replys.                |
+'//|___________________________________________________________|
+'//|                                                                                                  |
+'//|                 **DO NOT EDIT FROM HERE ON IN**                         |
+'//|___________________________________________________________|
+
+
+  '//Creates the Dictionary in which the users are stored.
+  Set TimeUsers = CreateObject("Scripting.Dictionary")
+  '//Sets it to ignore cases.
+  TimeUsers.CompareMode = 1
+End Sub
+
+'//This only displays when the bot first loads.
+Sub Event_FirstRun()
+AddChat vbGreen, "TIMEIN Script by Neco."
+End Sub
+
+'//This sub triggers when a user joins.
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+  '//If the user is on the database already (ONLY OCCURS IF THERE IS AN ERROR).
+  If TimeUsers.Exists(LCase(Username)) Then
+    '//I didn't know how to make it "doesn't exist" so just ignore this part.
+  Else
+    TimeUsers.Item(Username) = Now
+    If Info Then AddChat vbGreen, "TIMEIN: " & Username & " has been added to the list with an entry time of: " & TimeUsers.Item(Username)
+  End If
+End Sub
+
+'//This sub triggers when a user leaves.
+Sub Event_UserLeaves(Username, Flags)
+  If TimeUsers.Exists(LCase(Username)) Then TimeUsers.Remove Username
+  If Info Then AddChat vbGreen, "TIMEIN: " & Username & " has been removed from the list."
+End Sub
+
+'//This sub triggers when a user talks in the bots channel.
+Sub Event_Usertalk(Username, Flags, Message, Ping)
+  '//If they are using the bots trigger.
+  If Left(Message, Len(BotVars.Trigger)) = BotVars.Trigger Then
+    '//If the correct command follows the trigger.
+    If Split(Mid(Message, Len(BotVars.Trigger)+1))(0) = Command Then
+      If Info Then AddChat vbGreen, "TIMEIN: Correct command used."
+      '//If they have enough access.
+      If GetDBEntry(Username).Rank < Access Then 
+        If Info Then AddChat vbRed, "TIMEIN: " & Username & " does not have the Access required ( " & Access & " )."
+        Exit Sub
+      Else
+        If Info Then AddChat vbGreen, "TIMEIN: "& Username & " has the Access required ( " & Access & " )."
+          msg = Mid(Message, Len(BotVars.Trigger)+1)
+          msgArray = Split(msg, " ")
+        If UBound(msgArray) > 0 Then
+          If TimeUsers.Exists(LCase(msgArray(1))) Then
+            If Info Then AddChat vbGreen, "TIMEIN: The specified user exists in the dictonary."
+              If DateDiff("n", TimeUsers.Item(msgArray(1)), Now) = 1 Then
+                AddQ msgArray(1) & " has been in this channel for: 1 minute."
+              Else
+                AddQ msgArray(1) & " has been in this channel for: " & DateDiff("n", TimeUsers.Item(msgArray(1)), Now) & " minutes." 
+              End If
+            Else
+              If Info Then AddChat vbRed, "TIMEIN: The user is not in the dictonary."
+              AddQ "That user has not joined this channel."
+            End If
+          Else
+            If Info Then AddChat vbRed, "TIMEIN: " & Username & " did not specify a user to check, asking to retry..."
+            AddQ "Please enter a name to queury."
+          End If
+        End If
+      End If
+    End If
+End Sub
+
+'//This sub triggers when a user whispers the bot.
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+  '//If they are using the bots trigger.
+  If Left(Message, Len(BotVars.Trigger)) = BotVars.Trigger Then
+    '//If the correct command follows the trigger.
+    If Split(Mid(Message, Len(BotVars.Trigger)+1))(0) = Command Then
+      If Info Then AddChat vbGreen, "TIMEIN: Correct command used."
+      '//If they have enough access.
+      If GetDBEntry(Username).Rank < Access Then 
+        If Info Then AddChat vbRed, "TIMEIN: " & Username & " does not have the Access required ( " & Access & " )."
+        Exit Sub
+      Else
+        If Info Then AddChat vbGreen, "TIMEIN: "& Username & " has the Access required ( " & Access & " )."
+          msg = Mid(Message, Len(BotVars.Trigger)+1)
+          msgArray = Split(msg, " ")
+        If UBound(msgArray) > 0 Then
+          If TimeUsers.Exists(LCase(msgArray(1))) Then
+            If Info Then AddChat vbGreen, "TIMEIN: The specified user exists in the dictonary."
+              If DateDiff("n", TimeUsers.Item(msgArray(1)), Now) = 1 Then
+                AddQ msgArray(1) & " has been in this channel for: 1 minute."
+              Else
+                AddQ msgArray(1) & " has been in this channel for: " & DateDiff("n", TimeUsers.Item(msgArray(1)), Now) & " minutes." 
+              End If
+            Else
+              If Info Then AddChat vbRed, "TIMEIN: The user is not in the dictonary."
+              AddQ "That user has not joined this channel."
+            End If
+          Else
+            If Info Then AddChat vbRed, "TIMEIN: " & Username & " did not specify a user to check, asking to retry..."
+            AddQ "Please enter a name to queury."
+          End If
+        End If
+      End If
+    End If
+End Sub

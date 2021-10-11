@@ -1,0 +1,244 @@
+Option Explicit
+
+Script("Name")     = "SetAccess"
+Script("Author")   = "AwaKening"
+Script("Major")    = 1
+Script("Minor")    = 2
+Script("Revision") = 1
+Script("Filename") = "SetAccess.txt"
+Script("Commands") = "setaccess <cmd> <access/flag>:delaccess <cmd>:" & _
+                     "access <cmd>:addalias <cmd> <alias>:remalias <cmd>"
+Script("Description") = "This script allows changes to internal and scripted bot commands via chat or console"
+
+
+' 1.2.1 | May 4, 2010
+'    - Cleaned up some code in the Command Event
+'    - Cleaned up some code in the ParseAccess Sub
+'    - Fixed flag and rank settings
+'    - Aliases will now work with scripted commands
+' 1.2.0
+'    - New command .addalias
+'    - New command .remalias
+'    - Removed some redundant code in the Command Event
+'    - Changed Script("Notes") to Script("Description")
+
+
+Sub Event_Load()
+	Call CreateSettings()
+	Call CreateCommands()
+End Sub
+
+Sub Event_Command(Command)
+	Dim usage
+
+	With Command
+		usage = StringFormat("Proper usage: {0}{1}", BotVars.Trigger, .Name)
+
+		Select Case LCase(.Name)
+		Case "setaccess"
+			If .IsValid Then
+				.Respond ParseAccess(.Argument("Command"), .Argument("Requirement"), "SET")
+			Else
+				.Respond usage & " <command> <access/flag>"
+			End If
+		Case "delaccess"
+			If .IsValid Then
+				.Respond ParseAccess(.Argument("Command"), "", "REMOVE")
+			Else
+				.Respond usage& " <command>"
+			End If
+		Case "access"
+			If .IsValid Then
+				.Respond ParseAccess(.Argument("Command"), "", "CHECK")
+			Else
+				.Respond usage& " <command>"
+			End If
+		Case "addalias"
+			If .IsValid Then
+				.Respond ParseAccess(.Argument("Command"), .Argument("Alias"), "ADDALIAS")
+			Else
+				.Respond usage& " <command> <newalias>"
+			End If
+		Case "remalias"
+			If .IsValid Then
+				.Respond ParseAccess(.Argument("Command"), .Argument("Alias"), "REMALIAS")
+			Else
+				.Respond usage& " <command> <alias>"
+			End If
+		End Select
+	End With
+End Sub
+
+Private Function ParseAccess(ByVal cmdName, ByVal newValue, ByVal Command)
+	Dim cmd, script
+
+	Set cmd = SSC.OpenCommand(cmdName, vbNullString)
+
+	If cmd Is Nothing Then
+
+		'// search through all the scripts
+		For Each script in Scripts()
+			Set cmd = script.OpenCommand(cmdName)
+			If NOT cmd Is Nothing Then Exit For
+		Next
+
+		If cmd Is Nothing Then
+			ParseAccess = "Error:  Command (" &cmdName& ") not found!"
+			Exit Function
+		End If
+	End If
+
+	With cmd
+		If Command = "REMOVE" Then
+			.IsEnabled = False
+			.Save
+			ParseAccess = UCase(cmdName)& " has been disabled."
+		ElseIf Command = "CHECK" Then
+			If .IsEnabled Then
+				ParseAccess = StringFormat("{0}:  Access <{1}> or Flags <{2}>", _
+				UCase(cmdName), .RequiredRank, .RequiredFlags)
+			Else
+				ParseAccess = UCase(cmdName) & " is Disabled"
+			End If
+		ElseIf Command = "SET" Then
+			.IsEnabled = True
+
+			If IsNumeric(newValue) Then
+				newValue = cInt(newValue)
+
+				If newValue < cInt(GetSettingsEntry("Lowest")) Then newValue = cInt(GetSettingsEntry("Lowest"))
+				If newValue > cInt(GetSettingsEntry("Highest")) Then newValue = cInt(GetSettingsEntry("Highest"))
+
+				.RequiredRank = newValue
+				ParseAccess = StringFormat("Set Access:  {0} <{1}>", UCase(cmdName), newValue)
+			Else
+				.RequiredFlags = newValue
+				ParseAccess = StringFormat("Set Flags:  {0} <{1}>", UCase(cmdName), newValue)
+			End If
+
+			.Save
+		ElseIf Command = "ADDALIAS" Then
+			.Aliases.Add newValue
+			.Save
+			ParseAccess = StringFormat("New {0} Alias: {1}", cmdName, newValue)
+		ElseIf Command = "REMALIAS" Then
+			.Aliases.Remove newValue
+			.Save
+			ParseAccess = StringFormat("Removed {0} Alias: {1}", cmdName, newValue)
+		End If
+	End With
+
+	Set cmd = Nothing
+End Function
+
+Private Sub CreateSettings()
+	Dim version
+
+	version = Script("Major")&"."&Script("Minor")&"."&Script("Revision")
+
+	If GetSettingsEntry("version") = version Then Exit Sub
+
+	WriteSettingsEntry "version", version
+	AddChat color.Plum, "AwaKening's SetAccess Script has been updated to " &version
+
+	If GetSettingsEntry("Highest")<>"" Then Exit Sub
+
+	WriteSettingsEntry "Highest (info)", "Highest access level a user can set commands to"
+	WriteSettingsEntry "Highest", 200
+	WriteSettingsEntry "Lowest (info)", "Lowest access level a user can set commands to; else they get disabled"
+	WriteSettingsEntry "Lowest", -1
+End Sub	
+
+Private Sub CreateCommands()
+	If NOT(OpenCommand("addalias")) Is Nothing Then Exit Sub
+
+	Dim Command, Parameter
+
+	Set Command = CreateCommand("addalias")
+	With Command
+		Set Parameter = .NewParameter("Command", False, "Word")
+		Parameter.Description = "The command you want to add an alias for."
+		.Parameters.Add Parameter
+
+		Set Parameter = .NewParameter("Alias", False, "Word")
+		Parameter.Description = "The new alias."
+		.Parameters.Add Parameter
+
+		.Aliases.Add "setalias"
+		.RequiredRank = 100
+		.Description = "Add an alias to any internal bot command."
+		.Save
+	End With
+	AddChat color.Yellow, "Successfully created command (addalias)"
+
+	Set Command = CreateCommand("remalias")
+	With Command
+		Set Parameter = .NewParameter("Command", False, "Word")
+		Parameter.Description = "The command you want to remove an alias from."
+		.Parameters.Add Parameter
+
+		Set Parameter = .NewParameter("Alias", False, "Word")
+		Parameter.Description = "The alias to remove."
+		.Parameters.Add Parameter
+
+		.Aliases.Add "delalias"
+		.RequiredRank = 100
+		.Description = "Remove an alias from any internal bot command."
+		.Save
+	End With
+	AddChat color.Yellow, "Successfully created command (remalias)"
+
+	Set Command = Nothing
+	Set Parameter = Nothing
+
+	If NOT(OpenCommand("setaccess")) Is Nothing Then Exit Sub
+
+	Set Command = CreateCommand("setaccess")
+	With Command
+		Set Parameter = .NewParameter("Command", False, "Word")
+		Parameter.Description = "The command you want to set access for."
+		.Parameters.Add Parameter
+
+		Set Parameter = .NewParameter("Requirement", False, "String")
+		Parameter.Description = "New access/flag requirement."
+		.Parameters.Add Parameter
+
+		.Aliases.Add "setflag"
+		.Aliases.Add "setflags"
+		.Aliases.Add "setrank"
+		.RequiredRank = 100
+		.Description = "Set the access/flag requirements of a command."
+		.Save
+	End With
+	AddChat color.Yellow, "Successfully created command (setaccess)"
+
+	Set Command = CreateCommand("delaccess")
+	With Command
+		Set Parameter = .NewParameter("Command", False, "Word")
+		Parameter.Description = "The command you disable."
+		.Parameters.Add Parameter
+
+		.Aliases.Add "remaccess"
+		.Aliases.Add "disablecmd"
+		.RequiredRank = 100
+		.Description = "Completely disable a command."
+		.Save
+	End With
+	AddChat color.Yellow, "Successfully created command (delaccess)"
+
+	Set Command = CreateCommand("access")
+	With Command
+		Set Parameter = .NewParameter("Command", False, "Word")
+		Parameter.Description = "The command to check access."
+		.Parameters.Add Parameter
+
+		.Aliases.Add "checkaccess"
+		.RequiredRank = 20
+		.Description = "Check the access/flag requirements of a command."
+		.Save
+	End With
+	AddChat color.Yellow, "Successfully created command (access)"
+
+	Set Command = Nothing
+	Set Parameter = Nothing
+End Sub

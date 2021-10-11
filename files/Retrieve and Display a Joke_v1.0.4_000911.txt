@@ -1,0 +1,125 @@
+ Script("Name") = "Retrieve and Display a Joke"
+ Script("Author") = "WataBoy7"
+ Script("Major") = "1"
+ Script("Minor") = "0"
+ Script("Revision") = "4"
+ Script("Description") = "Prints out a random one-liner retrieved from RandomJoke.com"
+
+ Public Const RJ_Command_Lock = 5   '// The time, in seconds, before the command can be used again
+ Public Script_Ver      '// The current Script Version
+ Public Emote_BoolVal   '// Records an integer value depending on the boolean value of emote_on
+ Public DisplayID       '// Determines the display format for the joke
+ Private LastRequest    '// The time since the command was last used
+ Private webObject      '// Used in the retrieval of the source code from the cached joke site
+
+
+ Sub Event_Load()
+    Dim EmoteOn_Query
+
+    Script_Ver = StringFormat("v{0}.{1}{2}", Script("Major"), Script("Minor"), Script("Revision"))
+
+    If GetSettingsEntry("Script_Version") <> Script_Ver Then
+       WriteSettingsEntry "Script_Version", Script_Ver
+       AddChat Color.DarkOrange, Script("Name"), Color.Yellow, ": Updated to [ " & script_ver & " ] with success!"
+
+       If GetSettingsEntry("emote_on") = vbNullString Then
+          EmoteOn_Query = MsgBox("Emote all messages?", 4 Or 32 Or 256, Script("Name")& " by " &Script("Author"))
+          Emote_BoolVal = CBool(EmoteOn_Query-vbNo)
+          AddChat Color.DarkOrange, Script("Name"), Color.Yellow, StringFormat(": emote_on has been set to {0}.", Emote_BoolVal)
+          WriteSettingsEntry "emote_on", Emote_BoolVal
+       End If
+
+       Call Create_Commands
+    End If
+
+    Emote_BoolVal = Abs(CBool(GetSettingsEntry("emote_on")))+1
+    LastRequest = Now-1
+ End Sub
+
+
+ Sub Event_Command(Command)
+    Select Case Command.Name
+       Case "joke":	Call Retrieve_and_Display_RandomJoke(Command, Command.Username)
+    End Select
+ End Sub
+
+
+ Sub Retrieve_and_Display_RandomJoke(Command, User_to_DRJ)
+    Dim web, webObject, RJ_Site, Spc_Ent, Rand_OneLiner, OneLiner_ID, i
+
+    '// Declare the Special Entities
+    Spc_Ent = Array(Array("quot", Chr(34)), Array("amp", Chr(38)), Array("lt", Chr(60)), Array("gt", Chr(62)))
+
+    If Command.IsValid Then
+       If Command.HasAccess Then
+          If Anti_Spam <> True Then
+
+             '// Initialize the Random Seed - thanks to Novynn for the method
+             Randomize()
+             RJ_Site = StringFormat("http://www.randomjoke.com/topic/oneliners.php?request_ID={0}", 1337^2*Rnd()+1)
+
+             Set webObject = CreateObject("Microsoft.XMLHTTP")
+             webObject.Open "GET", RJ_Site, False
+             webObject.Send
+             web = webObject.responseText
+
+             '____________________________________________________________________________________
+             '|| Retrieve the joke's ID number - can be used to view the one-liner online:      ||
+             '|| http://www.randomjoke.com/topic/oneliners.php?<Insert_Joke_ID_Here>            ||
+             '====================================================================================
+             OneLiner_ID = Int(Split(Split(web, "<input type=""HIDDEN"" name=""n"" value=""")(1), """>")(0))
+
+             '_______________________________________________________
+             '|| Clean up and format the joke before outputting it ||
+             '=======================================================
+             Rand_OneLiner = Trim(Split(Split(web, """next joke|back to topic list""></P>")(1), "<div align=""center"">")(0))
+             Rand_OneLiner = Replace(Rand_OneLiner, vbLf, Chr(32))
+             Do While InStr(LCase(Rand_OneLiner), Chr(60)) 
+                Rand_OneLiner = Replace(Rand_OneLiner, StringFormat("{0}{1}{2}", Chr(60), Split(Split(Rand_OneLiner, Chr(60))(1), Chr(62))(0), Chr(62)), vbNullString, 1, 1, vbTextCompare)
+             Loop
+             For i = 0 To UBound(Spc_Ent)
+                Rand_OneLiner = Replace(Rand_OneLiner, StringFormat("{0}{1}{2}", Chr(38), Spc_Ent(i)(0), Chr(59)), Spc_Ent(i)(1))
+             Next
+             Do While InStr(Rand_OneLiner, StringFormat("{0}{0}", Chr(32)))
+                Rand_OneLiner = Replace(Rand_OneLiner, StringFormat("{0}{0}", Chr(32)), Chr(32))
+             Loop
+             Rand_OneLiner = Trim(Rand_OneLiner)
+
+             '______________________
+             '|| Display the joke ||
+             '======================
+             Set_OutputDisplayFormat Command, User_to_DRJ
+             dsp DisplayID, StringFormat("[{0}] {1}", OneLiner_ID, Rand_OneLiner), User_to_DRJ, Color.LightSkyBlue
+          End If
+       End If
+    End If
+ End Sub
+
+
+ Private Sub Create_Commands()
+    If OpenCommand("joke") Is Nothing Then
+       With CreateCommand("joke")
+          .Description = Script("Description")
+          .RequiredRank = "0"
+          .Aliases.add "OneLiner"
+          .Save
+       End With
+    End If
+    AddChat Color.DarkOrange, Script("Name"), Color.Yellow, ": Commands created. Please view the Command Manager for description, syntax, and command aliases."
+ End Sub
+
+
+ Function Set_OutputDisplayFormat(Command, Username)
+    DisplayID = Emote_BoolVal
+    If Command.WasWhispered Then DisplayID = 3 Else If Username = BotVars.Username Or IsOnline <> True Then DisplayID = 4
+ End Function
+
+
+ Function Anti_Spam()
+    If DateDiff("s", LastRequest, Now) < RJ_Command_Lock Then
+       Anti_Spam = True
+    Else
+       Anti_Spam = False
+       LastRequest = Now
+    End If
+ End Function

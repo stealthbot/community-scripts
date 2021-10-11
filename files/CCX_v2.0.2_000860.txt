@@ -1,0 +1,1878 @@
+'// StealthBot 2.7 Script Data
+Script("Name") = "CCX"
+Script("Author") = "Snap"
+Script("Major") = 2
+Script("Minor") = 0
+Script("Revision") = 2
+
+'//
+Script("Description") = "An intillgent flexible parsing custom commands system. For advanced and basic uses"
+Script("UpdateLocation") = vbNullString
+Script("SHelp") = vbNullString
+
+'&CCX Custom Command Xystem:Snap (SnapWilliam@Gmail.com)
+'&addcc[command name] [access/flags] [command response]:delcc [command name]:listcc:findcc [search string]:renamecc [command name] [new command name]:showcc [command name]:testcc [CCX Code to test]:reloadcc:setcc [command name] [new access/flags]:editcc [command name] [new command response]:clipcc [command name]:rfunctions:sortcc
+'&25628
+'&CCX Is an intillgent flexible parsing system/custom commands system.  CCX can allow more advanced users to create complex dynamic commands quickly without creating plugins. While still keeping the simplicity of the old CC system.
+'/==
+
+'//Written By Snap
+'//   Special Thanks:
+'//DragoonHybrid99
+'//Ribose
+'//Jack
+'//DeadlyWorkz
+'//Ronin
+'//"Raihan Islam" (Maker of RaiBot) - for inspiration for an advanced CC system
+'//Stealth - for a very neat bot to work with.
+
+'//This Code is Copyrighted by (C) SnapWilliam@Gmail.com 2007-2009
+'//Especially regarding the CCX Engine code. -- Please do not distrubute modifications of this plugin.
+'//If you would like to learn more, or adapt the CCX Engine to another project please email me: SnapWilliam@gmail.com
+'//Feel free to email me suggestions - or post them @ stealthbot.net
+
+'// Bug Fixes by AwaKening
+'//2.0.1
+'   - GetDBEntry changed to GetStdDBEntry
+'   - Removed call to IsCommand
+'//2.0.2
+'   - Fixed Group access bug
+
+'//2.0  StealthBot 2.7 Converted update.
+'//Made the basic conversions to work with 2.7
+'== Add some way to prevent command spam abuse.
+'== Add some internal function-registration method, and add functions: %inchannel(user) %getaccess(user)
+'== Move some functions to this method.
+
+'//1.95
+'//Added %reverse(string) function.
+'//ClipCC now uses / instead of it's trigger if used internally.
+'//Added security_allowkick config. - This allows commands that kick randomly to work well, such as roulete :).
+'//Taged on to the WhisperCmds. When this option is enabled, CCX will whisper back. Unless %nw or %nowhisper is used. (Beta only)
+'//Created a /nw alias /nowhisper command.
+'//Fixed a bug where /me /emote would execute internally on whisper. - Thanks Bryan Stevens
+
+'//1.94
+'//Completely rebuilt the "CCX_R" subroutine, see below.
+'//Plugin commands can be issued like /prefix command args. These commands are issued as if the command-issuer issued them externally. (through usertalk)
+' EXAMPLE: /st trivia on
+'//Commands can now be executed like /command within a custom command. This works for Custom Commands and Bot commands. All commands are executed as if the user who used the CC executed the command.
+'//Fixed spelling mistake, "Skiped" -> "Skipped" - Thanks Fuhrer(R).
+'//Fixed %listdel(list,STRING) now works.
+
+'//The relatively ordinary "Do Not Edit Below" Line
+'//There is no reason to edit anything in this plugin - please check your pluginsettings.ini
+'---------------------------------------
+'        DO NOT EDIT BELOW!
+'---------------------------------------
+
+'//Leave this outside Event_Load - so that it executes before the other plugin's event_load's run.
+'//This way they can register functions.
+Public ccx
+Set ccx = New ccxClass
+
+
+'//Used to display debug data.
+Public ccx_Debug
+
+Public ccx_user, ccx_source
+
+Public BENCHMARK
+'//Benchmark the CC's to test effeciency.
+Public Const DoBench = False
+
+Public CCXAppShell
+Set CCXAppShell = CreateObject("Shell.Application")
+
+
+'//This is used to determin the access required for the built-in CCX commands, and currently stores the access.
+Public Function ccx_CommandAccess(Command)
+
+   Dim Access, Tmp
+   Access = GetSettingsEntry("access_" & Command)
+   If IsNumeric(Access) And Access <> VBNullString Then
+      Access = Int(Access)
+   Else
+      '//Default it 100 rather than 0...
+      Access = 100
+   End If
+   ccx_CommandAccess = Access
+End Function
+
+Public Function ccx_CommandAlias(Command)
+
+   Dim Tmp
+   Tmp = GetSettingsEntry("alias_" & Command)
+   If Tmp <> VBNullString Then 
+      ccx_CommandAlias = Tmp
+   Else
+      ccx_CommandAlias = Command
+   End If
+End Function
+
+
+
+Sub Event_Load()
+   '//See also; Class Initialize.
+
+   '//Convert old CC's to the new format
+   If ccx.FSO.FileExists(BotPath() & "commands.dat") Then
+      CCX_Convert BotPath() & "commands.dat", BotPath() & "BackupCmds.dat"
+   End If
+
+   '//First install?
+   If GetSettingsEntry("version") = "" Then 
+      '//Add alias commands
+      WriteSettingsEntry "alias_addcmd", "addcc"
+      WriteSettingsEntry "alias_delcmd", "delcc"
+      WriteSettingsEntry "alias_cclist", "listcc"
+      WriteSettingsEntry "alias_cmdlist", "listcc"
+      WriteSettingsEntry "alias_findcmd", "findcc"
+   End If
+   
+   '//Updated?
+   If GetSettingsEntry("version") <> Script("Major") & "." & Script("Minor") Then
+      REM If MsgBox("CCX has been updated to " & Script("Major") & "." & Script("Minor") & VbNewLine & "New aliases will now be added" , 1, "CCX updated:") = 1 Then
+         REM '== STUFF TO DO ON UPDATE.
+      REM End If
+      If MsgBox("CCX: CCX Has been updated would you like to visit the changelog?", 1, "CCX:") = 1 Then
+         CCXAppShell.Open "http://snapnjacks.com/CCXDoc.php?u=" & GetSettingsEntry("version") & "&to=" & Script("Major") & "." & Script("Minor")
+      End If
+      '//Update our config version
+      WriteSettingsEntry "version", Script("Major") & "." & Script("Minor")
+   End If
+   
+   
+   '//Set Config access entrys.
+   WriteSettingsEntry "access_listcc", 20 ''  == , "Access required to use command", False
+   WriteSettingsEntry "access_findcc", 20
+   WriteSettingsEntry "access_addcc", 90
+   WriteSettingsEntry "access_delcc", 90
+   WriteSettingsEntry "access_editcc", 90
+   WriteSettingsEntry "access_appendcc", 90
+   WriteSettingsEntry "access_renamecc", 90
+   WriteSettingsEntry "access_showcc", 80
+   WriteSettingsEntry "access_testcc", 90
+   WriteSettingsEntry "access_reloadcc", 100
+   WriteSettingsEntry "access_setcc", 90
+   WriteSettingsEntry "access_clipcc", 200
+   WriteSettingsEntry "access_rfunctions", 90
+   '//Set config misc entrys
+   WriteSettingsEntry "security_usesafety", "true"
+   REM , "This prevents the user " & _
+   REM "of any custom command from doing anything dangerous such as baning, designating" & _
+   REM " and some functions", False
+   WriteSettingsEntry "security_allowkick", "true"
+   REM , "When set to true, CC commands will allow " & _
+   REM "kicks regardless of the CC-User's access.", False
+   
+   Dim Tmp
+   Tmp = CCX.CC.keys
+   Addchat vbcyan, "CCX: Custom Command Xystem Loaded with " & UBound(Tmp) & " CC's"
+   
+End Sub
+
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+   ccx_ProcessInput Username, Message, "Talk", Flags, Ping
+End Sub
+
+'//Don't forget to removed Ping. !!
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+   ccx_ProcessInput Username, Message, "Whisper", Flags, 0
+End Sub
+
+Sub Event_PressedEnter(Text)
+ 
+   If Left(Text, 4) = "/cc " Then
+      VetoThisMessage
+      ccx_user = Botvars.Username
+      ccx_source = "UEnter"
+      AddQ ccx.ParseFunctions(Mid(Text, 5))
+   End If
+
+   If Left(Text, 2) = "//" Then
+      ccx_ProcessInput Botvars.username, Mid(Text, 2), "UEnter", "", 0
+      Exit Sub
+   End If
+   If Left(Text, 1) = "/" Then ccx_ProcessInput Botvars.username, Text, "Enter", "", 0
+End Sub
+
+
+'//Used to output the CC's or just any CCX output.
+Sub ccx_R(Username, Message, Method)
+
+   If Len(Message) < 1 Then Exit Sub
+   
+   If BotVars.WhisperCmds Then
+      If Instr(Method, "Enter") = 0 Then
+         Method = "Whisper"
+      End If
+   End If
+   
+   '//Lets gather some data.
+   Dim Cmd, Args, CmdType
+   If Instr(Message,"//") = 1 Then
+      Cmd = LCase(Split(Mid(Message, 3))(0))
+      CmdType = "UEnter"
+   ElseIf Instr(Message,"/") = 1 Then
+      Cmd = LCase(Split(Mid(Message, 2))(0))
+      CmdType = "Enter"
+   Else
+      '//Not a command.
+      Select Case Method
+         Case "Enter"
+            AddChat vbCyan, Message
+         Case "UEnter"
+            Dsp 1, Message, 0, 0
+         Case "Talk"
+            Dsp 1, Message, 0, 0
+         Case "Whisper"
+            Dsp 3, Message, Username, 0
+      End Select
+      Exit Sub
+   End If
+   
+   '//It's a command
+   Args = Trim(Split(Message & " ", " ", 2)(1))
+   
+   If ccx_Debug Then
+      Addchat VBwhite, "Cmd: " & Cmd
+      Addchat VByellow, "Args: " & Args
+      Addchat VByellow, "CmdType: " & CmdType
+      Addchat VByellow, "Method: " & Method
+      Addchat VByellow, "User: " & ccx_user
+   End If
+   
+   '//There are 4 types of commands:
+   '// Battle.net, Custom, Internal, Plugin.
+
+   '//Check for some specific battle.net commands
+   Select Case Cmd
+      '//Emotes
+      Case "me", "emote"
+         If Method <> "Enter" Then
+            'Addq Message
+            Dsp 1, Message, 0, 0
+         Else
+            Addchat VBcyan, "*" & Mid(Message, 5) & "*"
+         End If
+         Exit Sub
+      '//Specific to CCX.
+      Case "nw", "nowhisper"
+         '//So you think you're sneaky?
+         If Instr(Args, "/") = 1 Then Exit Sub
+         Addq Mid(Message, Len(Cmd) + 3)
+         Exit Sub
+      '//Allowed battle.net commands,
+      Case "w", "m", "whisper", "message", "f", "friends"
+         Addq Message
+         Exit Sub
+      Case "kick"
+         If Lcase(GetSettingsEntry("security_allowkick")) = "true" Then
+            Addq Message
+            Exit Sub
+         End If
+      '//Case "/kick", "/ban", "/designate", "/resign", "/squelch", "/ignore", "/ign", "/join"
+      '-- These commands should be handled by stealthbot.
+      '//Security risky unhandled battle.net commands.
+      Case "/clan", "/c", "/options", "/o", "/dnd", "/j"
+         '//Are we going to prevent security risks?
+         If Lcase(GetSettingsEntry("security_usesafety")) <> "false" Then
+            GetStdDBEntry ccx_user, UAccess, UFlags
+            If Instr(UFlags, "O") + Instr(UFlags, "A") > 0 OR Uaccess > 80 Then
+               Addq Message
+               Exit Sub
+            Else
+               '//Lets Block it
+               Addchat VBred, "CCX: CC Executed by " & ccx_user & " was blocked security_usesafety is enabled"
+               Addchat VBred, "CCX: " & Message
+               Exit Sub
+            End If
+         End If
+   End Select
+   
+   '//Trying to execute a Custom Command?
+   If ccx.CC.Exists(Cmd) Then
+      ccx_runcc Cmd, ccx_user, Args, CmdType
+      Exit Sub
+   End If
+   
+   '//Plugin command? == No longer PS system.
+   REM If psVersions.Item(cmd) <> vbnullstring Then
+      REM 'Addchat VByellow, "Plugin command"
+      REM On Error Resume Next
+      REM ExecuteGlobal "Call " & cmd & "_Event_UserTalk(""" & ccx_user & """, ""0"", """ & BotVars.Trigger & args & """, 0)"
+      REM If Err.Number <> 0 Then Err.Clear
+      REM On Error Goto 0
+      REM Exit Sub
+   REM End If
+   
+   '//Trying to execute an internal command?
+   'IsCommand doesnt function properly - AwaKening
+   'If IsCommand(Botvars.Trigger & Mid(Message,2)).Name = Cmd Then
+
+   If Not(SSC.OpenCommand(Mid(Message,2), vbNullString) Is Nothing) Then
+      Addchat VBwhite, "EXE: " & Botvars.Trigger & Cmd & " " & Args
+      SSC.Command ccx_user, Botvars.Trigger & Cmd & " " & Args, True
+      Exit Sub
+   End If
+
+ If DoBench = True Then Addchat VBwhite, GetGTC - BENCHMARK
+End Sub
+
+ 
+Sub ccx_ProcessInput(Username, Message, Source, Flags, Ping)
+
+   If Message = Botvars.trigger OR Message = "/" Then Exit Sub
+   
+   If DoBench = True Then BENCHMARK = GetGTC
+   
+   Dim Cmd
+   If Left(Message, Len(Botvars.trigger)) = BotVars.Trigger Then
+      Cmd = LCase(Split(Mid(Message, Len(Botvars.trigger) + 1))(0))
+   ElseIf Left(Message, 1) = "/" Then
+      Cmd = LCase(Split(Mid(Message, 2))(0))
+   Else
+      Exit Sub
+   End If
+   Cmd = ccx_CommandAlias(Cmd)
+   
+   Dim RStr, RAry, Tmp, Tmp2, InBot, I
+   
+   RStr = Trim(Split(Message & " ", " ", 2)(1))
+   
+   Dim UAccess, UFlags
+   If Source = "Enter" OR Source = "UEnter" Then
+      UAccess = 1000
+      UFlags = "A"
+      InBot = True
+   Else
+      UAccess = GetDBEntry(Username).Rank
+      UFlags  = GetDBEntry(Username).Flags
+   End If
+
+   '//                          <Built In Commands>
+   
+   '//Is it - and does the user have enough access for- a CCX specific built in command
+   If NOT (ccx_CommandAccess(Cmd) > UAccess) Then
+      '//Built-In commands.
+      Select Case Cmd
+         Case "listcc"
+            If InBot Then VetoThisMessage
+            ccx_R Username, "Commands that you can use: " & ccx.FindCommands("", UAccess, UFlags), Source
+         Case "findcc"
+            If InBot Then VetoThisMessage
+            Tmp = ccx.FindCommands(RStr, UAccess, UFlags)
+            If Tmp <> "" Then
+               ccx_R Username, "Matching commands (that you can use): " & Tmp, Source
+            Else
+               ccx_R Username, "No commands found. Example: " & Botvars.Trigger & "findcc note", Source
+            End If
+               
+         Case "addcc"
+            If InBot Then VetoThisMessage
+            RAry = Split(RStr, " ", 3)
+    
+            If UBound(RAry) <> 2 Then
+               'Addchat VBwhite, "Command format: !addcc (name) (access)[/flags] (response)"
+               ccx_R Username, "Example: !addcc givetea 20 /me gives %1 tea. Compliments of %user", Source
+               Exit Sub
+            End If
+            Dim T_Flags, T_Access, T_Name
+            If Isnumeric(RAry(1)) Then
+               T_Access = RAry(1)
+            Else
+               If InStr(RAry(1), "/") Then
+                  Tmp = Split(RAry(1), "/")
+                  T_Access = Tmp(0)
+                  If Not IsNumeric(Tmp(0)) AND Tmp(0) <> "" Then
+                     ccx_R Username, "Invalid access entry - must contain a numerical access.", Source
+                     '//Invalid Format
+                     Exit Sub
+                  End If
+                  T_Flags = Tmp(1)
+               Else
+                  ccx_R Username, "You must supply an access amount", Source
+                  Exit Sub
+               End If
+            End If
+            '//Rename command if existing.
+            If ccx.CC.Exists(RAry(0)) Then
+               For I = 1 to 40
+                  If Not ccx.CC.Exists(RAry(0) & I) Then
+                     T_Name = RAry(0) & I
+                     ccx_R Username, "Command name was already taken - name changed to: " & T_Name & " You can use !renamecc to change it", Source
+                     Exit For
+                  End If
+               Next
+            Else
+               T_Name = RAry(0)
+            End If
+    
+            ccx.SaveCommand T_Name, T_Access, T_Flags, "", RAry(2)
+            If T_Access = "" Then T_Access = "no"
+            If T_Flags = "" Then T_Flags = "no"
+            ccx_R Username, "Command """ & T_Name & """ [" & T_Access & " access/" & T_Flags & " flags] added.", Source
+         Case "delcc"
+            If InBot Then VetoThisMessage
+            If ccx.CC.Exists(Rstr) Then
+               ccx.DeleteCommand Rstr
+               ccx_R Username, "Command """ & Rstr & """ deleted.", Source
+            Else
+               ccx_R Username, "Command """ & Rstr & """ wasn't found.", Source
+            End If
+         Case "renamecc"
+            If InBot Then VetoThisMessage
+            RAry = Split(RStr, " ")
+            If UBound(RAry) <> 1 Then
+               ccx_R Username, "Format: " & Botvars.trigger & "renamecc (command) (newname)", Source
+               Exit Sub
+            End If
+            If Not ccx.CC.Exists(RAry(0)) Then
+               ccx_R Username, "Command not found: " & RAry(0), Source
+               Exit Sub
+            End If
+            If ccx.CC.Exists(RAry(1)) Then
+               ccx_R Username, "Command already named: " & RAry(1), Source
+               Exit Sub
+            End If
+    
+            ccx.SaveCommand RAry(1), ccx.CC.Item(RAry(0)).access, ccx.CC.Item(RAry(0)).flags, ccx.CC.Item(RAry(0)).trigger, ccx.CC.Item(RAry(0)).response
+            ccx.DeleteCommand RAry(0)
+            ccx_R Username, "Command renamed: " & RAry(0) & " -> " & RAry(1), Source
+         Case "showcc"
+            If InBot Then VetoThisMessage
+            If RStr = "" Then
+               ccx_R Username, "Please enter a command name.", Source
+               Exit Sub
+            End If
+            If Not ccx.CC.Exists(RStr) Then
+               ccx_R Username, "Command not found: " & RStr, Source
+            Else
+               With ccx.CC.Item(RStr)
+                  ccx_R Username, "Command [" & RStr & "][" & .Access & "/" & .Flags & "] " & .Response, Source
+               End With
+            End If
+         Case "testcc"
+            If InBot Then VetoThisMessage
+            ccx_user = Username
+            ccx_source = Source
+            Tmp = ccx.ParseFunctions(RStr)
+            '//Send the response w/ &'s included.
+            If InStr(Tmp, "& ") Then
+               For Each Item In Split(Tmp, "& ")
+                  ccx_R Username, Item, Source
+               Next
+            Else
+               ccx_R Username, Tmp, Source
+            End If
+         Case "reloadcc"
+            If InBot Then VetoThisMessage
+            ccx.LoadCommands
+            ccx_R Username, "Commands reloaded from text file.", Source
+            
+         Case "setcc"
+            If InBot Then VetoThisMessage
+            If RStr = "" Then
+               ccx_R Username, "Example: " & Botvars.trigger & "setcc MyCmd 50/M ", Source
+               Exit Sub
+            End If
+            RAry = Split(RStr, " ", 2)
+            If ccx.CC.Exists(RAry(0)) Then
+               If IsNumeric(RAry(1)) Then
+                  T_Access = RAry(1)
+               Else
+                  If InStr(RAry(1), "/") Then
+                     Tmp = Split(RAry(1), "/")
+                     T_Access = Tmp(0)
+                     If Not IsNumeric(Tmp(0)) AND Tmp(0) <> "" Then
+                        ccx_R Username, "Invalid access entry - must contain a numerical access.", Source
+                        '//Invalid Format
+                        Exit Sub
+                     End If
+                     T_Flags = Tmp(1)
+                  Else
+                     ccx_R Username, "You must supply an access amount", Source
+                     Exit Sub
+                  End If
+               End If
+               ccx.CC.Item(RAry(0)).Access = T_Access
+               ccx.CC.Item(RAry(0)).Flags = T_Flags
+               ccx.SaveChanges RAry(0)
+               If T_Access = "" Then T_Access = "no"
+               If T_Flags = "" Then T_Flags = "no"
+               ccx_R Username, "Command """ & RAry(0) & """ set: [" & T_Access & " access/" & T_Flags & " flags]", Source
+            End If
+         Case "appendcc"
+            If InBot Then VetoThisMessage
+            If RStr = "" Then
+               ccx_R Username, "Example: " & Botvars.trigger & "appendcc MyCmd Added to the end of the CC", Source
+               Exit Sub
+            End If
+            RAry = Split(RStr, " ", 2)
+            If ccx.CC.Exists(RAry(0)) Then
+               ccx.CC.Item(RAry(0)).Response = ccx.CC.Item(RAry(0)).Response & RAry(1)
+               ccx.SaveChanges RAry(0)
+               ccx_R Username, "Command: " & RAry(0) & " has been appended", Source
+            End If
+            
+         Case "editcc"
+            If InBot Then VetoThisMessage
+            If RStr = "" Then
+               ccx_R Username, "Example: " & Botvars.trigger & "editcc MyCmd New Response", Source
+               Exit Sub
+            End If
+            RAry = Split(RStr, " ", 2)
+            If ccx.CC.Exists(RAry(0)) Then
+               ccx.CC.Item(RAry(0)).Response = RAry(1)
+               ccx.SaveChanges RAry(0)
+               ccx_R Username, "Command: " & RAry(0) & " updated", Source
+            End If
+            
+         Case "clipcc"
+            If InBot Then VetoThisMessage
+            If RStr = "" Then
+               ccx_R Username, "Please enter a command name.", Source
+               Exit Sub
+            End If
+            If Not ccx.CC.Exists(RStr) Then
+               ccx_R Username, "Command not found: " & RStr, Source
+            Else
+               With ccx.CC.Item(RStr)
+                  '//Thanks DeadlyWorkz
+                  Dim objHTML
+                  Set objHTML = CreateObject("htmlfile")
+                  Tmp = "/"
+                  If Not InBot Then Tmp = Botvars.trigger
+                  objHTML.parentWindow.clipboardData.setData "text", Tmp & "addcc " & RStr & " " & .Access & "/" & .Flags & " " & .Response '// Set clipboard text
+                  ccx_R Username, "Command [" & RStr & "] Set to (Bot-Owners) Clipboard", Source
+                  Set objHTML = Nothing '//Clear the object
+               End With
+            End If
+         Case "rfunctions"
+            If InBot Then VetoThisMessage
+            Tmp = Join(ccx.FuncList.keys)
+            If Tmp = "" Then Tmp = "No registered functions"
+            ccx_R Username, Tmp, Source
+         Case "sortcc"
+            If Not InBot Then Exit Sub
+            VetoThisMessage
+            Dim Speed
+            Addchat VBwhite, "CCX: CC's are being sorted alphabetically"
+            Speed = GetGTC
+            CCX.DoFileSort
+            CCX.LoadCommands
+            Speed = GetGTC - Speed
+            Addchat VBwhite, "CCX: Commands sorted and reloaded. Time elapsed: " & (Speed) & "ms"
+            '//Is the UI up/existing?
+            If IsObject(ccxfrm) Then
+               If ccxfrm.Caption <> "Scripting UI" Then
+                  CCXUI_FillBox
+                  CCXUI_Disp "Commands sorted and reloaded. Time elapsed: " & (Speed) & "ms"
+               End If
+            End If
+         Case "ccxdebug"
+            If Not InBot Then Exit Sub
+            VetoThisMessage
+            If ccx_Debug Then ccx_Debug = False Else ccx_Debug = True
+            Addchat VBorange, "CCX: ccxDebug=" & ccx_Debug
+      End Select
+   End If
+   '//                                 </Built In Commands>
+   '//                                 <Custom Commands>
+   If ccx.CC.Exists(Cmd) Then
+      If InStr(Source, "Enter") Then VetoThisMessage
+      ccx_runcc Cmd, Username, RStr, Source
+   End If
+End Sub
+
+'//Command Name, Username, Arguement string, Source(Enter, Talk, Whisper, UEnter (double-slash enter //dance))
+Public Sub ccx_runcc(Name, byval Username, Arguments, byval Source)
+
+   '//Was this called from itself?
+   If Username = -1 Then Username = ccx_user
+   If Source = -1 Then Source = ccx_source
+   '//Is it a custom command?
+   If Not ccx.CC.Exists(Name) Then Exit Sub
+   
+   If ccx_Debug Then 
+      Addchat VByellow, "CCXDebug: Name: " & Name
+      Addchat VByellow, "CCXDebug: Username: " & Username
+      Addchat VByellow, "CCXDebug: Arguments: " & Arguments
+      Addchat VByellow, "CCXDebug: Source: " & Source
+   End If
+   
+   Dim strRes
+   If Username <> Botvars.Username Then
+      UAccess = GetDBEntry(Username).Rank
+      UFlags  = GetDBEntry(Username).Flags
+      If ccx.HasAccess(Name, UAccess, UFlags) = False Then Exit Sub
+   Else
+      UAccess = "1000"
+   End If
+   
+
+   strRes = ccx.CC.Item(Name).Response
+
+   '//Escape special char's so you can't use %'s within %rest.
+   Arguments = ccx.AddEscape(Arguments)
+   Username = ccx.AddEscape(Username)
+
+   '// Replace our vars
+
+   strRes = Replace(strRes, "%user", ccx.AddEscape(Username))
+   strRes = Replace(strRes, "%0", ccx.AddEscape(Username))
+   strRes = Replace(strRes, "%chan", ccx.AddEscape(MyChannel))
+   
+   strRes = Replace(strRes, "%qsize", GetQueueSize) 
+   strRes = Replace(strRes, "%trigger", Botvars.Trigger)
+   strRes = Replace(strRes, "%chancount", GetInternalUserCount())   
+   strRes = Replace(strRes, "%access", UAccess)
+   strRes = Replace(strRes, "%flags", UFlags)
+   strRes = Replace(strRes, "%gtc", GetGTC())
+   strRes = Replace(strRes, "%time", Time)
+   strRes = Replace(strRes, "%date", Date)
+   strRes = Replace(strRes, "%args", UBound(Split(Arguments)) + 1)
+   '//Handy replacements;   
+   strRes = Replace(strRes, "%antiflood2", "%if(%qsize>2,%die)" ) 
+   strRes = Replace(strRes, "%antiflood", "%if(%qsize>1,%die)" )
+   '//Clan Bnetflags Ping Product Safelisted Statstring Timeinchan Timesincetalk User/0 chancount chan access flags gtc time date
+   If InStr(strRes, "%") Then strRes = ccx_ParseGID(strRes, Username)
+
+   '//Gets a random user in the channel
+   If Instr(strRes, "%ruser") Then
+      For I = 16 To 1 Step - 1
+         Tmp = ccx.AddEscape(GetNameByPosition(Int(Rnd * GetInternalUserCount()) + 1))
+         If Tmp2 = Tmp AND GetInternalUserCount() > 1 Then
+            '//Try again.
+            I = I + 1
+         Else
+            Tmp2 = Tmp
+            strRes = Replace(strRes, "%ruser" & I, Tmp)
+         End If
+         Next
+      strRes = Replace(strRes, "%ruser", Tmp)
+   End If
+   
+   '// Confirm who is executing the command. - Used to prevent malicious use- see CCX_R
+   ccx_user = Username
+   ccx_source = Source
+   
+   '//Parse the args - like %1, %2 %all etc.
+   If InStr(strRes, "%") Then strRes = ccx.ParseArgs(strRes, Arguments)
+   
+   '//Parse all the functions. - And RemoveEscape
+   strRes = ccx.ParseFunctions(strRes)
+
+   '//Send the response
+   If InStr(StrRes, "& ") Then
+      For Each Item In Split(strRes, "& ")
+         ccx_R Username, Item, Source
+      Next
+   Else
+      ccx_R Username, StrRes, Source
+   End If
+End Sub
+
+
+
+Public Function ccx_ParseGID(Text, Username)
+ 
+   Text = Replace(Text, "%clan", GetInternalDataByUsername(Username, 0))
+   Text = Replace(Text, "%bnetflags", GetInternalDataByUsername(Username, 1))
+   Text = Replace(Text, "%ping", GetInternalDataByUsername(Username, 2))
+   Text = Replace(Text, "%product", GetInternalDataByUsername(Username, 3))
+   Text = Replace(Text, "%safelisted", GetInternalDataByUsername(Username, 4))
+   Text = Replace(Text, "%statstring", GetInternalDataByUsername(Username, 5))
+   Text = Replace(Text, "%timeinchan", GetInternalDataByUsername(Username, 6))
+   'Text = Replace(Text, "%timesincetalk", GetInternalDataByUsername(Username, 7))  '//This will always be 0, duh.
+   ccx_ParseGID = Text
+End Function
+
+
+'//Written By Zergmaster
+Function CheckAccessFlags(Username, ReqA, ReqF)
+    Dim UsrA, UsrF, i, ThisF
+    CheckAccessFlags = False
+    If LCase(Username) = "(console)" Or LCase(Username) = LCase(BotVars.Username) Or LCase(Username) = LCase(myUsername) Then
+        CheckAccessFlags = True
+        Exit Function
+    End If
+    On Error Resume Next
+    If LCase(Username) = LCase(BotVars.BotOwner) Then
+        CheckAccessFlags = True
+        Exit Function
+    End If
+    Err.Clear()
+        Usra = GetDBEntry(Username).Rank
+        Usrf = GetDBEntry(Username).Flags
+        If IsNumeric(ReqA) Then
+               If ReqA > UsrA Then Exit Function
+        End If
+    If Len(ReqF) = 0 Then
+        CheckAccessFlags = True
+        Exit Function
+    End If
+    For i = 1 To Len(ReqF)
+        ThisF = Mid(ReqF, i, 1)
+        If InStr("ABCDEFGHIJKLMNOPQRSTUVWXYZ", UCase(ThisF)) Then
+            If Not InStr(UCase(UsrF), UCase(ThisF)) Then Exit Function
+        End If
+    Next
+    CheckAccessFlags = True
+End Function
+
+
+'//Used to convert old 2.6R3 CC's to CCX CC's
+Public Sub CCX_Convert(FileName, FileTo)
+   '//Create the ADODB Stream
+   Dim Binary, Data
+   Set Binary = CreateObject("ADODB.Stream")
+   Binary.Type = 2
+   Binary.CharSet = "iso-8859-1"
+   
+   '//Open the file
+   Binary.Open
+   Binary.LoadFromFile FileName
+   Data = Binary.ReadText
+   Binary.Close
+   
+   If Len(Data) < 20 Then Exit Sub
+   
+   Addchat VBwhite, "CCX: Converting commands..."
+   
+   Dim Tmp, Access, Command, Response, Pointer, IntS, IntA
+   '//Commands Added/Skipped
+   IntA = 0 : IntS = 0
+   '//Pointer holds the position where were looping.
+   Pointer = 1
+   '//Now to parse those commands.
+   Do
+      '//Access is first.
+      '//Get the access in Binary
+      Tmp = Mid(Data, Pointer, 2)
+      '//Convert the Binary value
+      Access = Eval("&H" & Hex(Asc(Right(Tmp, 1))) & Hex(Asc(Left(Tmp, 1))))
+      '//Move along, move along
+      Pointer = Pointer + 2
+      
+      '//This one is easy!
+      Command = Trim(Mid(Data, Pointer, 20))
+      Pointer = Pointer + 20
+      '//Trim from the right, we want to save the spaces infront :).
+      Response = RTrim(Mid(Data, Pointer, 500))
+      '//Ya, I'm confused about it being one short of 500 too.
+      Pointer = Pointer + 499
+      '//Verify, and append the list.
+      If Right(Command, 1) <> Chr(0) AND Len(Command) > 0 Then
+         'SP = SP  & VBNewLine & Command & "*" & Access & "***" & Response
+         If Not ccx.CC.Exists(Command) Then
+            ccx.SaveCommand Command, Access, "", "", Response
+            IntA = IntA + 1
+         Else
+            IntS = IntS + 1
+         End If
+      End If
+   Loop Until Pointer > Len(Data)
+   Addchat VByellow, "CCX: " & IntA & " commands have been successfully added. " & IntS & " command duplicates were skipped."
+   '//Move the file
+   Addchat VBwhite, "CCX: Backing up old commands file: " & FileName & ".old"
+   If ccx.FSO.FileExists(FileName & ".old") Then ccx.FSO.DeleteFile(FileName & ".old")
+   ccx.FSO.MoveFile FileName, FileName & ".old"
+   '//Create a blank file for 2.6 issues
+   If GetBotVersion = "StealthBot v2.6" Then ccx.FSO.CreateTextFile(FileName)
+   'ccx.FSO.CreateTextFile(FileName)
+   Addchat VBwhite, "CCX: Commands have been converted to CCX"
+End Sub
+
+
+'//_______________________________________________________________________
+'//_______________________________________________________________________
+'//
+'//          CCX Classes; and this aint no school.
+'//
+'//________________________________________________________________________
+'//________________________________________________________________________
+
+
+'//Each command is loaded like this as a class;
+
+'//CC's
+Class ccxCC
+ 
+   Public Access, Flags, Response, Trigger
+End Class
+
+
+Class ccxClass
+ 
+   Public CC
+   Public FuncList
+   Public FSO
+   Public DL_Path
+   Public CC_Path
+   Public FunctionsP1
+   Public FunctionsP2
+   
+   '//Anti Loop I. - Used for preventing an infinite loop.
+   Private AntIloop, AntILoopTime
+ 
+   Private Sub Class_Initialize()
+ 
+      Set Me.FuncList = CreateObject("Scripting.Dictionary")
+      Set Me.CC = CreateObject("Scripting.Dictionary")
+      Me.CC.CompareMode = 1
+      Me.FuncList.CompareMode = 1
+      
+      Set Me.FSO = CreateObject("Scripting.FileSystemObject")
+      Me.DL_Path = ".\Plugins\ccx_DL.txt"
+      Me.CC_Path = ".\Plugins\ccx_CC.txt"
+      Me.LoadCommands
+      '//Set some varriables:
+      '//List the built-in functions here.
+      'Remember to Put things like "abcbla" infront of "abc"
+      Me.FunctionsP1 = Array("len", "secf", "round", "getgid", "wins", "count", "xitem", "item", _
+         "if", "ifnot", "switch", "foreach", "for", "now", "rand", "mid", "instr", "chr", "no@", "getdl", "var", "math", _
+         "do", "listsize", "listitem", "listout", "inlist", "getdef", "ucase", "lcase", "replace", "reverse")
+      Me.FunctionsP2 = Array("die", "setdl", "setvar", "withdl", "withvar", "showvar", _
+      "listclear", "listadd", "listdel", "setdef", "runcc")
+      
+   End Sub
+ 
+ 
+   Sub LoadCommands()
+ 
+      Dim File, arrCmd
+      Set File = Me.FSO.OpenTextFile(Me.CC_Path, 1, True)
+      '//Clear first.
+      Me.CC.RemoveAll
+      Do While Not File.AtEndOfStream
+         arrCmd = Split(File.ReadLine, "*", 2)
+         If UBound(arrCmd) = 1 Then
+            Dim StrName, ArrData
+            StrName = arrCmd(0)
+            ArrData = Split(arrCmd(1), "*", 4)
+            Set Me.CC.Item(StrName) = New ccxCC
+            Me.CC.Item(StrName).Access = ArrData(0)
+            Me.CC.Item(StrName).Flags = ArrData(1)
+            Me.CC.Item(StrName).Trigger = ArrData(2)
+            Me.CC.Item(StrName).Response = ArrData(3)
+         End If
+      Loop
+   End Sub
+
+   Public Sub SaveCommand(Name, Access, Flags, Trigger, Response)
+      If Me.CC.Exists(Name) Then
+         Addchat VBred, "CCX: Error, command already exists: " & Name
+         Exit Sub
+      End If
+      Dim File, strCmd
+      Set file = Me.FSO.OpenTextFile(Me.CC_Path, 8, True)
+      File.Write VBNewLine & Name & "*" & Access & "*" & Flags & "*" & Trigger & "*" & Response
+      'Me.CC.Add LCase(Name), Array(Access, Flags, Trigger, Command)
+      Set Me.CC.Item(Name) = New ccxCC
+      Me.CC.Item(Name).Access = Access
+      Me.CC.Item(Name).Flags = Flags
+      Me.CC.Item(Name).Trigger = Trigger
+      Me.CC.Item(Name).Response = Response
+   End Sub
+   
+   Public Sub DeleteCommand(ByVal Name)
+
+      Name = LCase(Name)
+      Dim File, Tmp
+      '//Read File
+      Set File = Me.FSO.OpenTextFile(Me.CC_Path, 1, True)
+      If File.AtEndOfStream Then Exit Sub
+      Tmp = File.Readall
+      '//Write modified file
+      Set File = Me.FSO.OpenTextFile(Me.CC_Path, 2, True)
+      Tmp = Split(Tmp, vbNewLine)
+      For Each Line In Tmp
+         If (LCase(Split(Line & "*", "*")(0)) <> Name) AND Line <> "" Then
+            File.Write VBNewLine & Line
+         End If
+      Next
+      '//Remove from dictionary.
+      Me.CC.Remove Name
+   End Sub
+ 
+ 
+   Public Sub SaveChanges(ByVal Name)
+   
+      '//Mostly just copy the DeleteCommand Sub
+      Name = LCase(Name)
+      Dim File, Tmp
+      '//Read File
+      Set File = Me.FSO.OpenTextFile(Me.CC_Path, 1, True)
+      If File.AtEndOfStream Then Exit Sub
+      Tmp = File.Readall
+      '//Write modified file
+      Set File = Me.FSO.OpenTextFile(Me.CC_Path, 2, True)
+      Tmp = Split(Tmp, vbNewLine)
+      For Each Line In Tmp
+         If Line <> "" Then
+            If (LCase(Split(Line & "*", "*")(0)) <> Name) Then
+               File.Write VBNewLine & Line
+            Else
+               With Me.CC.Item(Name)
+                  File.Write VBNewLine & Name & "*" & .Access & "*" & .Flags & "*" & .Trigger & "*" & .Response
+               End With
+            End If
+         End If
+      Next
+   End Sub
+   
+ 
+   '//REPLACE FUNCTIONS
+   '//Replaces Arguments
+   Public Function ParseArgs(Command, Input) 'as string
+ 
+      '//%1 %2 infinite.
+      Dim strRes, I, Rest, RestB
+      TextAry = Split(Input)
+      strRes = Command
+      For I = UBound(TextAry) to 0 Step - 1
+         If InStr(strRes, "%" & I + 1) Then
+            RestB = True
+            Rest = Mid(Rest, 2)
+            strRes = Replace(strRes, "%" & I + 1, TextAry(I))
+         ElseIf Not RestB Then
+            Rest = " " & TextAry(I) & Rest
+         End If
+      Next
+      For I = UBound(TextAry) + 1 to 1 Step - 1
+         strRes = Replace(strRes, "%all" & I, Split(Input, " ", I)(I - 1))
+      Next
+      strRes = Replace(strRes, "%all", Input)
+      strRes = Replace(strRes, "%rest", Trim(Rest))
+      ParseArgs = strRes
+   End Function
+   
+   Public Function AddEscape(Text) 'as string
+   
+      Text = Replace(Text, "%", Chr(240) & Chr(239))
+      Text = Replace(Text, ",", Chr(240) & Chr(238))
+      Text = Replace(Text, "(", Chr(240) & Chr(242))
+      Text = Replace(Text, ")", Chr(240) & Chr(243))
+      AddEscape = Text
+   End Function
+   
+   Public Function RemoveEscape(Text) 'as string
+   
+      If Instr(Text, Chr(240)) Then
+         Text = Replace(Text, Chr(240) & Chr(239), "%")
+         Text = Replace(Text, Chr(240) & Chr(238), ",")
+         Text = Replace(Text, Chr(240) & Chr(242), "(")
+         Text = Replace(Text, Chr(240) & Chr(243), ")")
+      End If
+      RemoveEscape = Text
+   End Function
+
+   '//Solves/replaces all functions.
+   Public Function ParseFunctions(Text) 'as string
+ 
+      '//Addchat VBwhite, "ParseFunctions Start"
+		If Instr(Text, "%") = 0 Then
+         ParseFunctions = Me.RemoveEscape(Text)
+         Exit Function
+      End If
+      
+      '// Benchmark
+      Benchmark = GetGTC
+      
+      Dim NLoc, RLoc, ALoc, NDeep
+      Dim Priority
+      RLoc = Len(Text)
+      'Rloc = 1 '==
+      '//Goes through the command finding functions
+      Priority = 1
+      '//START PARSING.
+      Do
+         '//This will prevent RunCC loops, and infinite loops that could be created with a registered function.
+         '//If an infinit loop occured - this would have to happen twice. - Once would set the timestamp, the other to see the timestamp
+         If AntIloop > 200 Then '200
+            '//If it occured quickly?
+            If AntILoopTime > GetGTC - 1500 Then '1500
+               '== For some reason, raising an error here, breaks everything :/
+               'err.raise 1, "ParseFunctions", "CCX: Infinite loop prevention executed"
+               Addchat VBred, "CCX: Infinite loop prevention executed"
+               AntILoopTime = GetGTC
+               AntILoop = 0
+               Exit Function
+            Else
+               AntILoopTime = GetGTC 
+               AntILoop = 0
+            End If
+         Else
+            AntIloop = AntIloop + 1
+         End If
+         
+         '//FIND MOST NESTED FUNCTION
+         NLoc = InstrRev(Mid(Text, 1, RLoc), "%")
+         'NLoc = Instr(Mid(Text, RLoc), "%") '==
+         'Addchat VBpink, Mid(Text, RLoc) & "||" & NLoc '==
+         ' NLoc = Instr(Mid(Text, 1, RLoc), "%") '==
+         '//If NLoc = 0 Then (Same result) - but i'll take all effeciency gains i can take.
+         '//Any remaining % symbols?
+         If Not CBool(NLoc) Then
+            '//If Priority = 2 Then Exit Do
+            If Priority = 1 Then
+               '//Die
+               If InStr(Text, "%die(") Then
+                  NLoc = InStr(Text, "%die(")
+               Else
+                  NLoc = InstrRev(Text, "%")
+                  'NLoc = Instr(Text, "%") '==
+                  If Not CBool(NLoc) Then Exit Do
+               End If
+               '//Allows the %if statment to check data from a %var function, and etc
+               Priority = 2
+               RLoc = Len(Text)
+               ' RLoc = 0 '==
+            Else
+               Exit Do
+            End If
+         End If
+         
+         '//LOCK ON TARGET.
+         Deep = me.IsFunction(Mid(Text, Nloc), Priority)
+         NDeep = Deep + Nloc + 1
+         
+         '//Find corresponding ) - the end of the function - and include any embeded ( ) - other functions.
+         Dim Tmp, Tmp2
+         Tmp = 0
+         For I = NDeep to Len(Text)
+            Tmp2 = Mid(Text, I, 1)
+            'addchat VBwhite, Tmp2
+            If Tmp2 = "(" Then
+               Tmp = Tmp + 1
+            ElseIf Tmp2 = ")" Then
+               '//Tmp = 0?
+               If Not CBool(Tmp) Then
+                  'ALoc = Len(Mid(Text, NDeep)) + I
+                  ALoc = (I + 1) - NDeep
+                  Exit For
+               End If
+               Tmp = Tmp - 1
+            End If
+            ALoc = I
+         Next
+
+         '//DO WE HAVE CONFIRMATION ON THE TARGET?
+         '//Make sure these aren't 0's
+         If CBool(Deep) AND CBool(ALoc) Then
+            '//ENGAGE TARGET, solve the function.
+            Dim Pre, RawInner, Suff, FuncResult, Func
+            'Example Text: "please don't %ucase(yell) at me"
+            '//Create new text
+            'pre = "please don't "
+            Pre = Mid(Text, 1, NLoc - 1)
+            'func = "ucase" '//Ignoring % char
+            Func = Mid(Text, NLoc + 1, Deep - 1)
+            'RawInner = "yell"
+            RawInner = Mid(Text, NDeep, ALoc - 1)
+            'FuncResult = "YELL"
+            FuncResult = Me.SolveFunction(Func, RawInner)
+            'Suff = " at me"
+            Suff = Mid(Text, NDeep + Aloc)
+            'Text = "please don't YELL at me"
+            Text = Pre & FuncResult & Suff
+            
+            '//Testing purposes.
+            'Addchat VByellow, "Function Name: " & Func
+            'Addchat VBred, "Pre: " & Pre
+            'Addchat VByellow, "Function Result: " & FuncResult
+            'Addchat VByellow, "Suff: " & Suff
+            'Addchat VBwhite, "End Result: " & Text
+            
+            '//%die then we're all done.
+            If Func = "die" Then
+               '//Return only the text within %die
+               ParseFunctions = Me.RemoveEscape(Me.ParseFunctions(FuncResult))
+               Exit Function
+            End If
+         Else
+            'Addchat VBwhite, Rloc
+            'Addchat VBorange, Nloc
+            RLoc = NLoc - 1
+            'RLoc = NLoc + 1 '==
+         End If
+      Loop
+      
+      ParseFunctions = Me.RemoveEscape(Text)
+      'Addchat VByellow, "End ParseFunctions - " & ParseFunctions
+   End Function
+   
+   
+   '// Solves a built-in or exposed function.
+   Public Function SolveFunction(Name, Args) 'as string
+      'Addchat VByellow, "Solve Function start: " & Name
+      
+      Dim RStr
+      Dim Tmp, Tmp2, Tmp3, I
+      Dim RArgs
+      Tmp = 0
+      For I = 1 to Len(Args)
+         Tmp2 = Mid(Args, I, 1)
+         If Tmp2 = "(" Then
+            Tmp = Tmp + 1
+         ElseIf Tmp2 = ")" Then
+            Tmp = Tmp - 1
+         ElseIf Tmp2 = "," Then
+            If Not CBool(Tmp) Then
+               RArgs = RArgs & "ÄSplitÄ"
+            End If
+         End If
+         RArgs = RArgs & Tmp2
+      Next
+      RStr = Args
+      Args = Split(RArgs, "ÄSplitÄ,")
+      
+      
+      
+      SolveFunction = ""
+      
+      '//Built-In functions.
+      Select Case Lcase(Name)
+         Case "round" If UBound(Args) = 1 Then SolveFunction = Round(Args(0), Args(1))
+         '//So powerful, so small...
+         Case "if"
+            If Me.SecureEval(Args(0)) <> False Then
+               SolveFunction = Args(1)
+            Else
+               If UBound(Args) = 2 Then
+                  SolveFunction = Args(2)
+               Else
+                  SolveFunction = ""
+               End If
+            End If
+         Case "ifnot"
+            If Me.SecureEval(Args(0)) <> True Then
+               SolveFunction = Args(1)
+            Else
+               If UBound(Args) = 2 Then
+                  SolveFunction = Args(2)
+               Else
+                  SolveFunction = ""
+               End If
+            End If
+         '//Switch can come in handy!
+         Case "switch"
+            If UBound(Args) > 1 Then
+               Tmp = Lcase(Me.SecureEval(Args(0)))
+               For I = 1 to UBound(Args) Step 2
+                  If Lcase(Me.SecureEval(Args(I))) = Tmp OR Lcase(Me.SecureEval(Args(I))) = "else" Then
+                     SolveFunction = Args(I+1)
+                     Exit Function
+                  End If
+               Next
+            End If
+         '//A loop? No wai!
+         Case "for"
+            If UBound(Args) > 1 Then
+               If Isnumeric(Args(0)) AND Isnumeric(Args(1)) Then
+                  Tmp = 0
+                  Tmp3 = Me.StrRep(Args(2), Array("/#R", "/#A", "/##"), Array("<TMP=R>_", "<TMP=A>_", "<TMP=#>_"))
+                  Dim MyStep
+                  MyStep = 1
+                  If Int(Args(0)) > Int(Args(1)) Then MyStep = -1
+                  For I = Int(Args(0)) To Int(Args(1)) Step MyStep
+                     '//Prepare data
+                     Tmp2 = Tmp3
+                     Tmp2 = Me.StrRep(Tmp2, Array("%i", "##", "#R", "#A"), Array(I, I, me.Roman(I), me.Alpha(I)))
+                     SolveFunction = SolveFunction & Tmp2
+                     Tmp = Tmp + 1
+                     If Tmp > 100 Then
+                        err.raise 1, "SolveFunction", "%for loop cut off due to Loop MAX (100)"
+                        Exit Function
+                     End If
+                  Next
+                  SolveFunction = Me.StrRep(SolveFunction, Array("<TMP=R>_", "<TMP=A>_", "<TMP=#>_"), Array("#R", "#A", "##"))
+               End If
+            End If
+         '//Gota have this.
+         Case "rand"
+            If UBound(Args) = 1 Then
+               Randomize
+               SolveFunction = Int(Rnd * ((Args(1) + 1) - Args(0)) + Args(0))
+            End If
+         '//More standards
+         Case "ucase"
+            If UBound(Args) = 0 Then
+               SolveFunction = Ucase(Args(0))
+            End If
+         Case "lcase"
+            If UBound(Args) = 0 Then
+               SolveFunction = Lcase(Args(0))
+            End If
+         Case "reverse"
+            If UBound(Args) = 0 Then
+               SolveFunction = strreverse(Args(0))
+            End If
+         Case "replace"
+            If UBound(Args) = 2 Then
+               SolveFunction = Replace(Args(0), Args(1), Args(2))
+            End If
+         '//I'd rather make a mimic of PHP's StrSt function.
+         Case "mid"
+            If UBound(Args) = 2 Then
+               SolveFunction = Mid(Args(0), Args(1), Args(2))
+            ElseIf UBound(Args) = 1 Then
+               SolveFunction = Mid(Args(0), Args(1))
+            End If
+         Case "item"
+            If UBound(Args) = 1 Then
+               Tmp = Split(Args(0))
+               If UBound(Tmp) >= Int(Args(1)) - 1 Then SolveFunction = Tmp(Int(Args(1)) - 1)
+            ElseIf UBound(Args) = 2 Then
+               Tmp = Split(Args(0), Args(2))
+               If UBound(Tmp) >= Int(Args(1)) - 1 Then SolveFunction = Tmp(Int(Args(1)) - 1)
+            End If
+         
+         '//Returns everything except the item selected.
+         Case "xitem"
+            If UBound(Args) = 1 Then
+               Tmp = Split(Args(0)) '//Space default
+               If UBound(Tmp) >= Int(Args(1)) - 1 Then
+                  Tmp(Int(Args(1)) - 1) = Chr(186) & "BURN"
+                  Tmp = Filter(Tmp, Chr(186) & "BURN", False)
+                  SolveFunction = Join(Tmp) '//Space default
+                  Exit Function
+               End If
+            ElseIf UBound(Args) = 2 Then
+               Tmp = Split(Args(0), Args(2))
+               If UBound(Tmp) >= Int(Args(1)) - 1 Then
+                  Tmp(Int(Args(1)) - 1) = Chr(186) & "BURN"
+                  Tmp = Filter(Tmp, Chr(186) & "BURN", False)
+                  SolveFunction = Join(Tmp, Args(2))
+                  Exit Function
+               End If
+            End If
+            
+         Case "do"
+            Tmp = Args(0)
+            Tmp = Replace(Tmp, "@", "%")
+            Tmp = Replace(Tmp, "[", "(")
+            Tmp = Replace(Tmp, "]", ")")
+            Tmp = Replace(Tmp, ":", ",")
+            SolveFunction = Me.ParseFunctions(Tmp)
+         '//Returns the amount a string appears in a string.
+         Case "len"
+            If UBound(Args) = 0 Then
+               SolveFunction = Len(Args(0))
+               If SolveFunction = -1 Then SolveFunction = 0
+            End If
+         '//Returns the amount of times the search string is found.
+         Case "count"
+            If UBound(Args) = 1 Then
+               SolveFunction = UBound(Split(Args(0), Args(1)))
+               If SolveFunction = -1 Then SolveFunction = 0
+            End If
+         '//Mimic function
+         Case "instr"
+            If UBound(Args) = 2 Then
+               If CBool(Args(2)) Then 
+                  SolveFunction = InStr(1,Args(0), Args(1), 1)
+               Else
+                  SolveFunction = InStr(1,Args(0), Args(1), 0)
+               End If
+            ElseIf UBound(Args) = 1 Then
+               SolveFunction = InStr(1,Args(0), Args(1),1)
+            End If
+         Case "chr" If UBound(args) = 0 Then SolveFunction = Chr(Me.SecureEval(Args(0)))
+         Case "math" If UBound(args) = 0 Then SolveFunction = Me.SecureEval(Args(0))
+         '//Removes @lordaeron @useast #2 etc.
+         Case "no@"
+            Dim PUser
+            PUser = Args(0)
+            If Left(PUser, 1) = "*" Then PUser = Mid(PUser, 2)
+            If InStr(PUser, "#") Then PUser = Mid(PUser, 1, InStr(PUser & "#", "#")-1)
+            If InStr(PUser, "@") Then PUser = Mid(PUser, 1, InStr(PUser & "@", "@")-1)
+            SolveFunction = PUser
+         Case "getgid" '//MIMICS STEALTHBOT'S GetInternalDataByUsername
+            If UBound(Args) = 1 Then
+               SolveFunction = GetInternalDataByUsername(Args(0), Args(1))
+            End If
+         Case "wins" '//Wins of Argument user
+            SolveFunction = Split(GetInternalDataByUsername(Args(0), 5))(3)
+         Case "die" '// DIE
+            SolveFunction = RStr
+         Case "now" '// now
+            If UBound(args) = 0 Then
+               Tmp = Me.SecureEval(Args(0))
+               If IsNumeric(Tmp) Then
+                  SolveFunction = DateAdd("s", Int(Tmp), Now)
+               Else
+                  SolveFunction = Now
+               End If
+            Else
+               SolveFunction = Now
+            End If
+         Case "secf" '// FROM TIME IN SECONDS
+            SolveFunction = me.SecondsToTime(Args(0))
+         '//LIST FUNCTIONS
+         Case "listadd"
+            If UBound(Args) >= 1 Then
+               Tmp = GetConfigEntry("lists", Me.SecureEval(Args(0)), Me.DL_Path)
+               Tmp2 = Replace(Me.SecureEval(Args(1)), "*", "|ASTRIX|")
+               WriteConfigEntry "lists", Me.SecureEval(Args(0)), Tmp & Tmp2 & "*", Me.DL_Path
+            End If
+            If UBound(Args) = 2 Then
+               If Lcase(Args(2)) = "true" Then SolveFunction = UBound(Split(Tmp & "*", "*"))
+            Else
+               SolveFunction = ""
+            End If
+         '// LISTDEL:
+         '// USAGE: %listdel(mylist, 3) OR %listdel(myuserlist, Bob)
+         '// Deletes item in a list by exact match, or numerical position. {Currently does not support wildcards}
+         Case "listdel"
+            If UBound(Args) >= 1 Then
+               '//Delete by numeric position
+               If IsNumeric(Args(1)) Then
+                  '//Lets get our list as an array
+                  Tmp = Split(GetConfigEntry("lists", Me.SecureEval(Args(0)), Me.DL_Path), "*")
+                  '//Confirm that the position selected exists.
+                  If UBound(Tmp) >= Int(Args(1)) AND Int(Args(1)) > 0 Then
+                     '//Modify the item in the array- as we don't want to delete duplicates. - Then filter it out.
+                     Tmp(Int(Args(1) - 1)) = Chr(186) & "BURN"
+                     Tmp = Filter(Tmp, Chr(186) & "BURN", False)
+                     WriteConfigEntry "lists", Me.SecureEval(Args(0)), Join(Tmp, "*"), Me.DL_Path
+                     '//Respond with the record # deleted.
+                     SolveFunction = "#" & Args(1)
+                  End If
+               '//Delete by string match.
+               Else
+                  Tmp = GetConfigEntry("lists", Me.SecureEval(Args(0)), Me.DL_Path)
+                  Tmp2 = Replace(Tmp, Args(1) & "*", "")
+                  SolveFunction = ""
+                  If Tmp <> Tmp2 Then
+                     WriteConfigEntry "lists", Me.SecureEval(Args(0)), Tmp2, Me.DL_Path
+                     If UBound(Args) >= 2 Then
+                        If Lcase(Args(2)) = "true" Then SolveFunction = Args(1)
+                     End If
+                  End If
+               End If
+               Exit Function
+            End If
+         Case "listclear"
+            WriteConfigEntry "lists", Me.SecureEval(Args(0)), "", Me.DL_Path
+         Case "inlist"
+            If UBound(Args) > 0 Then
+               Tmp = Split(GetConfigEntry("lists", Me.SecureEval(Args(0)), Me.DL_Path), "*")
+               SolveFunction = 0
+               For I = 0 To UBound(Tmp)
+                  If Lcase(Args(1)) = Lcase(Tmp(I)) Then
+                     SolveFunction = I + 1
+                     Exit For
+                  End If
+               Next
+            End If
+         Case "foreach"
+            If UBound(Args) > 1 Then
+               Tmp = ""
+               I = 0
+               For Each Item in Split(GetConfigEntry("lists", Me.SecureEval(Args(0)), Me.DL_Path), "*")
+                  If LenB(Item)Then
+                     I = I + 1
+                     '//Set our appendage
+                     Tmp2 = ""
+                     Tmp2 = Args(1)
+                     Tmp2 = Replace(Tmp2,"%item",Item)
+                     Tmp2 = Replace(Tmp2,"%i",I)
+                     Tmp2 = Replace(Tmp2, "##", I)
+                     Tmp2 = Replace(Tmp2, "#R", me.Roman(I))
+                     Tmp2 = Replace(Tmp2, "#A", me.Alpha(I))
+                     Tmp = Tmp & Tmp2
+                  End If
+               Next
+               SolveFunction = Tmp
+            End If
+         Case "listout"
+            Tmp = ""
+            Tmp2 = " ##: "
+            If UBound(Args) > 0 Then
+               Tmp2 = Args(1)
+            End If
+            If Trim(Args(0)) = VBNullString Then Exit Function
+            I = 0
+            For Each Item in Split(GetConfigEntry("lists", Me.SecureEval(Args(0)), Me.DL_Path), "*")
+               If LenB(Item)Then
+                  I = I + 1
+                  If Tmp = "" And Instr(Tmp2, "#") = 0 Then
+                     Tmp = Item
+                  Else
+                     Dim Seperator
+                     Seperator = Replace(Tmp2, "##", I)
+                     Seperator = Replace(Seperator, "#R", me.Roman(I))
+                     Seperator = Replace(Seperator, "#A", me.Alpha(I))
+                     Tmp = Tmp & Seperator & Item
+                  End If
+               End If
+            Next
+            Tmp = Replace(LTrim(Tmp), "|ASTRIX|", "*")
+            SolveFunction = Tmp
+         Case "listitem" '//<Listname>, <Item Number>
+            If UBound(Args) >= 1 Then
+               Tmp = Split(GetConfigEntry("lists", Me.SecureEval(Args(0)), Me.DL_Path), "*")
+               If UBound(Tmp) >= Int(Args(1)) Then SolveFunction = Tmp(Int(Args(1)))
+            End If
+         Case "listsize"
+            If UBound(Args) >= 0 Then
+               Tmp = Split(GetConfigEntry("lists", Me.SecureEval(Args(0)), Me.DL_Path), "*")
+               SolveFunction = UBound(Tmp)
+            End If
+         Case "getdef"
+            SolveFunction = GetConfigEntry("def", Me.SecureEval(Args(0)), BotPath & "definitions.ini")
+         Case "setdef"
+            If UBound(Args) = 1 Then
+               WriteConfigEntry "def", Me.SecureEval(Args(0)), Me.SecureEval(Args(1)), BotPath & "definitions.ini"
+            End If
+         Case "runcc"
+            '// - This does calls some subs outside of the class -- until I can figure out a better way.
+            '//Call ccx_runcc(Name, Username, Arguments, Source)
+            If UBound(Args) >= 2 Then
+               Call ccx_runcc(Args(0), -1, Args(1), Args(2))
+            ElseIf UBound(Args) >= 1 Then
+               Call ccx_runcc(Args(0), -1, Args(1), -1)
+            Else
+               Call ccx_runcc(Args(0), -1, VBnullstring, -1)
+            End If
+         Case "var", "getdl", "showvar" '// VARNAME, [SHOW IF NOT EXISTS] = Null
+            If Args(0) <> VBNullString Then
+               SolveFunction = GetConfigEntry("main", Me.SecureEval(Args(0)), Me.DL_Path)
+               If SolveFunction = VBNullString AND UBound(Args) = 1 Then
+                  SolveFunction = Args(1)
+               End If
+            End If
+         Case "setvar", "setdl" '// DLNAME, DATA, [RETURN RESULT] = False
+            If UBound(Args) >= 1 Then
+               WriteConfigEntry "main", Me.SecureEval(Args(0)), Me.SecureEval(Args(1)), Me.DL_Path
+            End If
+            '//If true is added to the arguement.
+            If UBound(Args) >= 2 Then
+               If Lcase(Args(2)) = "true" Then
+                  SolveFunction = Me.SecureEval(Args(1))
+               End If
+            End If
+         Case "withvar", "withdl" '// DLNAME, OPERATION, [RETURN RESULT] = False
+            If UBound(Args) >= 1 Then
+               Tmp = GetConfigEntry("main", Me.SecureEval(Args(0)), Me.DL_Path)
+               If IsNumeric(Args(1)) Then
+                  Tmp = Me.SecureEval(Tmp & "+" & Int(Args(1)))
+               '//Plus
+               ElseIf IsNumeric(Replace(Args(1), "+", "")) Then
+                  Tmp = Me.SecureEval(Tmp & "+" & Replace(Args(1), "+", ""))
+               '//Multiply
+               ElseIf IsNumeric(Replace(Args(1), "*", "")) Then
+                  Tmp = Me.SecureEval(Tmp & "*" & Replace(Args(1), "*", ""))
+               '//Division
+               ElseIf IsNumeric(Replace(Args(1), "/", "")) Then
+                  Tmp = Me.SecureEval(Tmp & "/" & Replace(Args(1), "/", ""))
+               '//Power
+               ElseIf IsNumeric(Replace(Args(1), "^", "")) Then
+                  Tmp = Me.SecureEval(Tmp & "^" & Replace(Args(1), "^", ""))
+               '//Modulo Division
+               ElseIf IsNumeric(Replace(Args(1), "MOD", "")) Then
+                  Tmp = Me.SecureEval(Tmp & "MOD" & Replace(Args(1), "MOD", ""))
+               '//Append it
+               ElseIf Left(Args(1), 1) = "&" Then
+                  Tmp = Me.SecureEval(Tmp & Mid(Args(1), 2))
+               '//PrePend it
+               ElseIf Right(Args(1), 1) = "&" Then
+                  Tmp = Me.SecureEval(Mid(Args(1), 1, Len(Args(1)) - 1) & Tmp)
+               '//Set it
+               Else
+                  Tmp = Me.SecureEval(Args(1))
+               End If
+               '//Write the solution.
+               WriteConfigEntry "main", Me.SecureEval(Args(0)), Tmp, Me.DL_Path
+            End If
+            '//If true is added to the arguement.
+            If UBound(Args) = 2 Then
+               If Lcase(Args(2)) = "true" Then
+                  SolveFunction = Tmp
+               End If
+            End If
+      End Select
+ 
+      '//Check registered functions
+      If FuncList.Exists(Name) Then
+         
+         '//Check Referenced functions.
+         If IsObject(FuncList.Item(Name)(0)) Then '// - just run it..
+            '//Usefully the vartype = 9 if there's arguments and 8 if there aren't.
+            If VarType(FuncList.Item(Name)(0)) = 8 Then
+               SolveFunction = FuncList.Item(Name)(0)
+               Exit Function
+            End If
+            On Error Resume Next
+            '//Loop through until we find how many arguments are required for the function.
+            For I = 0 to 15
+               If UBound(Args) >= I Then
+                  Tmp = Tmp & ",""" & Args(I) & """"
+               Else
+                  Tmp = Tmp & ",VBNullString"
+               End If
+               '//Lets try it
+               SolveFunction = Eval("FuncList.Item(Name)(0)(" & Mid(Tmp, 3) & ")")
+               '//R We Teh  Fail?
+               If Err.Number = 450 Then
+                  Err.Clear '//Try again
+               Else
+                  '//Sucess!
+                  Exit Function
+               End If
+            Next
+            On Error Goto 0
+         End If
+         
+         '//Callback functions.
+         '//Grab as many arguments as the function accepts.
+         '//Depreciated method.
+         For I = 0 To FuncList.Item(Name)(1) - 1
+            '//Was the argument given?
+            If UBound(Args) >= I Then
+               ArgList = ArgList & ", """ & Args(I) & """"
+            Else
+               '//Nope, lets give VBNullString
+               ArgList = ArgList & ", VBNullString"
+            End If
+         Next
+         '//Add Parens, and eval it.
+         ArgList = "(" & Mid(ArgList, 3) & ")"
+         SolveFunction = Eval(FuncList.Item(Name)(0) & ArgList)
+         Exit Function
+      End If
+      
+         'Addchat VByellow, "Solve Function end - " & SolveFunction
+   End Function
+ 
+   '//Returns the length of the command, if it is one.
+   Public Function IsFunction(Text, Priority)
+ 
+      'Addchat VByellow, Priority & ") IsFunction Start: " & Text
+      If Instr(Text, "(") < 2 Then Exit Function
+      
+      Dim TmpList, Tmp
+      IsFunction = 0
+      Text = LCase(Mid(Text, 2, Instr(Text, "(") - 2))
+      Priority = Int(Priority)
+      If Priority = 1 Then
+         IsFunction = 0
+         For Each Func in Me.FunctionsP1
+            If Text = Func Then
+               IsFunction = Len(Func) + 1
+               Exit For
+            End If
+         Next
+      End If
+ 
+      If Priority = 2 Then
+         For Each Func in Me.FunctionsP2
+            Tmp = InStr(1, Text, "%" & Func, 1)
+            If Text = Func Then
+               IsFunction = Len(Func) + 1
+               Exit For
+            End If
+         Next
+      End If
+      '//Check Registered functions:
+      For Each Func in Me.FuncList
+         If Text = Lcase(Func) Then
+            If Me.FuncList.Item(Func)(2) = Priority Then
+               IsFunction = Len(Func) + 1
+               Exit For
+            End If
+         End If
+      Next
+      
+      'Addchat VBYellow, "IsFunction End [" & IsFunction & "]"
+      
+   End Function
+ 
+   '//A more forgiving/secure wraper for the Eval function
+   Public Function SecureEval(Text)
+
+      If Text = "" Then Exit Function
+      '//Unparsed remnants should return null.
+      If Left(Text, 1) = "%" Then Exit Function
+      Tmp = Me.StrRep(Text, "mod", "")
+      If UCase(Tmp) = LCase(Tmp) Then
+         On Error Resume Next
+         SecureEval = Eval(Text)
+         If Err.Number = 1032 OR Err.Number = 1002 Then
+            SecureEval = Text
+            Err.Clear
+            Exit Function
+         ElseIf Err.Number Then
+            err.raise Err.Number, "SecureEval", "CCX: Error occured when parsing Eval"
+            Exit Function
+         End If
+         On Error Goto 0
+      ElseIf InStr(Text, "<>") Then
+         Tmp = Split(Text, "<>")
+         Tmp(0) = """" & LCase(Trim(Tmp(0))) & """"
+         Tmp(1) = """" & LCase(Trim(Tmp(1))) & """"
+         SecureEval = Eval(Tmp(0) & "<>" & Tmp(1))
+      '//Alias
+      ElseIf InStr(Text, "!=") Then
+         Tmp = Split(Text, "!=")
+         Tmp(0) = """" & LCase(Trim(Tmp(0))) & """"
+         Tmp(1) = """" & LCase(Trim(Tmp(1))) & """"
+         SecureEval = Eval(Tmp(0) & "<>" & Tmp(1))
+      ElseIf InStr(Text, "=") Then
+         Tmp = Split(Text, "=")
+         Tmp(0) = """" & LCase(Trim(Tmp(0))) & """"
+         Tmp(1) = """" & LCase(Trim(Tmp(1))) & """"
+         SecureEval = Eval(Tmp(0) & "=" & Tmp(1))
+      '//Timestamps and greater/less than.
+      ElseIf InStr(Text, ">") Then
+         Tmp = Split(Text, ">")
+         If IsDate(Tmp(0)) AND IsDate(Tmp(1)) Then
+            If DateDiff("s",Tmp(0),Tmp(1)) > 0 Then
+               SecureEval = False
+            Else
+               SecureEval = True
+            End If
+         End If
+      ElseIf InStr(Text, "<") Then
+         Tmp = Split(Text, "<")
+         If IsDate(Tmp(0)) AND IsDate(Tmp(1)) Then
+            If DateDiff("s",Tmp(0),Tmp(1)) < 0 Then
+               SecureEval = False
+            Else
+               SecureEval = True
+            End If
+         End If
+      Else
+         SecureEval = Text
+      End If
+   End Function
+ 
+   '//Thanks Ronin
+   Public Function FindCommands(What, Access, Flags)
+ 
+      FindCommands = ""
+      Dim Keys
+      Keys = Me.CC.Keys
+      If What <> "" Then Keys = Filter(Keys, What, True)
+      
+      For Each Key in Keys
+         If Me.HasAccess(Key, Access, Flags) Then
+            FindCommands = FindCommands & Key & ", "
+         End If
+      Next
+ 
+      If Right(FindCommands, 2) = ", " Then FindCommands = Left(FindCommands, Len(FindCommands) - 2)
+   End Function
+ 
+   '//Returns True/False
+   Public Function HasAccess(MyCommand, MyAccess, MyFlags)
+ 
+      If Not Me.CC.Exists(MyCommand) OR MyCommand = VBNullString Then Exit Function
+      Dim ReqFlags, ReqAccess
+      MyFlags = UCase(MyFlags)
+      ReqFlags = UCase(Me.CC.Item(MyCommand).Flags)
+      ReqAccess = Int(Me.CC.Item(MyCommand).Access)
+      
+      If MyAccess >= ReqAccess OR ReqAccess = 0 Then
+         HasAccess = True
+      Else
+         HasAccess = False
+         Exit Function
+      End If
+      For I = 1 to Len(ReqFlags)
+         If InStr(MyFlags, Mid(ReqFlags, I, 1)) = 0 Then
+            HasAccess = False
+            Exit Function
+         End If
+      Next
+   End Function
+   
+   '//Uses arrays or strings - ignores case.
+   Public Function StrRep(MyString, MyThis, MyThat)
+      '//I see no reason to veryify my data further than this - it'le error appropiately if somethings wrong.
+      If IsArray(MyThis) Then
+         Dim I
+         StrRep = MyString
+         For I = 0 To UBound(MyThis)
+            StrRep = Replace(StrRep, MyThis(I), MyThat(I), 1, -1, 1)
+         Next
+      Else
+         StrRep = Replace(MyString, MyThis, MyThat, 1, -1, 1)
+      End If
+   End Function
+   
+   
+   '//Turns seconds into something like: "6 Day(s) 23:01:52"
+   Public Function SecondsToTime(Seconds)
+   
+      Dim Days, Hours, Minutes
+      Days = Int(Seconds / 86400)
+      Seconds = Seconds MOD 86400
+      Hours = AddZero(Int(Seconds / 3600))
+      Seconds = Seconds MOD 3600
+      Minutes = AddZero(Int(Seconds / 60))
+      Seconds = AddZero(Seconds MOD 60)
+      
+      If Days Then
+         SecondsToTime = Days & " Day(s) " & Hours & ":" & Minutes & ":" & Seconds
+      ElseIf Hours Then
+         SecondsToTime = Hours & ":" & Minutes & ":" & Seconds
+      Else
+         SecondsToTime = Minutes & ":" & Seconds
+      End If
+   End Function
+   
+   Private Function AddZero(Number)
+   
+      If Len(Number) = 1 Then
+         AddZero = "0" & Number
+      Else
+         AddZero = Number
+      End If
+   End Function
+   
+   '//Public Use Functions  
+   '//Deprecitated, see below.
+   Public Sub RegisterFunction(Name, CallBack, Args, Priority)
+      If FuncList.Exists(Name) Then
+         err.raise 1, "RegisterFunction", "CCX: Duplicate function registered: " & Name
+      Else
+         FuncList.Add Name, Array(CallBack, Args, Priority)
+      End If
+   End Sub
+   
+   '//Newer way to register functions.
+   Public Function Register(Name, Ref, Priority)
+      If FuncList.Exists(Name) Then
+         err.raise 1, "Register", "CCX: Duplicate function registered: " & Name
+      ElseIf IsObject(Ref) Then
+         FuncList.Add Name, Array(Ref, 0, Priority)
+      Else
+         err.raise 1, "Register", "CCX: Improper function reference"
+      End If
+   End Function
+ 
+   Public Function UnregisterFunction(Name)
+ 
+      If FuncList.Exists(Name) Then
+         FuncList.Remove(Name)
+         UnregisterFunction = True
+      Else
+         UnregisterFunction = False
+      End If
+   End Function
+   
+   
+       '**************************************
+    ' Name: Roman Numerals
+    ' Description:This converts a number to 
+    '     roman numerals.
+    ' By: Sock
+    '
+    ' Inputs:The number you want to format.
+    '
+    ' Returns:The roman numeral for that num
+    '     er.
+    '
+    'This code is copyrighted and has    ' limited warranties.Please see http://w
+    '     ww.Planet-Source-Code.com/vb/scripts/Sho
+    '     wCode.asp?txtCodeId=7078&lngWId=4    'for details.    '**************************************
+    
+    'example usage:
+    'response.write "2001: " & roman(2001)
+    'or msgbox "2001: " & roman(2001)
+    function roman(number)
+    If Number < 0 Then number = abs(Number) '//Snap
+    Dim v, w, x, y
+    Dim str1
+    Dim roman_unit
+    Dim roman_tens
+    Dim roman_hund
+    Dim roman_thou
+    roman_unit = Array("","I","II","III","IV","V","VI","VII","VIII","IX")
+    roman_tens = Array("","X","XX","XXX","XL","L","LX","LXX","LXXX","XC")
+    roman_hund = Array("","C","CC","CCC","CD","D","DC","DCC","DCCC","CM")
+    roman_thou = Array("","M","MM","MMM","MMMM","MMMMM")
+    v = 0
+    w = 0
+    x = 0
+    y = 0
+    v = ((number - (number mod 1000)) / 1000)
+    number = (number mod 1000)
+    w = ((number - (number mod 100)) / 100)
+    number = (number mod 100)
+    x = ((number - (number mod 10)) / 10)
+    y = (number mod 10)
+    roman = roman_thou(v) & roman_hund(w) & roman_tens(x) & roman_unit(y)
+    End function
+   
+   Public Function Alpha(ByVal Number)
+   
+      If Number > 0 Then
+         Number = Number - 1
+         Alpha = Chr((Number MOD 26) + 65)
+         If Int(Number / 26) MOD 2 = 1 Then
+            Alpha = Lcase(Alpha)
+         End If
+      End If
+   End Function
+   
+   
+   
+   '//It was easyer to just copy this from the net.
+   Public Sub DoFileSort()
+
+      'Option Explicit
+      Dim oFSO, ForReading, ForWriting, sortFile, MyList, myArray, ts, i, j, temp, line, report
+      ForReading = 1
+      ForWriting = 2
+      Set oFSO=CreateObject("Scripting.FileSystemObject")
+      'comment out the next line if you want to supress prompting for the file location
+      'sortFile = InputBox("What file should I sort?  Full path please!", "File To Sort")
+      'uncomment the next line if you want to have a static file location
+      sortFile =  Me.CC_Path
+      MyList= ofso.OpenTextFile(sortFile, ForReading).ReadAll
+      myArray=Split(MyList,vbCrLf, -1, vbtextcompare)
+       
+      'bubble sort thanks to Richard Lowe, 4GuysFromRolla.com
+      'what he does here is check each element in the array
+      'against the next value to see if it is greater than it.
+      'If location1 is > location2 write location1 to temp,
+      'then write location2 to location1 and finally write
+      'temp to location2
+
+      for i = UBound(myArray) - 1 To 0 Step -1
+         for j= 0 to i
+            if myArray(j)>myArray(j+1) then
+               temp=myArray(j+1)
+               myArray(j+1)=myArray(j)
+               myArray(j)=temp
+            end if
+         next
+      next
+      'end bubble sort.  Thanks Richard!
+
+      For Each line In myArray
+       'Check for blank lines and ignore them
+       If Len(line) <> 0 Then
+       report = report & line & vbcrlf
+       End If
+      Next
+
+      'MsgBox "The following will be written to " & sortfile & vbCrLf & report, vbOkOnly
+
+      'Now write the data back to the original file in sorted order
+      Set ts = oFSO.CreateTextFile (sortFile, ForWriting)
+      ts.write report
+   End Sub
+   
+   
+   
+End Class
+
+'//End of line. Hope you enjoyed your read.
+

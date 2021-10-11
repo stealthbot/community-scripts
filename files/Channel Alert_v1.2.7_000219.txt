@@ -1,0 +1,178 @@
+Script("Name") = "Channel Alert"
+Script("Author") = "Neco"
+Script("Major") = 1
+Script("Minor") = 2
+Script("Revision") = 7
+Script("Description") = "Alerts the bot owner when a specified user joins the channel."
+
+'//Makes up the variables.
+Private ca_Users, ca_AddCommand, ca_RemCommand, ca_ViewCommand, ca_RemAllCommand, ca_Access, ca_Info, ca_BotOwner, ca_AutoRemove, FSO
+
+Sub Event_Load()
+  '//*************CUSTOMIZABLE SETTINGS**************
+'//Change the value to the amount of access required for each command.
+ca_Access = 5
+'//Change the name of the add command.
+ca_AddCommand = "caAdd"
+'//Change the name of the remove command.
+ca_RemCommand = "caRemove"
+'//Change the name in the brackets to customize the view command.
+ca_ViewCommand = "caView"
+'//Change the name in the brackets to customize the clearall command.
+ca_RemAllCommand = "caRemoveAll"
+'//Put your name here! If you were the one that used the command, your computer will make a noise.
+ca_BotOwner = "Neco"
+'//If set to true, it will automatically remove a user once the operator has been notified.
+ca_AutoRemove = False
+'//If set to true, it will show additional information in the Bot Console (For testing purposes).
+ca_Info = False
+
+'//************DO NOT EDIT BELOW HERE*****************
+
+  '//Creates the Dictionary in which the users are stored.
+  Set ca_Users = CreateObject("Scripting.Dictionary")
+  '//Sets it to ignore cases.
+  ca_Users.CompareMode = 1
+  '//Sets FSO to create a .txt file.
+  Set FSO = CreateObject("Scripting.FileSystemObject")
+  If ca_Info Then AddChat vbGreen, "Channel Alert: Loading data from " & BotPath & "caUsers.txt"
+  '//Sets the File Path, Read Only, Creates the file if it does not exist.
+  Set File = fso.OpenTextFile(BotPath & "caUsers.txt", 1, True)
+  '//Splits the file into individual lines.
+  fileArray = Split(File.ReadAll, vbCrLf)
+  For i = 0 to UBound(fileArray)
+  '//Checks if the line has " | " in it.
+  If InStr(1, fileArray(i) , " | ", 1) > 0 Then
+    '//Splits the line into Operator and User.
+    msgArray = Split(fileArray(i), " | ")
+    '//Imports the newfound data into the database.
+    ca_Users.Item(msgArray(1)) = msgArray(0)
+    '//Displays info if it is set to do so.
+    If ca_Info Then AddChat vbGreen, msgArray(1) & " | " & ca_Users.Item(msgArray(1))
+  End If
+  Next
+  If ca_Info Then AddChat vbGreen, "Channel Alert: Data uploaded!"
+File.Close
+End Sub
+
+Sub Event_Usertalk(Username, Flags, Message, Ping)
+  If Split(LCase(Message))(0) = BotVars.Trigger & LCase(ca_AddCommand) Then
+    If GetDBEntry(Username).Rank < ca_Access Then Exit Sub
+    If ca_Info Then AddChat vbGreen,  "Channel Alert: AddCommand has been used, user had enough access."
+    msg = Split(Message)
+    text = vbNullString
+    If UBound(msg) > 0 Then
+      For i = 1 to UBound(msg)
+      If ca_Users.Exists(LCase(msg(i))) Then
+        If ca_Info Then AddChat vbRed, "Channel Alert: ERROR That user is already in the database."
+        text = text & msg(i) & " is already added. "
+      Else
+        ca_Users.Item(msg(i)) = Username
+        text = text & msg(i) & " has been added. "
+      End If
+    Next
+    AddQ "/w " & Username & " " & text
+    Else
+      If ca_Info Then AddChat vbRed, "Channel Alert: ERROR User did not specify a user, asking to retry..."
+      AddQ "/w " & Username & " Please specify a user to be informed about."
+    End If
+  Elseif Split(LCase(Message))(0) = BotVars.Trigger & LCase(ca_RemCommand) Then
+    If GetDBEntry(Username).Rank < ca_Access Then Exit Sub
+    If ca_Info Then AddChat vbGreen, "Channel Alert: RemCommand has been used, user had enough access."
+    msg = Split(Message)
+    text = vbNullString
+    If UBound(msg) > 0 Then
+      For i = 1 to UBound(msg)
+      If ca_Users.Item(msg(i)) = Username Then
+        text = text & msg(i) & " has been removed. "
+        ca_Users.Remove msg(i)
+      Else
+        text = text & msg(i) & " could not be found. "
+      End If
+      Next
+      AddQ "/w " & Username & " " & text
+    Else
+      If ca_Info Then AddChat vbRed, "Channel alert: ERROR No user specified. Asking to retry..."
+      AddQ "/w " & Username & " Please enter a name to remove."
+    End If
+  Elseif Split(LCase(Message))(0) = BotVars.Trigger & LCase(ca_ViewCommand) Then
+    If GetDBEntry(Username).Rank < ca_Access Then Exit Sub
+    text = vbNullString
+    users = ca_Users.Keys
+    items = ca_Users.Items
+    x = 0 - 1
+    If UBound(users) > x Then
+      For i = 0 to UBound(users)
+      If items(i) = Username Then
+        If text = vbNullString Then
+          text = text & users(i)
+        Else
+          text = text & " | " & users(i)
+        End If
+      End If
+      Next
+      If text = vbNullString Then
+      If ca_Info Then AddChat vbRed, "Channel Alert: ERROR No users found." 
+        AddQ "/w " & Username & " You have not requested any users."
+      Else
+        If ca_Info Then AddChat vbGreen, "Channel Alert: Users found..." 
+        AddQ "/w " & Username & " Users found: " & text
+        text = vbNullString
+      End If
+    Else
+      If ca_Info Then AddChat vbRed, "Channel Alert: ERROR No users found on the database." 
+      AddQ "/w " & Username & " There are no users on the database."
+    End If
+  Elseif Split(LCase(Message))(0) = BotVars.Trigger & LCase(ca_RemAllCommand) Then
+    If GetDBEntry(Username).Rank < ca_Access Then Exit Sub
+    If ca_Info Then AddChat vbGreen, "Channel Alert: ClearCommand has been used, user had enough access."
+    users = ca_Users.Keys
+    items = ca_Users.Items
+    tempValue = 0
+    For i = 0 to UBound(items)
+    If Username = items(i) Then
+      ca_Users.Remove users(i)
+      If text = vbNullString Then
+        text = users(i)
+      Else
+        text = text & " | " & users(i)
+      End If
+      tempValue = tempValue + 1
+    End If
+    Next
+    If tempValue > 1 Then AddQ "/w " & Username & " The users " & text & " have been removed from the Database."
+    If tempValue = 1 Then AddQ "/w " & Username & " The user " & text & " has been removed from the Database."
+    If tempValue = 0 Then AddQ "/w " & Username & " No users were found under your name."  
+  End If
+End Sub
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+  If ca_Users.Exists(Username) Then
+    If ca_Info Then AddChat vbGreen, "Channel Alert: " & ca_Users.Item(Username) & " wanted to be alerted when " & Username & " had joined the channel. Contacting " & ca_Users.Item(Username) & "..."
+    AddQ "/w " & ca_Users.Item(Username) & " " & Username & " has joined " & myChannel & "."
+    If ca_Users.Item(Username) = ca_BotOwner Then
+      DoBeep 600, 200
+      DoBeep 400, 100
+      DoBeep 500, 100
+      DoBeep 50, 200
+      DoBeep 1000, 150
+    End If
+    If ca_AutoRemove Then
+    ca_Users.Remove Username
+    If ca_Info Then AddChat vbGreen, "Channel Alert: AutoRemove is activated, removing " & Username & "." 
+    End If
+  End If
+End Sub
+
+Sub Event_Close()
+  If ca_Info Then AddChat vbGreen, "Channel Alert: Saving data to " & BotPath & "caUsers.txt"
+  users = ca_Users.Keys
+  items = ca_Users.Items
+  fso.DeleteFile(BotPath & "caUsers.txt")
+  Set File = fso.OpenTextFile(BotPath & "caUsers.txt", 2, True)
+  For i = 0 to UBound(users)
+    File.WriteLine items(i) & " | " & users(i)
+  Next
+  File.Close
+  If ca_Info Then AddChat vbGreen, "Channel Alert: Data saved!"
+End Sub

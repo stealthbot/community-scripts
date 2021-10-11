@@ -1,0 +1,202 @@
+Script("Name") = "Command Announcer"
+Script("Author") = "Dennis"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 0
+Script("Description") = "This Script will show Users all Commands which are aviable for them."
+
+'#############################################
+'# Look at the Information in the next #Box#!#
+'#############################################
+
+Sub event_load()
+'//On first load:
+Version = Script("Major") & "." & Script("Minor") & "." & Script("Revision")
+If GetConfigEntry("Command Announcer", "Firstrun", "scripts/scripts.ini") <> "True" Then
+ WriteConfigEntry "Command Announcer", "Firstrun", "True", "scripts/scripts.ini"
+
+ Addchat vbred, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+ Addchat vbgreen, "This appears to be your first run of Dennis' Command Announcer Script (v " & Version & ")."
+ Addchat vbyellow, " "
+ Addchat vbyellow, "To see what this Script is doing type in" & Botvars.trigger & "commands"
+ Addchat vbyellow, "Then your Bot will whisper/write all example Messages where I added to this Scirpt."
+ Addchat vbyellow, "Be carefule this Commands/Messages where I added are just an example!"
+ Addchat vbred, "Some Commands are from other Scripts and won't work on your Stealthbot!"
+ Addchat vbred, "You have to change this Commands & Messages to your Bot, Scripts and Command Access'."
+ Addchat vbyellow, " "
+ Addchat vbgreen, "    -Created into Script Form from: Dennis | Idea of the Script: aRt)Y"
+ Addchat vbred, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+
+'//A little Tutorial: 
+Tut = Msgbox("Would you like to view the tutorial about the Command Announcer Script?", vbyesno, "Command Announcer by Dennis & art)y")
+If Tut = 6 Then
+ Msgbox "K, lets start at the Basics!" & vbnewline & "First you must open the 'Command-Script'" & vbnewline & "(By your Bot Menu --> Scripting --> Commands --> View Script)" & vbnewline & "Then you must look at the Commands/Messages and change/add or delete them as you want.", vbokonly, "Command Announcer by Dennis & art)y"
+ Msgbox "Be carefule this Commands/Messages where I added are just an example!" & vbnewline & vbnewline & "Some Commands are from other Scripts and won't work on your Stealthbot!" & vbnewline & "You have to change the Commands & Messages to your Bot, Scripts and Command Access'.", vbokonly, "Command Announcer by Dennis & art)y"
+ Msgbox "That was the little Tutorial about the Command Script!" & vbnewline & vbnewline & "If you want to see this Tutorial again, delete the 2 lines [Commands] & Firstrun=True in your scripts.ini (Scripting -> Open Script folder -> scripts.ini) and reload your Scripts.", vbokonly, "Command Announcer by Dennis & art)y"
+End If
+End If
+
+'##############################################################
+'# Here the Commands will be created                          #
+'# You can add/delete or rename the Commands here as you want #
+'#                                                            #
+'# Please be sure you correct the Commands & Messages         #
+'# to your Stealthbot. Because some listed Commands below     #
+'# need the right Script that they are aviable!               # 
+'##############################################################
+'#    !!This Commands & Messages below are just an example!!  #
+'##############################################################
+
+'//Commands:
+Set cmd = OpenCommand("commands")
+If cmd Is Nothing Then
+Set cmd = CreateCommand("commands")
+With cmd
+.Description = "This Command shows you a lot commands"
+.RequiredRank = 0
+.Save
+End With
+Addchat vbmagenta, "Created commands command!"
+End If
+
+Set cmd = OpenCommand("botinfo")
+If cmd Is Nothing Then
+Set cmd = CreateCommand("botinfo")
+With cmd
+.Description = "This Command shows you a lot Informations about our Hostbots"
+.RequiredRank = 0
+.Save
+End With
+Addchat vbmagenta, "Created botinfo command!"
+End If
+
+Set cmd = OpenCommand("mailinfo")
+If cmd Is Nothing Then
+Set cmd = CreateCommand("mailinfo")
+With cmd
+.Description = "This Command tells you informations about the new mail system!"
+.RequiredRank = 0
+.Save
+End With
+Addchat vbmagenta, "Created mailinfo command!"
+End If
+
+Set cmd = OpenCommand("gt")
+If cmd Is Nothing Then
+Set cmd = CreateCommand("gt")
+With cmd
+.Description = "This Command shows you a lot Informations about the Google Translator"
+.RequiredRank = 0
+.Save
+End With
+Addchat vbmagenta, "Created gt command!"
+End If
+
+Set cmd = OpenCommand("fc")
+If cmd Is Nothing Then
+Set cmd = CreateCommand("fc")
+With cmd
+.Description = "This Command shows you a lot Informations about the Google Translator"
+.RequiredRank = 0
+.Save
+End With
+Addchat vbmagenta, "Created fc command!"
+End If
+
+Set cmd = OpenCommand("oc")
+If cmd Is Nothing Then
+Set cmd = CreateCommand("oc")
+With cmd
+.Description = "This Command shows you a lot Informations about the Google Translator"
+.RequiredRank = 0
+.Save
+End With
+Addchat vbmagenta, "Created oc command!"
+End If
+
+Set cmd = Nothing
+End Sub
+
+'//Here the Commands get their function, what they should do
+Sub Event_Command(Command)
+Cmd = Command.Args
+Username = Command.Username
+Select Case LCase(Command.Name)
+ Case "commands" : Call commands(Command, Username)
+ Case "botinfo" : Call botinfo(Command, Username) 
+ Case "mailinfo" : Call mailinfo(Command, Username) 
+ Case "gt" : Call gt(Command, Username) 
+ Case "fc" : Call fc(Command, Username) 
+ Case "oc" : Call oc(Command, Username) 
+End Select
+End Sub
+
+
+'##############################################################
+'# Output of the Commands - Message to the User               #
+'# You can add/delete or rename the Messages as you want      #  
+'##############################################################
+
+Private Sub commands(Command, Username) '//Privat Function for the Command - What should the Command do...
+Command.Respond Replace(commandsX, "%t", Botvars.trigger) '//THIS LINE IS NEEDED for the Command!
+Command.Respond "Commands with the access 0(Pubblic) - 20(Safelisted):"
+Command.Respond "!c (Claninfo), !shamans, !members, !peons, !access [0]"
+Command.Respond "!helprank <access>, !helpattr <flag> [0]"
+Command.Respond "!botinfo --> Hostbots-Info [0]"
+Command.Respond "!mailinfo --> Mail-System-Info [0]"
+Command.Respond "!games (!gn) --> Gamename of the Hostbots [0]"
+Command.Respond "!pingall, !ping <username>, !pingme, !gt --> Google Translator [0]"
+Command.Respond "!afk <reason>, !noafk, !afklist [0]"
+Command.Respond "!fc --> Fun Commands, !oc --> Operator Commands [20]"
+End Sub
+
+
+Private Sub botinfo(Command, Username)
+Command.Respond Replace(botinfoX, "%t", Botvars.trigger) '//THIS LINE IS NEEDED for the Command!
+Command.Respond "Hostbot - Info"
+Command.Respond "stid-b0t:"
+Command.Respond "Owner: <Owner>"
+Command.Respond "Rootadmins: <Rottadmins>"
+Command.Respond "Admins: <Admins>"
+Command.Respond " "
+Command.Respond "Clan_Hostbot:"
+Command.Respond "Owner: <Owner>"
+Command.Respond "Admins: <Admins>"
+End Sub
+
+
+Private Sub mailinfo(Command, Username)
+Command.Respond Replace(mailinfoX, "%t", Botvars.trigger) '//THIS LINE IS NEEDED for the Command!
+Command.Respond "Mail - Info"
+Command.Respond "!mail <username> <message>"
+Command.Respond "!mymail, !mymail ID"
+Command.Respond "(ID is the number of the mail. For example: 4F9R)"
+Command.Respond "!delmail ID/old/all"
+End Sub
+
+
+Private Sub gt(Command, Username)
+Command.Respond Replace(gtX, "%t", Botvars.trigger) '//THIS LINE IS NEEDED for the Command!
+Command.Respond "Google Translator:"
+Command.Respond "!trans <word> [Only english > german]"
+Command.Respond "!gtrans (shows all languages)"
+Command.Respond "!gtrans 'L'anguage <> 'L'anguage [20]"
+End Sub
+
+
+Private Sub fc(Command, Username)
+Command.Respond Replace(fcX, "%t", Botvars.trigger) '//THIS LINE IS NEEDED for the Command!
+Command.Respond "Fun Commands: [20]"
+Command.Respond "!math <number> +-*/ <number>"
+Command.Respond "!trivia <on/off> - ID questions"
+Command.Respond "!gamble, !bet <amount>, !roll, !money"
+Command.Respond "!roll <0-10^9>, !hangman"
+End Sub
+
+
+Private Sub oc(Command, Username)
+Command.Respond Replace(ocX, "%t", Botvars.trigger) '//THIS LINE IS NEEDED for the Command!
+Command.Respond "Operator Commands: [20]"
+Command.Respond "!votekick <username>"
+Command.Respond "!voteban <username> (Dont vote to Ban a Clan Member!)"
+End Sub

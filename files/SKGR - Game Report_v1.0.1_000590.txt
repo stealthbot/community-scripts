@@ -1,0 +1,427 @@
+Script("Name") = "SKGR - Game Report"
+Script("Abbreviation") = "SKGR"
+Script("Author") = "Sierra.Komodo"
+Script("Major") = "1"
+Script("Minor") = 0
+Script("Revision") = 1
+Script("Description") = "Game Report Script for Sierra.Komodo's Script Set."
+
+
+'// Extended Description
+'//     null
+'//
+'//
+'// Commands
+'//   commandname
+'//     Description
+'//     Syntax: 
+'//
+'//
+'// ChangeLog
+'//     null
+'//
+'//
+'// Known Bugs
+'//     null
+'//
+'//
+'// To-Do List
+'//     null
+
+
+
+Private userInput
+Private userRank
+Private rankCheck
+Private setRank
+Private cmdRespond
+
+Private grStatus
+Private grGameName
+Private grTime
+Private grGateway
+Private grGameHost
+
+Public skgrDBPath
+Public skgrConn
+Private skgrFSO
+
+Private Version     '// Holds the scripts current version in one line.
+Private SName       '// Holds the scripts message name
+Private MC1         '// Holds the primary text color code
+Private MC2         '// Holds the secondary text color code
+Private ME1
+Private ME2
+
+
+Sub Event_Load()                              
+
+  userInput = 0
+  Version = Script("Major") & "." & Script("Minor") & " R" & Script("Revision")
+  SName = "Game Report"
+  MC1 = 4227072
+  MC2 = 4243264
+  ME1 = 00010010
+  ME2 = 00010100
+  
+  Call ConsoleMessage("normal", Script("Author") & "'s " & Script("Name") & " Version " & Version & " Loaded.")
+
+  If GetSettingsEntry("Version") = vbNullString Then
+    WriteSettingsEntry "--(skgr Version)", vbNullString
+    WriteSettingsEntry "'// Don't edit this line - It won't change anything anyway. It's for your reference", vbNullString
+    WriteSettingsEntry "Version", Version
+    WriteSettingsEntry "--(skgr Database Path)", vbNullString
+    WriteSettingsEntry "'// BEFORE YOU EDIT THE DESTINATION PATH AND FILE NAME - This line MUST match the line under SKMaster, or else the script will NOT function properly.", vbNullString
+    WriteSettingsEntry "'// Modify the line below to reflect wanted destination path for database information. Give only folders.", vbNullString
+    WriteSettingsEntry "skgrPath", BotPath()
+    WriteSettingsEntry "'// Modify the line below to set database file name. Do not use symbols, spaces, or extensions.", vbNullString
+    WriteSettingsEntry "skgrFileName", "skmsDatabase"
+    WriteSettingsEntry "--(skgr Main Settings)", vbNullString
+    Call CleanINI()
+  End If
+  
+  
+  skgrDBPath = GetSettingsEntry("skgrPath") & GetSettingsEntry("skgrFileName") & ".mdb"
+  Set skgrFSO = CreateObject("Scripting.FileSystemObject")
+  If Not skgrFSO.FileExists(skgrDBPath) Then
+    Call ConsoleMessage("error", "Database does not exist at the path specified. (" & skgrDBPath & ")")
+   Else
+    skgr_connect()
+    skgr_set_settings()
+  End If
+
+  Call CreateCmds()
+  
+End Sub
+
+
+Sub skgr_connect()
+
+  Set skgrConn = CreateObject("ADODB.connection")
+  dsn = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & skgrDBPath
+  skgrConn.ConnectionString = dsn
+  
+  skgrConn.Open
+
+End Sub
+
+
+Sub skgr_set_settings()
+
+
+End Sub
+
+
+Public Sub Event_Command(Command)
+
+  If Command.IsLocal Then Command.Username = BotVars.Username
+  
+  Select Case LCase(Command.Name)
+    Case "skgrtest":            Call skgrtestCmd(Command, Command.Username)
+    Case "skgrdebug":           Call skgrDebugCmd(Command, Command.Username)
+    Case "skgrinitiate":        Call skgrInitiateCmd(Command, Command.Username)
+    Case "skgrend":             Call skgrEndCmd(Command, Command.Username)
+    Case "skgrnamecheck":       Call skgrNamecheck(Command, Command.Username)
+  End Select
+  
+End Sub
+
+
+Private Sub skgrtestCmd(command, user)
+
+  If UBound(Split(command.args)) => 0 Then Exit Sub
+  
+  Call getUserRank(user)
+  Call cmdRankCheck(10, userRank)
+  If RankCheck = False Then Exit Sub
+  
+  cmdRespond = "Testing Greet Script Responses."
+  
+  If user = BotVars.Username Then
+    Call ConsoleMessage("normal", cmdRespond)
+   Else
+    Command.Respond cmdRespond
+  End If
+
+End Sub
+
+
+Private Sub skgrDebugCmd(command, user)
+
+  Call getUserRank(user)
+  Call cmdRankCheck(11, userRank)
+  If RankCheck = False Then Exit Sub
+  
+  skgrConn.Execute("DROP TABLE `gamedata`")
+  skgrConn.Execute("DROP TABLE `playerdata`")
+  Call ConsoleMessage("normal", "Data Tables deleted.")
+
+End Sub
+
+
+Private Sub skgrInitiateCmd(command, user)
+
+  Call getUserRank(user)
+  Call cmdRankCheck(11, userRank)
+  If RankCheck = False Then Exit Sub
+  
+  If grStatus > 0 Then
+    Call ConsoleMessage("error", "A Game Report is already in progress (" & grGameName & ")")
+    Exit Sub
+  End If
+
+  skgrConn.Execute("CREATE TABLE `gamedata` (`status` integer, `gamename` text, `time` text, `gateway` text, `gamehost` text)")
+  skgrConn.Execute("CREATE TABLE `playerdata` (`id` integer, `username` text, `spoof` text, `rhacker` text, `dhacker` text, `hacks` text)")
+  
+  Call writeGameData()
+  grStatus = 1
+  
+    AddChat MC1, "-=Game Report Initiated=-"
+    AddChat MC1, "Game Name: ", MC2, grGameName
+    AddChat MC1, "Game Host: ", MC2, grGameHost
+    AddChat MC1, "Game Time: ", MC2, grTime
+    AddChat MC1, "Gateway: ", MC2, grGateway
+
+End Sub
+
+
+Private Sub writeGameData()
+
+  title = "Game Report"
+  grGameName = InputBox("Game Name", title, "")
+  grTime = Now
+  grGateWay = InputBox("Gateway", title, "")
+  grGameHost = InputBox("Game Host", title, "")
+  
+  Set rs = skgrConn.Execute("SELECT COUNT(*) FROM `gamedata` WHERE `status`=" & 1 & "")
+  If rs.Fields(0) = 0 Then
+    skgrConn.Execute("INSERT INTO `gamedata` (`status`, `gamename`, `time`, `gateway`, `gamehost`) " & _
+    "VALUES (" & 1 & ",'" & grGameName & "','" & grTime & "','" & grGateWay & "','" & grGameHost & "')")
+   Else
+    skgrConn.Execute("UPDATE `gamedata` (`status`, `gamename`, `time`, `gateway`, `gamehosr`) " & _
+    "VALUES (" & 1 & ",'" & grGameName & "','" & grTime & "','" & grGateWay & "','" & grGameHost & "')")
+  End If
+
+End Sub
+
+
+Private Sub getSetRank(setUser, Rank, setComment, Setby)
+
+  If setComment = vbNullString Then setComment = "N/A"
+  
+  Select Case LCase(Rank)
+    Case "m"
+      Rank = "10|M|Master"
+    Case "a"
+      Rank = "9|A|Administrator"
+    Case "o"
+      Rank = "8|O|Operator"
+    Case "j"
+      Rank = "7|J|Moderator"
+    Case "e"
+      Rank = "2|E|Elite"
+    Case "n"
+      Rank = "1|N|Normal"
+    Case "b"
+      Rank = "-1|B|Banned"
+    Case "i"
+      Rank = "-1|I|Ignored"
+    Case "r"
+      Rank = "Remove"
+    Case Else
+      cmdRespond = "You have specified an invalid rank."
+      Exit Sub
+  End Select
+
+  If Rank = "Remove" Then
+    Set rs = skgrConn.Execute("SELECT COUNT(*) FROM `userdb` WHERE `name`='" & setUser & "'")
+    If rs.Fields(0) = 0 Then
+      cmdRespond = "User '" & setUser & "' does not exist in the database."
+      Exit Sub
+    End If
+    
+    Set rs = skgrConn.Execute("SELECT * FROM `userdb` WHERE `name`='" & setUser & "'")
+    
+    skgrConn.Execute("DELETE FROM `userdb` WHERE `name`='" & setUser & "'")
+    cmdRespond = "User '" & setUser & "' has been removed from the database."
+    
+   Else
+    Set rs = skgrConn.Execute("SELECT COUNT(*) FROM `userdb` WHERE `name`='" & setUser & "'")
+    If rs.Fields(0) <> 0 Then
+      Set rs = skgrConn.Execute("SELECT * FROM `userdb` WHERE `name`='" & setUser & "'")
+      If rs.Fields(1) = Rank Then 
+        cmdRespond = "User '" & setUser & "' already set to rank '" & Rank & "'."
+        Exit Sub
+      End If
+      
+      skgrConn.Execute("DELETE FROM `userdb` WHERE `name`='" & setUser & "'")
+    End If
+    skgrConn.Execute("INSERT INTO `userdb` (`name`, `rank`, `comment`, `setby`, `setdate`) " & _
+    "VALUES ('" & setUser & "','" & Rank & "','" & setComment & "','" & Setby & "','" & Now & "')")
+    cmdRespond = "User '" & setUser & "' has been set to rank '" & Rank & "'."
+  End If
+  
+End Sub
+
+
+Private Sub ConsoleMessage(MsgType, Message)
+
+  If LCase(MsgType) = "normal" Then
+    AddChat MC1, SName & ": ", MC2, Message
+  End If
+  If LCase(MsgType) = "normalc" Then
+    AddChat MC2, Message
+  End If
+  If LCase(MsgType) = "error" Then
+    AddChat ME1, "ERROR - " & SName & ": ", ME2, Message
+  End If
+  If LCase(MsgType) = "errorc" Then
+    AddChat ME2, Message
+  End If
+
+End Sub
+
+
+Private Sub getUserRank(user)
+
+  userRank = "0|U|Unranked"
+  
+  Set rs = skgrConn.Execute("SELECT COUNT(*) FROM `userdb` WHERE `name`='" & user & "'")
+  If rs.Fields(0) = 0 Then Exit Sub
+  Set rs = skgrConn.Execute("SELECT * FROM `userdb` WHERE `name`='" & user & "'")
+  userRank = rs.Fields(1)
+  If user = BotVars.Username Then userRank = "11|M|Console"
+  
+End Sub
+
+
+Private Sub cmdRankCheck(cmdRank, cmdUserRank)
+
+  '// Enter Scripting To Check UserRank Against CmdRank
+  RankCheck = False
+  
+  URank = Split(cmdUserRank, "|", 3)
+  If CInt(URank(0)) < cmdRank Then Exit Sub
+  If CInt(URank(0)) => cmdRank Then RankCheck = True
+
+End Sub
+
+
+Private Sub CreateCmds
+  
+  Set cmd = OpenCommand("skgrtest")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("skgrtest")
+    With cmd
+      .Description = "Initial test command for skgr." & vbNewLine
+      .SpecialNotes = "Requires skgr rank/flags:" & vbNewLine & _
+                      "(M)aster"
+      .RequiredRank = "0"
+      
+      .Save
+    End With
+  End If
+  
+  Set cmd = OpenCommand("skgrdebug")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("skgrdebug")
+    With cmd
+      .Description = "Deletes gamedata and playerdata tables."
+      .RequiredRank = "0"
+      
+      .Save
+    End With
+  End If
+  
+  Set cmd = OpenCommand("skgrInitiate")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("skgrInitiate")
+    With cmd
+      .Description = "Initiates the Game Report."
+      .RequiredRank = "0"
+      
+      .Save
+    End With
+  End If
+  
+  Set cmd = OpenCommand("skgrEnd")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("skgrEnd")
+    With cmd
+      .Description = "Ends the Game Report."
+      .RequiredRank = "0"
+      
+      .Save
+    End With
+  End If
+  
+  Set cmd = OpenCommand("skgrNamecheck")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("skgrNamecheck")
+    With cmd
+      .Description = "Automatically checks, and registered a username for the game report."
+      .RequiredRank = "0"
+      
+      .Save
+    End With
+  End If
+
+End Sub
+
+
+Private Sub CleanINI
+
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 1, True)
+      data = Split(File.ReadAll, vbNewLine)
+   File.Close
+
+
+   tMatch = False
+   For i = 0 To UBound(data) -1
+      If tMatch Then
+         If Left(data(i), 3) = "'//" Then
+            line = line & Split(data(i), "=")(0) & vbNewLine
+         ElseIf Left(data(i), 3) = "--(" Then
+            line = line & Split(data(i), "=")(0) & vbNewLine
+         ElseIf InStr(data(i), "[") > 0 AND InStr(data(i), "]") > 0 Then
+            tMatch = False
+            line = line & data(i) & vbNewLine
+         Else
+            line = line & data(i) & vbNewLine
+         End If
+      Else
+         If data(i) = "[crs]" Then
+            tMatch = True
+            line = line & data(i) & vbNewLine
+         Else
+            line = line & data(i) & vbNewLine
+         End If
+      End If
+   Next
+
+   fso.DeleteFile(BotPath & "scripts\scripts.ini")
+   temp = Split(line, vbNewLine)
+   For i = 0 To Ubound(temp) -1
+      Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 8, True)
+         File.WriteLine temp(i)
+      File.Close
+   Next
+End Sub
+
+
+Sub Event_Close()
+
+  skgrConn.Close
+  Call ConsoleMessage("normal","Script closed.")
+
+End Sub
+
+
+Private Sub skgrPLACEHOLDER()
+
+  Exit Sub
+  
+  skgrConn.Execute("CREATE TABLE `hackerdb` (`name` text, `gateway` text)")
+
+End Sub

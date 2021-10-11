@@ -1,0 +1,194 @@
+Script("Name") = "Botgames - Manager"
+Script("Author") = "Dennis"
+Script("Major") = 1
+Script("Minor") = 1
+Script("Revision") = 5
+Script("Description") = "Tells you the Gamenames were currently hosted"
+
+'#############################################################################
+'# Notes:                                                                    #      
+'# Put your host bot usernames here (Const Bot1 = ...)                       #
+'# if you want add more Users delete the ' before Const BOT3 / Const BOT4    #
+'# That you get the Gamenames, your Stealthbot need to be in the Friendlist! #
+'#############################################################################
+
+Const BOT1 = "Your_Botname"
+Const BOT2 = "Second_Bot"
+'Const BOT3 = "" '// If you want add more Bots you must delete ' on the front in this line
+'Const BOT4 = "" '// If you want add more Bots you must delete ' on the front in this line
+
+'###############################################################################                                                                    #      
+'# You also must delete the ' before GameName3/4 and Command.Respond BOT3/BOT4 #
+'###############################################################################
+
+Private Sub Gamesresponse(Command, Username)
+Command.Respond Replace(GamesresponseX, "%t", Botvars.trigger)
+GameName1 = GetConfigEntry(BOT1, "Game", "GameManager.ini")
+GameName2 = GetConfigEntry(BOT2, "Game", "GameManager.ini")
+'GameName3 = GetConfigEntry(BOT3, "Game", "GameManager.ini") '// If you want add more Bots you must delete ' on the front in this line
+'GameName4 = GetConfigEntry(BOT4, "Game", "GameManager.ini") '// If you want add more Bots you must delete ' on the front in this line
+
+Command.Respond BOT1 & " --> " & GameName1
+Command.Respond BOT2 & " --> " & GameName2
+'Command.Respond BOT3 & " --> " & GameName3 '// If you want add more Bots you must delete ' on the front in this line
+'Command.Respond BOT4 & " --> " & GameName4 '// If you want add more Bots you must delete ' on the front in this line
+End Sub
+
+
+'###############                                                             
+'# Main Script #
+'###############
+
+Sub event_load()
+Version = Script("Major") & "." & Script("Minor") & "." & Script("Revision")
+If GetConfigEntry("Settings", "Firstrun", "GameManager.ini") <> "True" Then
+ WriteConfigEntry "Settings", "Firstrun", "True", "GameManager.ini"
+
+ Addchat vbred, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+ Addchat vbgreen, "This appears to be your first run of Dennis' Game Manager Script (v" & Version & ")."
+ Addchat vbyellow, "To see all Commands from the Game Manager Script you must open the Command Manager"
+ Addchat vbyellow, "(In the Menu: Bot -> Command Manager)"
+ Addchat vbgreen, "          -Dennis"
+ Addchat vbred, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+
+ Tut = Msgbox("Would you like to view the tutorial about the Game Manager Script?", vbyesno, "Game Manager by Dennis")
+ If Tut = 6 Then
+  Msgbox "K, lets start at the Basics!" & vbnewline & "First you must open the Game Manager Script with the normal Editor." & vbnewline & "Then you must write the Names of the Bots/Users into the BOT1 / BOT2 field.", vbokonly, "Game Manager by Dennis"
+  Msgbox "After that, your Stealthbot will record and announce the Games, where the Hostbots/Users are hosting!", vbokonly, "Game Manager by Dennis"
+  Msgbox "To see the Gamename(s) that the Hostbots/Users are hosting, you have to type the Command " & botvars.trigger & "games or " & botvars.trigger & "gn", vbokonly, "Game Manager by Dennis"
+  Msgbox "That was the Tutorial about the Game Manager Script!" & vbnewline & "If you want to see this Tutorial again, delete the GameManager.ini out of your Bot folder (Settings -> View Files -> Open Bot folder) and reload your Scripts.", vbokonly, "Game Manager by Dennis"
+ End If
+
+ Set FSO = CreateObject("Scripting.FileSystemObject")
+ Set File = FSO.OpenTextFile(Botpath & "GameManager.ini", 1, True)
+ File.Close
+ Addchat vbmagenta, "Created GameManager.ini file."
+End If
+
+'// Changes of the New Version
+If GetConfigEntry("Settings", "Version", "GameManager.ini") <> Version Then
+ Addchat vbMagenta, "You have updated to version " & Version &" .  Thanks for using my Game Manager script - Dennis!"
+ Msgbox "Only 1 thing happened:" & vbnewline & "- I fixed that Games weren't logged when using German as language", vbokonly, "Gamer Manager - What's new in version " & Version & " - by Dennis"
+ Writeconfigentry "Settings", "Version", version, "GameManager.ini"
+End If
+
+'// Updatefunction
+sUrl = "http://www.suchdichsatt.de/scripte/Updates/GameManager.txt"   
+dummyFile = "Update.txt"
+DeleteUrlCache CStr(sUrl)
+PrintURLtoFile dummyFile, CStr(sUrl)
+currentVersion = GetConfigEntry("Updates", "currentVersion", dummyFile)
+   
+If Version < currentVersion Then
+    Addchat vbred, "Game Manager: A new Update is aviable!:"
+    Addchat vbwhite, "- Please visit http://www.suchdichsatt.de/tutorials/stealthbot_scripte.php or http://www.stealthbot.net/forum/index.php?/topic/6161-botgame-manager/ to download"
+ElseIf Version = currentVersion Then
+    ' Addchat vbMagenta, "Game Manager: Current Version!"
+Else
+    Addchat vbMagenta, "Game Manager: Versioncontrol failed!" & vbnewline & "Please visit http://www.suchdichsatt.de/tutorials/stealthbot_scripte.php or http://www.stealthbot.net/forum/index.php?/topic/6161-botgame-manager/ and report the Problem"      
+End If
+Set fso = CreateObject("Scripting.FileSystemObject")
+fso.DeleteFile(dummyFile)      
+Set fso = Nothing
+
+'// adding Commands
+Set cmd = OpenCommand("games")
+If cmd Is Nothing Then
+Set cmd = CreateCommand("games")
+With cmd
+.Description = "This Command shows you all Users/Bots where you edited in the Script with the actually Gamename"
+.RequiredRank = 0
+.Save
+End With
+Addchat vbmagenta, "Created games command!"
+End If
+
+Set cmd = OpenCommand("gn")
+If cmd Is Nothing Then
+Set cmd = CreateCommand("gn")
+With cmd
+.Description = "This Command shows you all Users/Bots where you edited in the Script with the actually Gamename (short form of the games Command!)"
+.RequiredRank = 0
+.Save
+End With
+Addchat vbmagenta, "Created gn command!"
+End If
+Set cmd = Nothing
+
+'// Scripting Menu - GameManager.ini
+CreateObj "Menu", "mnuGameManager"
+mnuGameManager.Caption = "Open GameManager.ini"
+End Sub
+
+
+Sub mnuGameManager_Click()
+Set wshShell = CreateObject("WScript.Shell")
+Set FSO = CreateObject("Scripting.FileSystemObject")
+Set File = FSO.OpenTextFile(Bothpath & "GameManager.ini", 1, True)
+File.Close
+Call wshShell.run(Bothpath & "GameManager.ini")
+End Sub
+
+
+Sub Event_Command(Command)
+Cmd = Command.Args
+Username = Command.Username
+ Select Case LCase(Command.Name)
+Case "games" : Call Gamesresponse(Command, Username)
+Case "gn" : Call Gamesresponse(Command, Username)
+ End Select
+End Sub
+
+
+Sub event_whisperfromuser(Username, Flags, Message, Ping)
+ 'Englisch 
+ If instr(Message, "Your friend") > 0 and instr(Message, "has exited Battle.net.") > 0 Then
+  GameName = "<not logedin>"
+  WriteConfigEntry Replace(Username, "]", ","), "Game", GameName, "GameManager.ini"
+ End If
+
+ If instr(Message, "Your friend") > 0 and instr(message, "has entered Battle.net.") > 0 Then
+  GameName = "<not in a Game>"
+  WriteConfigEntry Replace(Username, "]", ","), "Game", GameName, "GameManager.ini"
+ End If
+ 
+ If instr(Message, "Your friend") > 0 and instr(Message, "entered a") > 0 and instr(Message, "game called") > 0 Then
+  GN = Split(Message, "called ")(1)
+  GameName = left(GN, len(GN) - 1)
+  WriteConfigEntry Replace(Username, "]", ","), "Game", GameName, "GameManager.ini"
+ End If
+
+ 'Deutsch
+ If instr(Message, "Ihr Freund") > 0 and instr(Message, "hat Battle.net verlassen.") > 0 Then
+  GameName = "<not logedin>"
+  WriteConfigEntry Replace(Username, "]", ","), "Game", GameName, "GameManager.ini"
+ End If
+
+ If instr(Message, "Ihr Freund") > 0 and instr(message, "hat sich in Battle.net eingeklinkt.") > 0 Then
+  GameName = "<not in a Game>"
+  WriteConfigEntry Replace(Username, "]", ","), "Game", GameName, "GameManager.ini"
+ End If
+
+ If instr(Message, "Ihr Freund") > 0 and instr(Message, "hat sich in ein") > 0 and instr(Message, "mit dem Namen") > 0 Then
+  GN = Split(Message, "Namen ")(1)
+  GameName = left(GN, len(GN) - 1)
+  GameName = Split(GameName, " eing")(0)
+  WriteConfigEntry Replace(Username, "]", ","), "Game", GameName, "GameManager.ini"
+ End If
+End Sub
+
+
+Sub event_userjoins(Username, Flags, Message, Ping, Product, Level, OSS, Banned)
+'// Check, if the User is registered on the top. So not all Users were ever join the Channel will be logged
+Dim Users 'create a dynamic Array
+Users = Array(BOT1, BOT2, BOT3, BOT4, BOT5, BOT6) 'Array with the Users/Bots
+number = UBound(Users) 'Count number of Array
+
+For i = 0 To number 'Check if the name is registered or not
+ If Username = Users(i) Then
+  Username = Replace(Username, "]", ",")
+  GameName = "<not in a Game>"
+  WriteConfigEntry Replace(Username, "]", ","), "Game", GameName, "GameManager.ini"
+ End If 
+Next
+End Sub

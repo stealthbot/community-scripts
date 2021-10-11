@@ -1,0 +1,251 @@
+Script("Name") = "HTML Table Generator"
+Script("Author") = "Oblivious"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 1
+
+
+Public Function NewTable(filename,doLoad, border,rows,cols)
+
+	Set NewTable = New clsHtmlTable
+	If doLoad Then
+		NewTable.LoadTable filename
+	Else
+		NewTable.CreateTable filename, border, rows, cols
+	End If
+	If NewTable.errError = True Then
+		AddChat vbYellow, "[HTML] Error occured, cannot continue, check all arguments."
+		Set NewTable = Nothing
+	Else
+		AddChat vbYellow, "[HTML] HTML Table Generated."
+	End If
+End Function
+
+
+
+
+Class clsHtmlTable
+
+Private fso
+Private dictTable
+Public tableRows
+Public tableCols
+Public errError
+
+Sub Class_Initialize
+
+Set fso = CreateObject("Scripting.FileSystemObject")
+AddChat vbYellow, "[HTML] HTML Table Generator is ready and waiting."
+
+End Sub
+
+Public Sub LoadTable(filename)
+	'note: assumes rectangular table	
+	
+	If Not fso.FileExists(filename) Then
+		AddChat vbYellow, "[HTML] File not found. Cannot create table."
+		errError = True
+		
+		Exit Sub
+	End If
+	Set file = fso.GetFile(filename)
+	Set textStream = file.OpenAsTextStream(1, -2)
+	FullText = Replace(textStream.ReadAll,vbNewLine,vbNullString) 'shift everything onto one line MUAHAHAH
+	'if that doesn't work use this
+	'Do While textStream.AtEndOfStream <> True
+	'	FullText = FullText & textStream.ReadLine
+	'Loop
+	border = Split(FullText,CHR(34))(1)
+	RowCount = 0
+			For x = 1 to Len(FullText) 
+				If Mid(FullText,x,Len("<tr>")) = "<tr>" Then
+					RowCount = RowCount + 1
+				End If
+			Next
+	ColCount = 0
+			For x = 1 to Len(FullText)
+				If Mid(FullText,x,Len("<td>")) = "<td>" Then
+					ColCount = ColCount + 1
+				ElseIf Mid(FullText,x,Len("</tr>")) = "</tr>" Then
+					Exit For
+				End If
+				
+			Next
+	CreateTable filename,border,RowCount,ColCount
+	'get the rows
+	RowText = Split(FullText,"</tr><tr>")
+	'remove scraps
+	RowText(0) = Mid(RowText(0), inStr(RowText(0),"<tr>")+Len("<tr>"))
+	RowText(UBound(RowText)) = Left(RowText(UBound(RowText)),InStr(RowText(UBound(RowText)),"</tr>")-1)
+	For x = 0 To UBound(RowText)
+		RowText(x) = Replace(RowText(x),"<td>",CHR(243))
+		RowText(x) = Replace(RowText(x),"</td>",vbNullString)
+		AdjustRow RowText(x), x+1
+	Next
+	'table has finished loading
+End Sub
+
+Sub CreateTable(filename, border, rows, cols)
+	If isObject(dictTable) Then
+		AddChat vbYellow, "[HTML] HTML Table Generator is busy. Please try again later."
+	End If
+	
+	If rows > 0 And cols > 0 Then
+		Else
+		Exit Sub
+	End If
+	
+	Set dictTable = CreateObject("Scripting.Dictionary")
+	dictTable.Item("Header") = filename & CHR(243) & border
+	For x = 1 to rows 
+		dictTable.Item(x) = dictTable.Item(x) & Replace(Space(cols)," ", CHR(243) & "&nbsp;")
+	Next
+	
+	tableCols = cols
+	tableRows = rows
+	
+
+End Sub
+
+Sub AddRows(rows)
+	If rows = vbNullString Or rows = 0 Then
+		AddChat vbYellow, "[HTML] No rows will be added."
+		Exit Sub
+	End If
+
+	For x = tableRows+1 to (tableRows + rows)
+		dictTable.Item(x) = Replace(Space(tableCols)," ",CHR(243) & "&nbsp;")
+	Next
+	tableRows = tableRows + rows
+End Sub
+
+
+Sub AddCols(cols)
+	If cols = vbNullString Then
+		AddChat vbYellow, "[HTML] No columns will be added."
+		Exit Sub
+	End If
+
+	For x = 1 to tableRows
+		dictTable.Item(x) = dictTable.Item(x) & Replace(Space(cols), " ",CHR(243) & "&nbsp;")
+	Next
+	tableCols = tableCols + cols
+End Sub
+
+
+
+
+Sub AdjustCell(text, row, col)
+	If Not dictTable.Exists(row) Then
+		AddChat vbYellow, "[HTML] Cell not found."
+		Exit Sub
+	End If
+	'find cell
+	x = 0
+	For count = 1 to col
+	x = InStr(x+1,dictTable.Item(row),CHR(243))
+	Next
+	y = InStr(x+1,dictTable.Item(row),CHR(243))
+	If x = Len(dictTable.Item(row))Then
+		AddChat vbYellow, "[HTML] Cell not found."
+		Exit Sub
+	End If
+	'this will only happen if blank! must change...
+	If y <> 0  And x <> 0 Then
+		dictTable.Item(row) = Left(dictTable.Item(row),x) & _
+		text & _
+		Right(dictTable.Item(row),Len(dictTable.Item(row))-y+1)
+	Else
+		'cell was last one in row
+		dictTable.Item(row) = Left(dictTable.Item(row),x) & _
+		text
+	End If
+End Sub
+
+Sub SaveTable(filename)
+	
+	tableHeader = Split(dictTable.Item("Header"),CHR(243))
+	If filename <> vbNullString Then
+		tableHeader(0) = filename
+	End If
+	Set file = fso.OpenTextFile(tableHeader(0),2,True)
+	
+	file.WriteLine "<table border=" & CHR(34) & tableHeader(1) & CHR(34) & ">"
+	For x = 1 to tableRows
+		file.WriteLine "<tr>"
+		file.WriteLine "<td>" & _  
+		Replace( Right(dictTable.Item(x),Len(dictTable.Item(x))-1) , CHR(243), "</td><td>") & _
+		"</td>"
+		file.WriteLine "</tr>"
+		Next
+	file.WriteLine "</table>"
+	file.Close
+	'DeleteObject(dictTable)
+End Sub
+
+Sub AdjustRow(text,row)
+	'note text must be preformatted to the format of this script
+	'i.e. each cell is CHR(243) & cellText
+	'if row is not found it will be appended to the end of the table.
+	'please use &nbsp; to indicate a blank cell!
+	ColCount = 0
+			For x = 1 to Len(text) 
+				If Mid(text,x,1) = CHR(243) Then
+					ColCount = ColCount + 1
+				End If
+			Next
+	If ColCount = tableCols Then
+		
+		If dictTable.Exists(row) Then
+			dictTable.Item(row) = text
+		Else
+			AddChat vbYellow, "[HTML] Row not found, appending row."
+			AddRows 1
+			AdjustRow text,tableRows
+		End If
+	Else
+		AddChat vbYellow, "[HTML] Bad row format, not enough columns. Reformat and try again."
+	End If
+End Sub
+
+Sub AdjustCol(text,col)
+	'note text must be preformatted to the format of the rows
+	'i.e. each cell is CHR(243) & cellText
+	'please use &nbsp; to indicate a blank cell!
+	RowCount = 0
+			For x = 1 to Len(text) 
+				If Mid(text,x,1) = CHR(243) Then
+					RowCount = RowCount + 1
+				End If
+			Next
+	
+	If tableRows = RowCount Then
+		If col <= tableCols Then
+				ColCount = 0
+				For x = 1 to Len(text) 
+					If Mid(text,x,1) = CHR(243) Then
+						ColCount = ColCount + 1
+					End If
+					If ColCount = col Then
+					'add column ZZ THIS IS MADNESS
+						IndividualCells = Split(text,CHR(243))
+						For y = 1 To tableRows
+							dictTable.Item(y) = Left(dictTable.Item(y),InStrRev(dictTable.Item(y),CHR(243))) & IndividualCells(y)
+						Next
+					'maybe not!
+					Exit For
+					End If
+					
+				Next
+		Else 
+		AddChat vbYellow, "[HTML] Column not found, appending column."
+		AddCols 1
+		AdjustRow text, tableRows
+		End If
+	Else
+		AddChat vbYellow, "[HTML] Bad column format. Not enough rows in table. Reformat and try again."
+	End If
+End Sub
+
+
+End Class

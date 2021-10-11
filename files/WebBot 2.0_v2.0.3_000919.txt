@@ -1,0 +1,797 @@
+' Current Version 2.0.3 - 6/15/2012
+Option Explicit
+
+Script("Name")   = "WebBot 2.0"
+Script("Author") = "Scope"
+Script("Major")  = 2
+Script("Minor")  = 0
+Script("Revision")  = 3
+Script("Description") = "View your battle.net channel and send chat from a website"
+
+
+' CHANGELOGS
+'~~~~~~~~~~~~
+
+'   2.0.3 - July 14, 2012
+'	-----------------------------
+'   - Added Javascript variables to determine WebSocket status
+
+'	2.0.0 - June 6, 2012
+'	-----------------------------
+'	- Rewrote entire WebBot to handle new and improved WebSockets
+'	- WebBot URL's now available at http://webbot.bnetweb.org
+'	- Tooltip hovering data on users in channel list
+'	- Properly handles all Battle.net flag changes
+'	- Custom client options via the web interface
+'	- IE object required to run WebBot
+'	-----------------------------
+
+
+' CONSTANTS
+'~~~~~~~~~~~~
+' DON'T CHANGE THESE SETTINGS
+' UNLESS YOU'VE BEEN TOLD TO
+
+' Url (excluding data info) for posting to web
+Private Const scriptURL      = "http://www.webbot.bnetweb.org/plugins/stealthbot.txt"
+
+Private Const sbScriptURL 	= "URL OF SCRIPT TOPIC"
+
+' Color codes
+Private Const webColor  = 11829830
+Private Const errColor  = 42495
+Private Const descColor = 6053069
+Private Const statColor = 65280
+
+' Prefix to Addchat messages letting you know which script it came from
+Private Const prefix    = "[WebBot] "
+
+
+' GLOBAL VARS
+'~~~~~~~~~~~~~
+Private UserID       '// String user login to server
+Private Password     '// String user password to server
+Private checkDate    '// String date last checked for latest release
+Private currentWS 	 '// Current WebSocket state (0, 1)
+Private Voided       '// Boolean in channel the void
+Private Rejoin       '// Boolean used rejoin command
+Private outDated     '// Boolean using an outdated script version
+Private Settings     '// Class
+Private Commands     '// Class
+Private User         '// Class
+
+Private objExplorer  '// WebSockets
+
+' BOT EVENTS
+'~~~~~~~~~~~~
+Sub Event_Load()
+		' WebSocket is disconnected by default on load
+		currentWS = "0"
+		
+        Call CreateObjects()
+        Call VersionCheck()
+
+		Dim Params(2)
+		Params(0) = Settings.StrEntry("UserID")
+		Params(1) = Settings.StrEntry("Password")
+		Params(2) = BotVars.Server
+		Emit "Connect", Params
+
+        '// Monitor /cq usage
+        ObserveScript(SSC.InternalScript)
+End Sub
+
+Sub Event_ServerError(Message)
+	Dim Params(0)
+	Params(0) = Message
+	Emit "ErrorMessage", Params
+End Sub
+
+Sub Event_ServerInfo(Message)
+	Dim Params(0)
+	Params(0) = Message
+	Emit "InfoMessage", Params
+End Sub
+
+Sub Event_ChannelJoin(ChannelName, Flags)
+		Dim Params(0)
+		Params(0) = ChannelName
+		Emit "JoinedChannel", Params
+End Sub
+
+Sub Event_UserInChannel(Username, Flags, Message, Ping, Product, StatUpdate)
+        If LCase(Username) = LCase(myUsername) Then
+			postChannelUsers
+        End If
+End Sub
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+        'webQueue StringFormat("{9}?u={0}&p={1}&f=4&d={2}&n={3}&cl={4}&pi={5}&fl={6}&ct={7}&i={10}&e=using+{8}.", _
+        'UserId, Password, myTime(), User.Name(Username), Product, Ping, User.Flags(Flags), _
+        'User.Clan(OriginalStatString), User.Product(Product), webURL, User.Icon(OriginalStatString)), Username, "userjoins"
+		Dim u
+		For Each u in Channel.Users
+			With u
+				If LCase(Username) = LCase(.Name) Then
+					Dim Params(4)
+					Params(0) = Username
+					Params(1) = Ping
+					Params(2) = Product
+					Params(3) = Flags
+					
+					Select Case Product
+						Case "STAR", "SEXP", "W2BN"
+							Params(4) = StringFormat("{0},{1}", .Stats.Wins, .Stats.LadderRating)
+						Case "D2DV", "D2XP"
+							Dim charDead, charLadder, charExpansion, charHardcore
+							charDead = "0"
+							charExpansion = "0"
+							charHardcore = "0"
+							charLadder = "0"
+							If .Stats.IsCharacterDead Then
+								charDead = "1"
+							End If
+							If .Stats.IsExpansionCharacter Then
+								charExpansion = "1"
+							End If
+							If .Stats.IsHardcoreCharacter Then
+								charHardcore = "1"
+							End If
+							If .Stats.IsLadderCharacter Then
+								charLadder = "1"
+							End If
+							
+							Params(4) = StringFormat("{0},{1},{2},{3},{4},{5},{6},{7},{8},{9}", .Stats.Level, .Stats.CharacterClass, .Stats.CharacterName, .Stats.Realm, .Stats.CurrentDifficulty, charDead, charExpansion, charHardcore, charLadder, .Stats.ActsCompleted)
+						Case "WAR3", "W3XP"
+						 'Level,ClanTag,IconCode,IconName,IconTier
+							Params(4) = StringFormat("{0},{1},{2},{3},{4}", .Stats.Level, .Stats.Clan, User.Icon(.statstring), .Stats.IconName, .Stats.IconTier)
+						Case Else
+							Params(4) = ""
+					End Select
+
+					Emit "UserJoin", Params
+				End If
+			End With
+		Next
+End Sub
+
+Sub Event_UserLeaves(Username, Flags)
+	Dim Params(0)
+	Params(0) = Username
+	Emit "UserLeave", Params
+
+End Sub
+
+Sub Event_FlagUpdate(Username, NewFlags, Ping)
+	Dim Params(2)
+	Params(0) = Username
+	Params(1) = NewFlags
+	Params(2) = Ping
+	Emit "FlagUpdate", Params
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+        Dim Params(1)
+		Params(0) = Username
+		Params(1) = Message
+		Emit "NormalChat", Params
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+		Dim Params(1)
+		Params(0) = Username
+		Params(1) = Message
+		Emit "WhisperFromUser", Params
+End Sub
+
+Sub Event_UserEmote(Username, Flags, Message)
+		Dim Params(1)
+		Params(0) = Username
+		Params(1) = Message
+		Emit "EmoteChat", Params
+End Sub
+
+Sub Event_LoggedOn(Username, Product)
+	'Dim Params(2)
+	'Params(0) = Settings.StrEntry("UserID")
+	'Params(1) = Settings.StrEntry("Password")
+	'Params(2) = BotVars.Server
+	'Emit "Connect", Params
+End Sub
+
+Sub Event_LoggedOff()
+	Dim Params(0)
+	Params(0) = ""
+	Emit "Disconnect", Params
+End Sub
+
+Sub Event_Shutdown()
+	objExplorer.Quit
+End Sub
+
+Sub Event_Close()
+	objExplorer.Quit
+End Sub
+
+Sub Event_MessageSent(MessageID, Message, Tag)
+        Select Case LCase(Split(Message)(0))
+        Case "/m", "/msg", "/w", "/whisper"
+                Dim Params2(1)
+				Params2(0) = Split(Message)(1)
+				Params2(1) = Split(Message, " ", 3)(2)
+				Emit "WhisperToUser", Params2
+		Case "/showwebbot"
+			objExplorer.Visible = 1
+		Case "/hidewebbot"
+			objExplorer.Visible = 0
+        Case Else
+				Dim Params(1)
+				Params(0) = myUsername
+				Params(1) = Message
+				Emit "SelfChat", Params
+        End Select
+End Sub
+
+Sub Event_Command(Command)
+        With Command
+                If .Source = 4 Then .Username = BotVars.Username
+
+                Select Case LCase(.Name)
+                Case "cq", "scq"
+                        .Respond Commands.CQ
+                Case "rejoin"
+                        Rejoin = True
+                Case "showerrors"
+                        .Respond Commands.Errors(True)
+				Case "showdebug"
+						.Respond Commands.Debug(True)
+				Case "hidedebug"
+						.Respond Commands.Debug(False)
+                End Select
+        End With
+End Sub
+
+Private Sub postChannelUsers
+		Dim Params(4), u
+		For Each u in Channel.Users
+			With u
+				Params(0) = .Name
+				Params(1) = .Ping
+				Params(2) = .Game
+				Params(3) = .Flags
+				
+				Select Case .Game
+					Case "STAR", "SEXP", "W2BN"
+						Params(4) = StringFormat("{0},{1}", .Stats.Wins, .Stats.LadderRating)
+					Case "D2DV", "D2XP"
+						Dim charDead, charLadder, charExpansion, charHardcore
+						charDead = "0"
+						charExpansion = "0"
+						charHardcore = "0"
+						charLadder = "0"
+						If .Stats.IsCharacterDead Then
+							charDead = "1"
+						End If
+						If .Stats.IsExpansionCharacter Then
+							charExpansion = "1"
+						End If
+						If .Stats.IsHardcoreCharacter Then
+							charHardcore = "1"
+						End If
+						If .Stats.IsLadderCharacter Then
+							charLadder = "1"
+						End If
+						
+						Params(4) = StringFormat("{0},{1},{2},{3},{4},{5},{6},{7},{8},{9}", .Stats.Level, .Stats.CharacterClass, .Stats.CharacterName, .Stats.Realm, .Stats.CurrentDifficulty, charDead, charExpansion, charHardcore, charLadder, .Stats.ActsCompleted)
+					Case "WAR3", "W3XP"
+					 'Level,ClanTag,IconCode,IconName,IconTier
+						Params(4) = StringFormat("{0},{1},{2},{3},{4}", .Stats.Level, .Stats.Clan, User.Icon(.statstring), .Stats.IconName, .Stats.IconTier)
+					Case Else
+						Params(4) = ""
+				End Select
+					
+				Emit "UserJoin", Params
+			End With
+		Next
+End Sub
+
+Sub CheckChat_Timer()
+	On Error Resume Next
+	' On status change of WebSocket connection alert the user
+	If objExplorer.Document.parentWindow.wsLoaded <> currentWS Then
+		currentWS = objExplorer.Document.parentWindow.wsLoaded
+		Select Case objExplorer.Document.parentWindow.wsLoaded
+			Case "0":
+				AddChat webColor, prefix, vbRed, "Connection to the node server has been lost."
+			Case "1":
+				AddChat webColor, prefix, vbGreen, "Connected to the node server."
+			Case Else
+				AddChat webColor, prefix, vbRed, "Unknown WebSocket status...please report this."
+		End Select
+	End If
+	
+	' If javascript is asking to re-post channel users, do so...
+	If objExplorer.Document.parentWindow.ReloadChannel = "1" Then
+		objExplorer.Document.parentWindow.ReloadChannel = "0"
+		Dim Params(0)
+		Params(0) = Channel.Name
+		Emit "JoinedChannel", Params
+		postChannelUsers
+		
+	End If
+	
+	If objExplorer.Document.parentWindow.NewChat <> "" Then
+		Dim QueueChat, Message
+		
+		QueueChat = Split(objExplorer.Document.parentWindow.NewChat, ",")
+
+		For Each Message in QueueChat
+			If Message <> "" Then
+				AddQ Message
+			End If
+		Next
+		
+		objExplorer.Document.parentWindow.NewChat = ""
+	End If
+End Sub
+
+Private Sub FetchScript
+ 
+	'create xmlhttp object
+	Dim objXMLHTTP, objADOStream, objFSO
+	Set objXMLHTTP = CreateObject("MSXML2.XMLHTTP")
+	
+	Dim sCurPath
+	sCurPath = CreateObject("Scripting.FileSystemObject").GetAbsolutePathName(".")
+	sCurPath = sCurPath & "\scripts\webbot.txt"
+ 
+	'get the remote file
+	objXMLHTTP.open "GET", scriptURL, false
+ 
+	'send the request
+	objXMLHTTP.send()
+ 
+	'wait until the data has downloaded successfully
+	do until objXMLHTTP.Status = 200 :  wscript.sleep(1000) :  loop
+ 
+	'if the data has downloaded sucessfully
+	If objXMLHTTP.Status = 200 Then
+ 
+    		'create binary stream object
+		Set objADOStream = CreateObject("ADODB.Stream")
+		objADOStream.Open
+ 
+	        'adTypeBinary
+		objADOStream.Type = 1
+		objADOStream.Write objXMLHTTP.ResponseBody
+ 
+	        'Set the stream position to the start
+		objADOStream.Position = 0    
+ 
+	        'create file system object to allow the script to check for an existing file
+	        Set objFSO = Createobject("Scripting.FileSystemObject")
+ 
+	        'check if the file exists, if it exists then delete it
+		If objFSO.Fileexists(sCurPath) Then objFSO.DeleteFile sCurPath
+ 
+	        'destroy file system object
+		Set objFSO = Nothing
+ 
+	        'save the ado stream to a file
+		objADOStream.SaveToFile sCurPath
+ 
+	        'close the ado stream
+		objADOStream.Close
+ 
+		'destroy the ado stream object
+		Set objADOStream = Nothing
+		
+		AddChat webColor, prefix, statColor, "Script Downloaded Successfully! ", vbYellow, "Reloading Script..."
+		ReloadScript()
+ 
+	'end object downloaded successfully
+	End if
+ 
+	'destroy xml http object
+	Set objXMLHTTP = Nothing
+ 
+End Sub
+
+
+' MISC FUNCTIONS
+'~~~~~~~~~~~~~~~
+Private Sub CreateObjects()
+        On Error Resume Next
+
+		Set User     = New UserClass
+		Set Settings = New SettingsClass
+		Set Commands = New CommandsClass
+		
+		Set objExplorer = CreateObject("InternetExplorer.Application")
+		objExplorer.Navigate "http://www.webbot.bnetweb.org/server.php?userid=" & Settings.StrEntry("UserID") & "&password=" & Settings.StrEntry("password")
+		objExplorer.ToolBar = 0
+		objExplorer.StatusBar = 0
+		objExplorer.Width = 400
+		objExplorer.Height = 400
+		objExplorer.Left = 0
+		objExplorer.Top = 0
+		If Settings.BoolEntry("DebugWindow") = True Then
+			objExplorer.Visible = 1
+		Else
+			objExplorer.Visible = 0
+		End If
+		
+		WaitForLoad(objExplorer)
+
+		CreateObj "inet", "myInet"
+        myInet.RequestTimeout = reqTimeout
+		
+		' Check Chat Timer
+		CreateObj "Timer", "CheckChat"
+		CheckChat.Interval = 1000
+		CheckChat.Enabled = True
+
+        On Error Goto 0
+End Sub
+
+Sub WaitForLoad(obj)
+	Do While objExplorer.Busy: Loop
+	Do While obj.readyState <> 4:  Loop
+	wscript.sleep(100)
+End Sub
+
+Private Sub Emit(funcName, params)
+			'// Set up parameters	
+			Dim paramString, func, param
+			paramString = ""
+			For Each param in params
+				param = Replace(param, """", "'")
+				param = Replace(param, "\", "\\")
+				paramString = paramString & ", """ & param & """"
+			Next
+			' remove beginning comma
+			paramString = Mid(paramString, 2)
+			func = StringFormat("{0}({1})", funcName, paramString)
+			'AddChat webColor, prefix, descColor, func
+			objExplorer.Document.parentWindow.execScript "" & func & "", "javascript"
+End Sub
+
+Private Function VersionCheck()
+        Dim source, version, myversion, changes
+
+        checkDate = Date
+
+        On Error Resume Next
+        source = myInet.OpenURL(scriptURL)
+
+        If (InStr(source, "Current Version") = 0) Then
+                Err.Clear
+                AddChat webColor, prefix, descColor, "Unable to verify Latest Script Release"
+                Exit Function
+        End If
+
+        version = Split(Split(source, "Current Version ")(1), " -")(0)
+        myversion = Settings.StrEntry("version")
+
+        If version = myversion Then
+                AddChat webColor, prefix, statColor, "Version Check Passed ("&version&")"
+				AddChat webColor, prefix, vbYellow, "Connecting to the node server..."
+                VersionCheck = True
+                Exit Function
+        End If
+
+        If cInt(Replace(myversion, ".", "")) > cInt(Replace(version, ".", "")) Then
+                changes = " You appear to be using an unofficial release"
+        End If
+
+		If Settings.BoolEntry("AutoUpdate") = True Then
+			AddChat webColor, prefix, descColor, "Your script requires an update. ", vbYellow, "Updating..."
+			FetchScript
+		Else
+			AddChat webColor, prefix, descColor, "Your script requires an update. Available at " & sbScriptURL
+		End If
+End Function
+
+Private Sub isTheVoid(ChannelName)
+        If LCase(ChannelName) = "the void" Then
+                AddChat webColor, prefix, descColor, "Disabled in The Void"
+
+                Voided    = True
+        ElseIf Voided Then
+                Voided = False
+        End If
+End Sub
+
+Private Function BotAndScriptVersion()
+        BotAndScriptVersion = "StealthBot (Script version " & _
+        Settings.StrEntry("version") & " by AwaKening)"
+End Function
+
+Private Function myTime()
+        myTime = webEncode(FormatDateTime(Time, 3))
+End Function
+
+Private Function myRealm()
+        Dim s: s = BotVars.Server
+
+        Select Case True
+        Case Match(s, "63.240.*.*", False), Match(s, "useast.*", False)
+                myRealm = "USEast (battle.net)"
+        Case Match(s, "63.241.*.*", False), Match(s, "uswest.*", False)
+                myRealm = "USWest (battle.net)"
+        Case Match(s, "213.*.*.*", False), Match(s, "europe.*", False)
+                myRealm = "Europe (battle.net)"
+        Case Match(s, "211.*.*.*", False), Match(s, "asia.*", False)
+                myRealm = "Asia (battle.net)"
+        Case Len(s)=0
+                myRealm = "unknown pvpgn"
+        Case Else
+                myRealm = s & " (pvpgn)"
+        End Select
+End Function
+
+Private Sub webChatToBot(ByVal Chat)
+        Dim i
+
+        If Len(Chat)=0 Then Exit Sub
+        If Not(splitFix(Chat)) Then Exit Sub
+
+        For i=0 to UBound(Chat)
+                If Len(Chat(i))>0 Then
+                        Command myUsername, Chat(i), True
+                End If
+        Next
+End Sub
+
+Function strClean(strtoclean)
+        Dim objRegExp, outputStr
+        Set objRegExp = New Regexp
+ 
+        objRegExp.IgnoreCase = True
+        objRegExp.Global = True
+        objRegExp.Pattern = "((?![a-zA-Z0-9]).)+"
+        outputStr = objRegExp.Replace(strtoclean, "-")
+ 
+        objRegExp.Pattern = "\-+"
+        outputStr = objRegExp.Replace(outputStr, "-")
+ 
+        strClean = outputStr
+        Set objRegExp = Nothing
+End Function
+
+' USER CLASS
+'~~~~~~~~~~~
+Class UserClass
+
+   Private Sub Class_Initialize
+   End Sub
+
+   Public Property Get Name(Username)
+        If Settings.IsTrue("showRealms") Then
+                Name = Username
+        Else
+                Name = Split(Username, "@")(0)
+        End If
+   End Property
+
+   Public Property Get Flags(Flag)
+        If CStr(Flag) = "2" Then
+                Flags = "1"
+        Else
+                Flags = "0"
+        End If
+   End Property
+
+   Public Property Get Clan(ByVal statString)
+        statString = Split(statString)
+        If UBound(statString) = 3 Then
+                Clan = StrReverse(statString(3))
+                If Clan = "0" Then Clan = ""
+        Else
+                Clan = ""
+        End If
+   End Property
+
+   Public Property Get Icon(ByVal statString)
+        Icon = ""
+		
+        Dim position
+
+        statString = Split(statString)
+
+        Select Case StrReverse(statString(0))
+                Case "W3XP", "WAR3": position = 1
+                Case Else          : position = 3
+        End Select
+
+        If UBound(statString) < position Then Exit Property
+
+        If IsNumeric(statString(position)) Then
+                Icon = statString(position)
+        Else
+                Icon = StrReverse(statString(position))
+        End If
+
+        Select Case Icon
+        Case "W3H1", "W3O1", "W3N1", "W3U1"
+                Icon = "W3R1"
+        End Select
+   End Property
+
+   Public Property Get Product(ByVal RawProduct)
+        If RawProduct = "STAR" Then
+                RawProduct = "Starcraft"
+        ElseIf RawProduct = "SEXP" Then
+                RawProduct = "Starcraft Broodwar"
+        ElseIf RawProduct = "W2BN" Then
+                RawProduct = "Warcraft II"
+        ElseIf RawProduct = "D2DV" Then
+                RawProduct = "Diablo II"
+        ElseIf RawProduct = "D2XP" Then
+                RawProduct = "Diablo II Lord of Destruction"
+        ElseIf RawProduct = "WAR3" Then
+                RawProduct = "Warcraft III"
+        ElseIf RawProduct = "W3XP" Then
+                RawProduct = "Warcraft III The Frozen Throne"
+        ElseIf RawProduct = "CHAT" Then
+                RawProduct = "Chat"
+        ElseIf RawProduct = "DRTL" Then
+                RawProduct = "Diablo"
+        ElseIf RawProduct = "SSHR" Then
+                RawProduct = "Starcraft Shareware"
+        ElseIf RawProduct = "JSTR" Then
+                RawProduct = "Starcraft Japan"
+        ElseIf RawProduct = "BNET" Then
+                RawProduct = "Bnet"
+        Else
+                RawProduct = "Unknown"
+        End If
+
+        Product = RawProduct
+   End Property
+
+End Class
+
+' SETTINGS CLASS
+'~~~~~~~~~~~~~~~
+Class SettingsClass
+
+   Private Sub Class_Initialize
+        CreateSettings
+   End Sub
+
+   Private Sub CreateSettings()
+        Dim version, autoupdate, debugwindow
+
+        UserID   = strClean(StrEntry("UserID"))
+        Password = StrEntry("Password")
+		autoupdate = StrEntry("AutoUpdate")
+		debugwindow = StrEntry("DebugWindow")
+		
+		If autoupdate = "" Then
+			StrEntry("AutoUpdate") = "True"
+		End If
+		
+		If debugwindow = "" Then
+			StrEntry("DebugWindow") = "True"
+		End If
+		
+
+        If UserID = "" Or Password = "" Then
+                UserID = InputBox("Create a unique UserID (Only letters or numbers)", "UserID", "")
+                UserID = strClean(UserID)
+                StrEntry("UserID") = UserID
+
+                Password = InputBox("Create a Password for " &UserID, "Password", "")
+                StrEntry("Password") = Password
+        End If
+
+        version = StringFormat("{0}.{1}.{2}", Script("Major"), Script("Minor"), Script("Revision"))
+        If version = StrEntry("version") Then Exit Sub
+
+        AddChat webColor, "Webbot Updated to " &version
+        StrEntry("version") = version
+
+        If StrEntry("UserID") <> "" Then Exit Sub
+        StrEntry("UserID (Rules)") = "Letters and numbers only! NO SPACES"
+        StrEntry("UserID") = ""
+   End Sub
+
+   Public Property Get BoolEntry(Entry)
+        Select Case UCaseEntry(Entry)
+                Case "F", "FALSE", "NO", "N", "0", ""
+                        BoolEntry = False
+                Case Else
+                        BoolEntry = True
+        End Select
+   End Property
+
+   Public Property Let BoolEntry(Entry, newValue)
+        Select Case UCase(newValue)
+                Case "F", "FALSE", "NO", "N", "0", ""
+                        WriteSettingsEntry Entry, "N"
+                Case Else
+                        WriteSettingsEntry Entry, "Y"
+        End Select
+   End Property
+
+   Public Property Get StrEntry(Entry)
+        StrEntry = CStr(GetSettingsEntry(Entry))
+   End Property
+
+   Public Property Let StrEntry(Entry, newValue)
+        WriteSettingsEntry Entry, CStr(newValue)
+   End Property
+
+   Public Function LCaseEntry(Entry)
+        LCaseEntry = LCase(StrEntry(Entry))
+   End Function
+
+   Public Function UCaseEntry(Entry)
+        UCaseEntry = UCase(StrEntry(Entry))
+   End Function
+
+   Public Function IsTrue(Entry)
+        IsTrue = boolEntry(Entry)
+   End Function
+
+   Public Function IsFalse(Entry)
+        IsFalse = Not(boolEntry(Entry))
+   End Function
+
+End Class
+
+' COMMAND CLASS
+'~~~~~~~~~~~~~~
+Class CommandsClass
+
+	Private Sub Class_Initialize
+        CreateCommands
+	End Sub
+
+	Private Sub CreateCommands()
+        Dim cmd
+		
+		If Not(OpenCommand("showDebug") Is Nothing) Then Exit Sub
+
+        Set cmd = CreateCommand("showDebug")
+        With cmd
+                .RequiredRank = 70
+                .Description  = "Show WebSocket Output"
+                .Save
+        End With
+		
+		If Not(OpenCommand("hideDebug") Is Nothing) Then Exit Sub
+		
+        Set cmd = CreateCommand("hideDebug")
+		With cmd
+                .RequiredRank = 70
+                .Description  = "Hide WebSocket Output"
+                .Save
+        End With
+		Set cmd = Nothing
+	End Sub
+	
+	Public Function Debug(show)
+		Debug = ChangeShow(show, "DebugWindow")
+	End Function
+	
+	Private Function ChangeShow(show, setting)
+        Dim Entry: Entry = Settings.BoolEntry(setting)
+
+        If Not(show = Entry) Then
+                Settings.BoolEntry(setting) = show
+                ChangeShow = StringFormat("{0} set to {1}", setting, show)
+        Else
+                ChangeShow = StringFormat("{0} is already {1}", setting, show)
+        End If
+		
+		If setting = "DebugWindow" Then
+			If show = True Then
+				objExplorer.Visible = 1
+			Else
+				objExplorer.Visible = 0
+			End If
+		End If
+   End Function
+End Class

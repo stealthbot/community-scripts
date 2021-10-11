@@ -1,0 +1,409 @@
+Option Explicit
+
+Script("Name") = "World Capitals Quiz"
+Script("Author") = "RosieSuckedMe"
+Script("Major") = "1"
+Script("Minor") = "0"
+Script("Revision") = "03"
+Script("Description") = "A quiz (like trivia) on world capitals."
+
+'// Change Log
+'//  :: v1.002 - v1.003 ::
+'//  - Added the possibility to skip a question (you can use this three times per game) using the command ".skip".
+'//  - Removed the output message which would occur when losing a life (to spare the message queue).
+'//  - Added a missing "+ 1".
+'//  - Added a built-in change log.
+'//  :: v1.001 - v1.002 ::
+'//  - Added the possibility to answer by typing the letter representing the capital name instead of writing the entire name.
+'//  :: v1.000 - v1.001 ::
+'//  -  Initial release.
+
+Private countryNames, countryCapitals, qnum, dict, livesLeft, currentPoints, pointAward, skipsLeft
+Private currentQuizzer, timeLeft, questionRate, wcqConn, wcqFSO, scriptVersion, usedNums
+Private A, B, C, D
+
+Sub Event_Load()
+	script_init()
+	scriptVersion = "v" & Script("Major") & "." & Script("Minor") & Script("Revision")
+	CreateObj "LongTimer", "NextQuestion"
+	NextQuestion.Enabled = False
+	NextQuestion.Interval = 1
+	Set dict = CreateObject("Scripting.Dictionary")
+	Set usedNums = CreateObject("Scripting.Dictionary")
+	Set wcqFSO = CreateObject("Scripting.FileSystemObject")
+	countryNames 	= Array("Afghanistan","Albania","Algeria","Andorra","Angola","Antigua and Barbuda","Argentina","Armenia","Aruba","Australia","Austria","Azerbaijan","Åland Islands","Bahamas","Bahrain","Bangladesh","Barbados","Belarus","Belgium","Belize","Benin","Bermuda","Bhutan","Bolivia","Bosnia and Herzegovina","Botswana","Brazil","Brunei","Bulgaria","Burkina Faso","Burundi","Cambodia","Cameroon","Canada","Cape Verde","Central African Republic","Chad","Chile","China","Colombia","Comoros","Congo","Costa Rica","Ivory Coast","Croatia","Cuba","Cyprus","Czech Republic","Democratic Republic of the Congo","Denmark","Djibouti","Dominica","Dominican Republic","East Timor","Ecuador","Egypt","El Salvador","England","Equatorial Guinea","Eritrea","Estonia","Ethiopia","Faroe Islands","Federated States of Micronesia","Fiji Islands","Finland","France","French Polynesia","French Guiana","Gabon","Gambia","Georgia","Germany","Ghana","Gibraltar","Greece","Greenland","Grenada","Guatemala","Guinea Bissau","Guinea","Guyana","Haiti","Honduras","Hungary","Iceland","India","Indonesia","Iran","Iraq","Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazahkstan","Kenya","Kiribati","South Korea","Kosovo","Kuwait","Kyrgyzstan","Laos","Latvia","Lebanon","Lesotho","Liberia","Libya","Liechtenstein","Lithuania","Luxembourg","Macedonia","Madagascar","Malawi","Malaysia","Maldives","Mali","Malta","Marshall Islands","Mauritania","Mauritius","Mexico","Moldova","Monaco","Mongolia","Montenegro","Morocco","Mozambique","Myanmar","Namibia","Nauru","Nepal","Netherlands","New Zealand","Nicaragua","Niger","Nigeria","Niue","North Korea","Northern Ireland","Norway","Oman","Pakistan","Palau","Panama","Papua New Guinea","Paraguay","Perú","Philippines","Poland","Portugal","Puerto Rico","Qatar","Romania","Russia","Rwanda","Saint Kitts and Nevis","Saint Lucia","Saint Vincent and The Grenadines","Samoa","San Marino","Saudi Arabia","São Tomé & Principe","Scotland","Senegal","Serbia","Seychelles","Sierra Leone","Singapore","Slovakia","Slovenia","Solomon Islands","Somalia","South Africa","South Sudan","Spain","Sri Lanka","North Sudan","Suriname","Swaziland","Sweden","Switzerland","Syria","Taiwan","Tajikistan","Tanzania","Thailand","Tibet","Togo","Tonga","Trinidad and Tobago","Tunisia","Turkey","Turkmenistan","Tuvalu","Uganda","Ukraine","United Arab Emirates","United States","Uruguay","Uzbekistan","Vanuatu","Vatican City","Venezuela","Vietnam","Wales","Yemen","Zambia","Zimbabwe")
+	countryCapitals = Array("Kabul","Tirana","Algiers","Andorra la Vella","Luanda","St. John's","Buenos Aires","Yerevan","Oranjestad","Canberra","Vienna","Baku","Mariehamn","Nassau","Manama","Dhaka","Bridgetown","Minsk","Brussels","Belmopan","Porto-Novo","Hamilton","Thimphu","La Paz","Sarajevo","Gaborone","Brasilia","Bandar Seri Begawan","Sofia","Ouagadougou","Bujumbura","Phnom Penh","Yaoundé","Ottawa","Praia","Bangui","N'Djamena","Santiago","Beijing","Bogotá","Moroni","Brazzaville","San José","Yamoussoukro","Zagreb","Havana","Nicosia","Prague","Kinshasa","Copenhagen","Djibouti","Roseau","Santo Domingo","Dili","Quito","Cairo","San Salvador","London","Malabo","Asmara","Talinn","Addis Ababa","Tórshavn","Palikir","Suva","Helsinki","Paris","Papeete","Cayenne","Libreville","Banjul","Tbilisi","Berlin","Accra","Gibraltar","Athens","Nuuk","St. George's","Guatemala City","Bissau","Conakry","Georgetown","Port-au-Prince","Tegucigalpa","Budapest","Reykjavik","New Delhi","Jakarta","Tehran","Baghdad","Dublin","Jerusalem","Rome","Kingston","Tokyo","Amman","Astana","Nairobi","Tarawa","Seoul","Pristina","Kuwait City","Bishkek","Vientiane","Riga","Beirut","Maseru","Monrovia","Tripoli","Vaduz","Vilnius","Luxembourg","Skopje","Antananarivo","Lilongwe","Kuala Lumpur","Malé","Bamako","Valletta","Majuro","Nouakchott","Port Louis","Mexico City","Chisinau","Monaco","Ulaanbaatar","Podgorica","Rabat","Maputo","Rangoon","Windhoek","Yaren","Kathmanda","Amsterdam","Wellington","Managua","Niamey","Abuja","Alofi","Pyongyang","Belfast","Oslo","Muscat","Islamabad","Melekeok","Panama City","Port Moresby","Asunción","Lima","Manila","Warsaw","Lisbon","San Juan","Doha","Bucharest","Moscow","Kigali","Basseterre","Castries","Kingstown","Apia","San Marino","Riyadh","São Tomé","Edinburgh","Dakar","Belgrade","Victoria","Freetown","Singapore","Bratislava","Ljubljana","Honiara","Mogadishu","Pretoria","Juba","Madrid","Colombo","Khartoum","Paramaribo","Mbabane","Stockholm","Bern","Damascus","Taipei","Dushanbe","Dar es Salaam","Bangkok","Lhasa","Lomé","Nuku'alofa","Port of Spain","Tunis","Ankara","Ashgabat","Funafuti","Kampala","Kyiv","Abu Dhabi","Washington D.C.","Montevideo","Tashkent","Port Vila","Vatican City","Caracas","Hanoi","Cardiff","Sanaá","Lusaka","Harare")
+	questionRate 	= Array("2","3","2","1","5","5","2","4","5","1","2","4","5","3","4","4","5","4","2","3","5","5","5","4","3","5","1","5","3","5","5","5","4","2","5","5","5","3","1","3","5","5","3","4","3","2","4","2","5","2","1","4","5","5","3","2","1","1","5","5","3","5","4","5","5","3","1","5","5","5","5","4","2","4","1","3","4","5","1","1","4","5","3","4","3","3","2","2","1","1","2","2","2","4","2","3","3","3","5","3","5","1","4","4","4","3","5","5","4","4","4","1","3","5","5","3","4","5","4","4","5","5","5","1","5","1","5","5","5","5","5","5","5","4","2","4","4","5","5","5","4","3","2","4","3","5","1","4","5","3","4","3","3","4","5","3","2","5","5","5","5","5","1","4","1","3","4","2","5","5","1","4","4","5","4","4","5","2","3","4","5","5","2","3","4","5","5","5","4","5","5","5","4","2","3","5","5","5","3","4","1","4","4","4","1","3","3","4","5","5","5")
+	Randomize
+	If wcqFSO.FileExists(BotPath & "WCQ_Scores.mdb") Then
+                connDB()
+        Else
+                makeDB()
+        End If
+	AddChat &HFFCC33, StringFormat("{0}: [ {1} ] successfully loaded with {2} capitals!", Script("Name"), scriptVersion, UBound(countryNames) + 1)
+End Sub
+
+Sub Event_Command(Command)
+	Dim user, line
+	With Command
+		If .IsValid And .HasAccess Then
+			Select Case LCase(.Name)
+				Case "wcq"
+					Select Case LCase(.Argument("payload"))
+						Case "on", "1", "enable"
+							If Not GetDBEntry(.Username).Rank >= 100 Then Exit Sub
+							If NextQuestion.Enabled = True Then
+								.Respond "/me • The World Capitals Quiz is already enabled!"
+							Else
+								livesLeft = 3
+								skipsLeft = 3
+								currentPoints = 0
+								currentQuizzer = .Username
+								QuestionMaker()
+								NextQuestion.Enabled = True
+							End If
+						Case "off", "0", "disable"
+							If Not GetDBEntry(.Username).Rank >= 100 Then Exit Sub
+							If NextQuestion.Enabled = False Then
+								.Respond "/me • The World Capitals Quiz is already disabled!"
+							Else
+								.Respond "/me • The World Capitals Quiz has been disabled!"
+								NextQuestion.Enabled = False
+								usedNums.RemoveAll
+								wcqConn.Execute("INSERT INTO `players` (`username`, `score`, `date`) VALUES ('" & currentQuizzer & "', '" & currentPoints & "', '" & Date & "')")
+							End If
+						Case "reset"
+							If Not GetDBEntry(.Username).Rank >= 200 Then Exit Sub
+							If NextQuestion.Enabled = True Then
+								.Respond "/me • Unable to reset right now because there is a game running!"
+							Else
+								wcqConn.Execute("DELETE * FROM `players`")
+								.Respond "/me • All scores have been reset!"
+							End If
+					End Select
+				Case "score"
+					If NextQuestion.Enabled = True Then
+						line = StringFormat("/me • {0} is currently playing the game with a score of {1} points and {2] lives left", currentQuizzer, currentPoints, livesLeft)
+						If livesLeft = 1 Then
+							line = Replace(line, "lives", "life")
+						End If
+						.Respond line
+					Else
+						If currentQuizzer = vbNullString Then
+							.Respond "/me • Unable to locate the last player, sorry!"
+						Else
+							.Respond StringFormat("/me • Last game was played by {0} who scored {1} points! - Use {2}scores [user] to check your own or another player's top 3 scores and {2}highscores to check the overall top 5 scores!", currentQuizzer, currentPoints, BotVars.Trigger)
+						End If
+					End If
+				Case "scores"
+					If Len(.Argument("payload")) = 0 Then
+						user = .Username
+					Else
+						user = .Argument("payload")
+					End If
+					If HasScores(user) Then
+						TopScores user
+					Else
+						.Respond StringFormat("/me • {0} have not played a game of World Capitals Quiz yet, thus no scores found!", user)
+					End If
+				Case "highscores"
+					HighScores()
+				Case "ladderreset"
+					If HasScores(.Argument("payload")) Then
+						wcqConn.Execute("DELETE * FROM `players` WHERE `username` = '" & .Argument("payload") & "'")
+						.Respond StringFormat("/me • {0}'s scores have been reset!", .Argument("payload"))
+					Else
+						.Respond StringFormat("/me • {0} have not played a game of World Capitals Quiz yet, thus no scores found!", .Argument("payload"))
+					End If
+				Case "skip"
+					If skipsLeft >= 1 Then
+						skipsLeft = skipsLeft - 1
+						QuestionMaker()
+					Else
+						.Respond "/me • You cannot skip this question 'cause you already used all 3!"
+					End If
+			End Select
+		End If
+	End With
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+	If Left(LCase(Message), Len(BotVars.Trigger)) = BotVars.Trigger Then Exit Sub
+	If NextQuestion.Enabled = True Then
+		If LCase(Username) = LCase(currentQuizzer) Then
+		
+			'// This is rather messy.. There's probably a better way to do it >_>
+			Select Case LCase(Message)
+				Case "a"
+					If A = countryCapitals(qnum) Then
+						CorrectAnswer()
+					Else
+						WrongAnswer()
+					End If
+				Case "b"
+					If B = countryCapitals(qnum) Then
+						CorrectAnswer()
+					Else
+						WrongAnswer()
+					End If
+				Case "c"
+					If C = countryCapitals(qnum) Then
+						CorrectAnswer()
+					Else
+						WrongAnswer()
+					End If
+				Case "d"
+					If D = countryCapitals(qnum) Then
+						CorrectAnswer()
+					Else
+						WrongAnswer()
+					End If
+				Case Else
+					If LCase(Message) = LCase(countryCapitals(qnum)) Then
+						CorrectAnswer()
+					Else
+						WrongAnswer()
+					End If
+			End Select
+		End If
+	End If
+End Sub
+
+Private Sub CorrectAnswer()
+	pointAward = (timeLeft + questionRate(qnum)) * 10
+	currentPoints = currentPoints + pointAward
+'	AddQ StringFormat("/me • Fantastic! {0} knew the name of the capital of {1}! {0} has been awarded with {2} points!", currentQuizzer, countryNames(qnum), pointAward)
+	QuestionMaker()
+End Sub
+
+Private Sub WrongAnswer()
+	livesLeft = livesLeft - 1
+	If livesLeft = 0 Then
+		AddQ StringFormat("/me • Game over, {0}! Check the score using {1}score", currentQuizzer, BotVars.Trigger)
+		NextQuestion.Enabled = False
+		timeLeft = 0
+		usedNums.RemoveAll
+		wcqConn.Execute("INSERT INTO `players` (`username`, `score`, `date`) VALUES ('" & currentQuizzer & "', '" & currentPoints & "', '" & Date & "')")
+	Else
+'		AddQ StringFormat("/me • {0} has lost a life for failing the name of the capital of {1} ({2})!", currentQuizzer, countryNames(qnum), countryCapitals(qnum))
+		QuestionMaker()
+	End If
+End Sub
+
+Sub NextQuestion_Timer()
+	timeLeft = timeLeft - 1
+	If timeLeft = 0 Then WrongAnswer()
+End Sub
+
+Private Sub QuestionMaker()
+	Dim num, rnum, line, i, j, IsUsed, unusedNum
+	num = Int(4 * Rnd + 1)
+	qnum = Int(UBound(countryNames) * Rnd)
+	
+	'// Avoid getting the same answer multiple times (if possible).
+	If usedNums.Count = Int(UBound(countryNames) + 1) Then
+		unusedNums.RemoveAll
+	End If
+	Do Until unusedNum = True
+		If usedNums.Exists(qnum) Then
+			qnum = Int(UBound(countryNames) * Rnd)
+		Else
+			unusedNum = True
+		End If
+	Loop
+	usedNums.Add qnum, vbNullString
+	line = StringFormat("The capital of {0} is...    A: %1 | B: %2 | C: %3 | D: %4    [Lives left: {1} | Skips left: {2} | Points: {3}]", countryNames(qnum), livesLeft, skipsLeft, currentPoints)
+	For i = 1 To 4
+		If i = num Then
+			line = Replace(line, "%" & i, countryCapitals(qnum))
+			rnum = qnum
+		Else
+			
+			'// Avoid getting the same option twice.
+			rnum = Int(UBound(countryNames) * Rnd)
+			IsUsed = True
+			Do Until IsUsed = False
+				If dict.Exists(rnum) OR rnum = qnum Then
+					rnum = Int(UBound(countryNames) * Rnd)
+				Else
+					IsUsed = False
+				End If
+			Loop
+			line = Replace(line, "%" & i, countryCapitals(rnum))
+		End If
+		dict.Add rnum, vbNullString
+		
+		'// Allow players to just write 'a', 'b', 'c' and 'd' instead of the whole name.
+		Select Case i
+			Case 1
+				A = countryCapitals(rnum)
+			Case 2
+				B = countryCapitals(rnum)
+			Case 3
+				C = countryCapitals(rnum)
+			Case 4
+				D = countryCapitals(rnum)
+		End Select
+	Next
+	AddQ "/me • " &	Trim(line)
+	dict.RemoveAll
+	timeLeft = 20
+End Sub
+
+Private Function convertDate(String)
+        String = Split(String, "/")
+        Select Case String(0)
+                Case "1" : ConvertDate = "Jan "
+                Case "2" : ConvertDate = "Feb "
+                Case "3" : ConvertDate = "Mar "
+                Case "4" : ConvertDate = "Apr "
+                Case "5" : ConvertDate = "May "
+                Case "6" : ConvertDate = "Jun "
+                Case "7" : ConvertDate = "Jul "
+                Case "8" : ConvertDate = "Aug "
+                Case "9" : ConvertDate = "Sep "
+                Case "10" : ConvertDate = "Oct "
+                Case "11" : ConvertDate = "Nov "
+                Case "12" : ConvertDate = "Dec "
+        End Select
+        convertDate = convertDate & String(1) & NumberSuffix(String(1))
+End Function
+
+Private Function NumberSuffix(Number)
+        Select Case Right(Number, 1)
+                Case 1
+                        NumberSuffix = "st"
+                Case 2
+                        NumberSuffix = "nd"
+                Case 3
+                        NumberSuffix = "rd"
+                Case Else
+                        NumberSuffix = "th"
+        End Select
+     
+        If Number >= 11 And Number <= 13 Then
+                NumberSuffix = "th"
+        End If
+End Function
+
+Private Function HasScores(Username)
+	Dim wcq
+	Set wcq = wcqConn.Execute("SELECT * FROM `players` WHERE `username` = '" & Username & "'")
+	If Not (wcq.BOF) And Not (wcq.EOF) Then
+		HasScores = True
+	Else
+		HasScores = False
+	End If
+	Set wcq = Nothing
+End Function
+
+Private Sub TopScores(Username)
+	Dim wcq, i, line
+	Set wcq = wcqConn.Execute("SELECT `score`, `date` FROM `players` WHERE `username` = '" & Username & "' ORDER BY `score` DESC")
+	i = 0
+	line = StringFormat("{0}'s top %num scores > ", Username)
+	Do Until wcq.EOF Or i = 3
+		line = line & StringFormat("#{0}: [{1} | {2}] ", i + 1, convertDate(wcq.Fields(1)), wcq.Fields(0))
+		wcq.MoveNext
+		i = i + 1
+	Loop
+	line = Trim(line)
+	line = Replace(line, "%num", i)
+	AddQ "/me • " & line
+	Set wcq = Nothing
+End Sub
+
+Private Sub HighScores()
+	Dim wcq, i, line
+	Set wcq = wcqConn.Execute("SELECT `username`, `score`, `date` FROM `players` ORDER BY `score` DESC")
+	If Not (wcq.BOF) And Not (wcq.EOF) Then
+		i = 0
+		line = "Top %num highscores > "
+		Do Until wcq.EOF Or i = 5
+			line = line & StringFormat("#{0}: [{1} | {2} | {3}] ", i + 1, wcq.Fields(0), convertDate(wcq.Fields(2)), wcq.Fields(1))
+			wcq.MoveNext
+			i = i + 1
+		Loop
+		line = Trim(line)
+		line = Replace(line, "%num", i)
+		AddQ "/me • " & line
+	Else
+		AddQ "/me • There are currently no scores recorded!"
+	End If
+	Set wcq = Nothing
+End Sub
+
+Private Sub script_init()
+	Dim Parameter
+	If OpenCommand("wcq") Is Nothing Then
+                With CreateCommand("wcq")
+                        .Description = "Starts/stops the quiz or removes all scores."
+                        .RequiredRank = "0"
+                        Set Parameter = .NewParameter("payload", False, "Word")
+                        .Parameters.Add Parameter
+                        .Save
+                End With
+        End If
+	If OpenCommand("score") Is Nothing Then
+                With CreateCommand("score")
+                        .Description = "Shows the last score."
+                        .RequiredRank = "0"
+                        .Save
+                End With
+        End If
+	If OpenCommand("scores") Is Nothing Then
+                With CreateCommand("scores")
+                        .Description = "Shows the user / a user's top 3 scores."
+                        .RequiredRank = "0"
+			Set Parameter = .NewParameter("payload", True, "Word")
+                        .Parameters.Add Parameter
+                        .Save
+                End With
+        End If
+	If OpenCommand("highscores") Is Nothing Then
+                With CreateCommand("highscores")
+                        .Description = "Shows the overall top 5 highscores."
+                        .RequiredRank = "0"
+                        .Save
+                End With
+        End If
+	If OpenCommand("ladderreset") Is Nothing Then
+                With CreateCommand("ladderreset")
+                        .Description = "Removes a user's scores and statistics."
+                        .RequiredRank = "100"
+			Set Parameter = .NewParameter("payload", False, "Word")
+                        .Parameters.Add Parameter
+                        .Save
+                End With
+        End If
+	If OpenCommand("skip") Is Nothing Then
+                With CreateCommand("skip")
+                        .Description = "Skips the current question."
+			.SpecialNotes = "You can only skip 3 questions per game."
+                        .RequiredRank = "100"
+                        .Save
+                End With
+        End If
+	Set Parameter = Nothing
+End Sub
+
+Private Sub connDB()
+        Dim StringProperty
+        Set wcqConn = CreateObject("ADODB.Connection")
+        StringProperty = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & BotPath & "WCQ_Scores.mdb"
+        wcqConn.ConnectionString = StringProperty
+        wcqConn.Open
+        If Err.Number = 0 Then
+                AddChat vbGreen, Script("Name") & ": Successfully connected to the database!"
+        Else
+                AddChat vbRed, Script("Name") & ": Unable to establish connection to the database!"
+        End If
+End Sub
+
+Private Sub makeDB()
+        Dim Catalog
+        Set Catalog = CreateObject("ADOX.Catalog")
+        Catalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & BotPath & "WCQ_Scores.mdb"
+        connDB()
+        wcqConn.Execute("CREATE TABLE `players` (`id` counter, `username` varchar(25), `score` int, `date` varchar(40))")
+End Sub

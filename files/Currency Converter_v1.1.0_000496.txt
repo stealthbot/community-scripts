@@ -1,0 +1,224 @@
+Script("Name") = "Currency Converter"
+Script("Author") = "Neco"
+Script("Major") = 1
+Script("Minor") = 1
+Script("Revision") = 0
+Script("Description") = "Allows users to convert currencies using the current exchange rate."
+
+' -------------- EDITABLE VALUES -------------- '
+' Command string to use when creating the commands.
+Public Const ConvertCmd = "convert"
+
+' The default value if the user does not supply an amount to convert. Recommended to be 1.
+Public Const DefaultValue = 1
+
+' Prevents the script executing when invalid values are entered into the Const.
+Public Activated : Activated = False
+' ------------- UNEDITABLE VALUES -------------- '
+
+Public Sub Event_Load()
+	Call CreateCommands() ' Creates the commands
+	If Not LCase(ConvertCmd) = ConvertCmd Then
+		AddChat vbCyan, StringFormat("""{0}"" has to be in its lowercase form.", ConvertCmd)
+	End If
+
+	If Not IsNumeric(DefaultValue) Then
+		AddChat vbCyan, StringFormat("""{0}"" has to be numeric.", DefaultValue)
+	End If
+	Activated = True
+End Sub
+
+Public Sub Event_Command(Command)
+	If Not Activated Then Exit Sub
+   	Select Case Lcase(Command.Name)
+      		Case LCase(ConvertCmd)      : Call Command_Convert(Command)
+   	End Select
+End Sub
+
+Public Sub Command_Convert(Command)
+	Dim FC, TC, AM
+	FC = UCase(Command.Argument("FromCurrency"))
+	TC = UCase(Command.Argument("ToCurrency"))
+	AM = Command.Argument("Amount")
+	If (LenB(AM) = 0) Then Am = DefaultValue
+	If Not IsNumeric(AM) Then
+		Command.Respond StringFormat("""{0}"" is not a valid numeric value.", AM)
+		Exit Sub
+	Else
+		If (LenB(FC) = 0) Then Exit Sub
+		If (LenB(TC) = 0) Then Exit Sub
+
+		If IsCurrency(TC) And IsCurrency(FC) Then
+			Dim Result, TCR, FCR
+			Result = GetConversion(AM, FC, TC)
+			FCR = Round(Split(Split(Result, " = ")(0))(0), 2)
+			TCR = Round(Split(Split(Result, " = ")(1))(0), 2)
+			Command.Respond FCR & " " & ToCountry(FC) & " is equal to " & TCR & " " & ToCountry(TC)
+		Elseif IsCurrency(TC) And Not IsCurrency(FC) Then
+			Command.Respond "Error: """ & FC & """ is not a valid currency."
+		Elseif Not IsCurrency(TC) And IsCurrency(FC) Then
+			Command.Respond "Error: """ & TC & """ is not a valid currency."
+		Else
+			Command.Respond "Error: """ & FC & """ and """ & TC & """ are not valid currencies."
+		End If
+	End If
+	
+End Sub
+
+Public Sub CreateCommands()
+	Dim Command, Parameter
+	Set Command = OpenCommand(ConvertCmd)
+	If Command Is Nothing Then
+		Set Command = CreateCommand(ConvertCmd)
+		With Command
+			.Description = "Use this to convert currency. If no amount is specified, the current exchange rate will be given."
+			.RequiredRank = 200
+			Set Parameter = .NewParameter("FromCurrency", True, "Word")
+			Parameter.Description = "The currency you wish to convert from."
+			.Parameters.Add Parameter
+			Set Parameter = .NewParameter("ToCurrency", True, "Word")
+			Parameter.Description = "The currency you wish to convert to."
+			.Parameters.Add Parameter
+			Set Parameter = .NewParameter("Amount", True, "Word")
+			Parameter.Description = "The amount that you wish to convert."
+			.Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+	Set Command = Nothing
+	Set Parameter = Nothing
+End Sub
+
+
+Public Function GetConversion(Amount, FromCurrency, ToCurrency) ' Returns string
+	Set webObj = CreateObject("Microsoft.XMLHTTP")
+	webObj.Open "GET", "http://www.xe.com/ucc/convert.cgi?Amount=" & Amount & "&From=" & FromCurrency & "&To=" & ToCurrency, False
+	webObj.Send
+	Dim web, Info
+	web = webObj.responseText
+	Set webObj = Nothing
+	Info = Split(Split(web, "<title>")(1), "</title")(0)
+	Info = Split(Info, "rate: ")(1)
+	GetConversion = Info
+End Function ' GetConversion
+
+Public Function IsCurrency(C) ' Returns boolean
+	If (LenB(ToCountry(C)) = 0) Then
+		IsCurrency = False
+	Else
+		IsCurrency = True
+	End If
+End Function ' IsCurrency
+
+Public Function ToCountry(C) ' Returns string
+	Select Case UCase(C)
+		Case "AFN" : ToCountry = "Afghanistan Afghanis"			' AFN 
+		Case "ALL" : ToCountry = "Albania Leke"			 	' ALL 
+		Case "DZD" : ToCountry = "Algeria Dinars"			' DZD 
+		Case "USD" : ToCountry = "America (United States) Dollars"	' USD 
+		Case "ARS" : ToCountry = "Argentina Pesos"			' ARS 
+		Case "AUD" : ToCountry = "Australia Dollars"			' AUD 
+		Case "ATS" : ToCountry = "Austria Schillings"			' ATS
+		Case "BSD" : ToCountry = "Bahamas Dollars"			' BSD 
+		Case "BHD" : ToCountry = "Bahrain Dinars"			' BHD 
+		Case "BDT" : ToCountry = "Bangladesh Taka"			' BDT 
+		Case "BBD" : ToCountry = "Barbados Dollars"			' BBD 
+		Case "BEF" : ToCountry = "Belgium Francs"			' BEF 
+		Case "BMD" : ToCountry = "Bermuda Dollars"			' BMD 
+		Case "BRL" : ToCountry = "Brazil Reais"			 	' BRL 
+		Case "BGN" : ToCountry = "Bulgaria Leva"			' BGN 
+		Case "CAD" : ToCountry = "Canada Dollars"			' CAD 
+		Case "XOF" : ToCountry = "CFA BCEAO Francs"			' XOF 
+		Case "XAF" : ToCountry = "CFA BEAC Francs"			' XAF 
+		Case "CLP" : ToCountry = "Chile Pesos"			 	' CLP 
+		Case "CNY" : ToCountry = "China Yuan Renminbi"			' CNY 
+		Case "CNY" : ToCountry = "RMB (China Yuan Renminbi)"		' CNY 
+		Case "COP" : ToCountry = "Colombia Pesos"			' COP 
+		Case "XPF" : ToCountry = "CFP Francs"			 	' XPF 
+		Case "CRC" : ToCountry = "Costa Rica Colones"			' CRC 
+		Case "HRK" : ToCountry = "Croatia Kuna"			 	' HRK 
+		Case "CYP" : ToCountry = "Cyprus Pounds"			' CYP 
+		Case "CZK" : ToCountry = "Czech Republic Koruny"		' CZK 
+		Case "DKK" : ToCountry = "Denmark Kroner"			' DKK 
+		Case "DEM" : ToCountry = "Deutsche (Germany) Marks"		' DEM 
+		Case "DOP" : ToCountry = "Dominican Republic Pesos"		' DOP 
+		Case "NLG" : ToCountry = "Dutch (Netherlands) Guilders"		' NLG 
+		Case "XCD" : ToCountry = "Eastern Caribbean Dollars"		' XCD 
+		Case "EGP" : ToCountry = "Egypt Pounds"			 	' EGP 
+		Case "EEK" : ToCountry = "Estonia Krooni"			' EEK 
+		Case "EUR" : ToCountry = "Euro"			 		' EUR 
+		Case "FJD" : ToCountry = "Fiji Dollars"			 	' FJD 
+		Case "FIM" : ToCountry = "Finland Markkaa"			' FIM 
+		Case "FRF" : ToCountry = "France Francs"			' FRF 
+		Case "DEM" : ToCountry = "Germany Deutsche Marks"		' DEM 
+		Case "XAU" : ToCountry = "Gold Ounces"			 	' XAU 
+		Case "GRD" : ToCountry = "Greece Drachmae"			' GRD 
+		Case "NLG" : ToCountry = "Holland (Netherlands) Guilders"	' NLG 
+		Case "HKD" : ToCountry = "Hong Kong Dollars"			' HKD 
+		Case "HUF" : ToCountry = "Hungary Forint"			' HUF 
+		Case "ISK" : ToCountry = "Iceland Kronur"			' ISK 
+		Case "XDR" : ToCountry = "IMF Special Drawing Right"		' XDR 
+		Case "INR" : ToCountry = "India Rupees"			 	' INR 
+		Case "IDR" : ToCountry = "Indonesia Rupiahs"			' IDR 
+		Case "IRR" : ToCountry = "Iran Rials"			 	' IRR 
+		Case "IQD" : ToCountry = "Iraq Dinars"			 	' IQD 
+		Case "IEP" : ToCountry = "Ireland Pounds"			' IEP 
+		Case "ILS" : ToCountry = "Israel New Shekels"			' ILS 
+		Case "ITL" : ToCountry = "Italy Lire"			 	' ITL 
+		Case "JMD" : ToCountry = "Jamaica Dollars"			' JMD 
+		Case "JPY" : ToCountry = "Japanese Yen"			 	' JPY 
+		Case "JOD" : ToCountry = "Jordan Dinars"			' JOD 
+		Case "KES" : ToCountry = "Kenya Shillings"			' KES 
+		Case "KRW" : ToCountry = "Korea (South) Won"			' KRW 
+		Case "KWD" : ToCountry = "Kuwait Dinars"			' KWD 
+		Case "LBP" : ToCountry = "Lebanon Pounds"			' LBP 
+		Case "LUF" : ToCountry = "Luxembourg Francs"			' LUF 
+		Case "MYR" : ToCountry = "Malaysia Ringgits"			' MYR 
+		Case "MTL" : ToCountry = "Malta Liri"			 	' MTL 
+		Case "MUR" : ToCountry = "Mauritius Rupees"			' MUR 
+		Case "MXN" : ToCountry = "Mexico Pesos"			 	' MXN 
+		Case "MAD" : ToCountry = "Morocco Dirhams"			' MAD 
+		Case "NLG" : ToCountry = "Netherlands Guilders"			' NLG 
+		Case "NZD" : ToCountry = "New Zealand Dollars"			' NZD 
+		Case "NOK" : ToCountry = "Norway Kroner"			' NOK 
+		Case "OMR" : ToCountry = "Oman Rials"			 	' OMR 
+		Case "PKR" : ToCountry = "Pakistan Rupees"			' PKR 
+		Case "XPD" : ToCountry = "Palladium Ounces"			' XPD 
+		Case "PEN" : ToCountry = "Peru Nuevos Soles"			' PEN 
+		Case "PHP" : ToCountry = "Philippines Pesos"			' PHP 
+		Case "XPT" : ToCountry = "Platinum Ounces"			' XPT 
+		Case "PLN" : ToCountry = "Poland Zlotych"			' PLN 
+		Case "PTE" : ToCountry = "Portugal Escudos"			' PTE 
+		Case "QAR" : ToCountry = "Qatar Riyals"			 	' QAR 
+		Case "RON" : ToCountry = "Romania New Lei"			' RON 
+		Case "ROL" : ToCountry = "Romania Lei"			 	' ROL 
+		Case "RUB" : ToCountry = "Russia Rubles"			' RUB 
+		Case "SAR" : ToCountry = "Saudi Arabia Riyals"			' SAR 
+		Case "XAG" : ToCountry = "Silver Ounces"			' XAG 
+		Case "SGD" : ToCountry = "Singapore Dollars"			' SGD 
+		Case "SKK" : ToCountry = "Slovakia Koruny"			' SKK 
+		Case "SIT" : ToCountry = "Slovenia Tolars"			' SIT 
+		Case "ZAR" : ToCountry = "South Africa Rand"			' ZAR 
+		Case "KRW" : ToCountry = "South Korea Won"			' KRW 
+		Case "ESP" : ToCountry = "Spain Pesetas"			' ESP 
+		Case "XDR" : ToCountry = "Special Drawing Rights (IMF)"		' XDR 
+		Case "LKR" : ToCountry = "Sri Lanka Rupees"			' LKR 
+		Case "SDG" : ToCountry = "Sudan Pounds"			 	' SDG 
+		Case "SEK" : ToCountry = "Sweden Kronor"			' SEK 
+		Case "CHF" : ToCountry = "Switzerland Francs"			' CHF 
+		Case "TWD" : ToCountry = "Taiwan New Dollars"			' TWD 
+		Case "THB" : ToCountry = "Thailand Baht"			' THB 
+		Case "TTD" : ToCountry = "Trinidad and Tobago Dollars"		' TTD 
+		Case "TND" : ToCountry = "Tunisia Dinars"			' TND 
+		Case "TRY" : ToCountry = "Turkey Lira"			 	' TRY 
+		Case "AED" : ToCountry = "United Arab Emirates Dirhams"		' AED 
+		Case "GBP" : ToCountry = "United Kingdom Pounds"		' GBP 
+		Case "USD" : ToCountry = "United States Dollars"		' USD 
+		Case "VEB" : ToCountry = "Venezuela Bolivares"			' VEB 
+		Case "VEF" : ToCountry = "Venezuela Bolivares Fuertes"		' VEF 
+		Case "VND" : ToCountry = "Vietnam Dong"			 	' VND 
+		Case "ZMK" : ToCountry = "Zambia Kwacha"			' ZMK 
+		Case Else : ToCounty = vbNullString
+	End Select
+End Function 'To Currency

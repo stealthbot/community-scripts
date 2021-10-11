@@ -1,0 +1,192 @@
+' // script data
+Script("Name") = "Google Translation"
+Script("Author") = "Obvlivious"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 1
+Script("Description") = "Based upon FiftyToo's translation script, but uses Google to tranlsate the text."
+Dim oHTTP
+Dim oLangs
+Dim strText
+'Dim oLangsShort
+Sub Event_Load()
+	Call UpdateLanguages()
+	Set oHTTP = CreateObject("Microsoft.XMLHTTP")
+End Sub
+
+
+Sub UpdateLanguages()
+	Set oHTTP = CreateObject("Microsoft.XMLHTTP")
+		oHTTP.Open "GET", "http://translate.google.com/", False
+		oHTTP.Send
+	strHTML = oHTTP.ResponseText
+
+	'Parse response for options'
+	If strHTML = "" Then
+	AddChat vbYellow ,"[GTRANS] An error occured while getting webpage."
+
+	End If
+	astrHTML = Split(strHTML, "<option value=")
+	Dim string2
+	string2 = Chr(34) & ">"
+	Set oLangs = CreateObject("Scripting.Dictionary")
+	oLangs.CompareMode = 1
+	Dim x
+	For x = LBound(astrHTML) + 1 To UBound(astrHTML)
+		string1 = astrHTML(x)
+		Lang = Split(astrHTML(x),"</option>")(0)
+		Str = Split(Split(astrHTML(x),"</option>")(0),">")
+		Code = str(0)
+		Lang = Str(1)
+		If Lang <> "&#8212;" And Lang <> "Detect language" Then
+			If InStr(string1,"</select><div id") > 0 Then String1 = Split(astrHTML(x),"</select><div id")(0)
+			oLangs.Item(Lang) = Code
+		End If
+	Next
+	Call CreateScriptCommands()
+	AddChat vbYellow, "[GTRANS] Completed update of (" & oLangs.Count&") different languages, now you can proceed."
+
+End Sub
+
+
+Sub CreateScriptCommands()
+    Dim Command, Parameter
+    Dim langString, LangsList
+    '// translate
+    langString = ""
+	langMatches = ""
+	LangsList = oLangs.Keys
+    For Each LangKey In LangsList
+		langString = StringFormat("{0}, {1}",langString, LangKey)
+		langMatches = StringFormat("{0}^{1}$|", langMatches, LangKey)
+	Next
+	If langMatches = "" Then Exit Sub
+	langMatches = Left(langMatches,Len(langMatches) - 1)
+    Set Command = OpenCommand("gtrans")
+	If Command Is Nothing Then
+	Else
+		DeleteCommand("gtrans")
+	End If
+	Set Command = OpenCommand("gtrans")
+	
+    If Command Is Nothing Then
+        '// It does not, lets create the command
+        Set Command = CreateCommand("gtrans")
+        With Command
+            '// set a command description
+            .Description = "Translate a phrase to a different language using Google."
+			
+            .RequiredRank = 0
+            '// add parameters
+            Set Parameter = .NewParameter("SourceLanguage", False, "word")
+            .Parameters.Add Parameter
+            With Parameter
+                .Description = "The source language."
+				.SpecialNotes = StringFormat("Must be one of the following: {0}",langString)
+                .MatchMessage = langMatches
+                .MatchCaseSensitive = True
+               ' .MatchError = StringFormat("Must be one of the following: {0}", langString)
+            End With
+            Set Parameter = .NewParameter("TargetLanguage", False, "word")
+            .Parameters.Add Parameter
+            With Parameter
+                .Description = "The destination language."
+				.SpecialNotes = StringFormat("Must be one of the source languages.")
+                .MatchMessage = langMatches
+                .MatchCaseSensitive = True
+                
+            End With
+            
+            Set Parameter = .NewParameter("Phrase", False, "string")
+            .Parameters.Add Parameter
+            With Parameter
+                .Description = "The phrase you want to translate."
+				.SpecialNotes = "Use proper grammar and punctuation for the best results. "
+				
+            End With
+			
+            '// save the command
+            .Save
+        End With
+    End If
+    
+End Sub
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+	GTrans Username,Message,1
+End Sub
+Sub Event_UserEmote(Username, Flags, Message)
+	GTrans Username,Message,2
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+	GTrans Username,Message,3
+End Sub
+
+Sub Event_PressedEnter(Text)
+	If Left(Text,2) = "//" Then Text = BotVars.Trigger&Split(Text,"//",2)(1) : GTransDsp = 0
+	If Left(Text,1) = "/" And GTransDsp = "" Then Text = BotVars.Trigger&Split(Text,"/",2)(1) : GTransDsp = 4
+	GTrans BotVars.Username,Text,GTransDsp
+End Sub
+
+Sub GTrans(Username,Message,GTransDsp)
+	If Left(Message,Len(Botvars.Trigger)) <> BotVars.Trigger Then Exit Sub
+	If GTransDsp = 0 Then GTransDsp = 1 : Veto = True
+	Dim sLang
+	Dim Msg
+	Msg = Split(Message," ", 4)
+	If Ubound(Msg) = 0 Then
+		If LCase(Msg(0)) = LCase(BotVars.Trigger&"gtrans") Then
+			For Each LangKey In oLangs.Keys
+				If List <> "" Then List = List & ", "
+				List = List & LangKey
+			Next
+		Dsp GTransDsp, "Languages available: " & List,Username,VBYellow
+		Exit Sub
+		End If
+	End If
+	If Ubound(Msg) < 3 Then Exit Sub 
+	Select Case Split(LCase(Message))(0)
+		Case LCase(BotVars.Trigger&"gtrans")
+				Dsp GTransDsp, StringFormat("Translation in progress ({0}/{1})...", Msg(1), Msg(2)),Username,VBYellow
+				sl = ExpandLanguage(Msg(1))
+				tl = ExpandLanguage(Msg(2))
+				Dsp GTransDsp, Translate(Msg(3), sl, tl),Username,VBYellow
+				If Veto Or GTransDsp = 4 Then VetoThisMessage
+	End Select
+	
+End Sub
+
+Function Translate(strText, sl, tl)
+	On Error Resume Next
+	'// Create our post information
+	strURL = StringFormat("hl=en&ie=UTF-8&text={0}&sl={1}&tl={2}", Replace(Replace(strText, "?", "%3F"), " ", "+"), sl, tl)
+
+	'// Send the POST request
+	Set oHTTP = CreateObject("Microsoft.XMLHTTP")
+	oHTTP.Open "GET", "http://translate.google.com/", False
+	oHTTP.Send(strURL)
+	strHTML = oHTTP.ResponseText
+
+    astrHTML = Split(strHTML, "title=" & Chr(34) & strText & Chr(34) )
+	
+	pos1 = InStr(astrHTML(1), ">")
+	pos2 = InStr(astrHTML(1), "<")
+
+	strTrans = Mid(astrHTML(1), pos1+1, pos2-pos1-1)
+	
+	If strTrans = "" Then
+		Translate = "Error translating! Please check you have spelt the language right. A list of available languages are available through: " & BotVars.Trigger &"gtrans"
+	Else
+		Translate = strTrans
+	End If
+End Function
+
+Private Function ExpandLanguage(lng)
+	Dim retval
+	If oLangs.Exists(lng) Then
+		retval = oLangs.Item(lng)
+	Else
+		retval = "error"
+	End If
+	ExpandLanguage = retval
+End Function

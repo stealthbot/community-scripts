@@ -1,0 +1,416 @@
+Script("Name") = "mi"
+Script("Author") = "The-Black-Ninja"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 0
+Script("Description") = "Finds information about a member using BNet packets istead of the internet."
+
+
+Private Const miCmd = "mi"   '// Command Name
+Private Const miAccess = 200  '// Access needed to use the command
+Private Const miAFlood = 20  '// Seconds users must wait before requesting stats for another user
+
+Private miRequests, miLastRequest
+
+
+Sub Event_Load()
+
+   Set miRequests = CreateObject("Scripting.Dictionary")
+   miLastRequest = Now -1
+End Sub
+
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+
+   If Left(LCase(Message), Len(BotVars.Trigger)) = BotVars.Trigger Then 
+      If InStr(Message, " ") < 1 Then Exit Sub
+      ci_Command Username, Mid(Message, Len(BotVars.Trigger) + 1), 1
+   End If
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+
+   If Left(LCase(Message), Len(BotVars.Trigger)) = BotVars.Trigger Then 
+      If InStr(Message, " ") < 1 Then Exit Sub
+      ci_Command Username, Mid(Message, Len(BotVars.Trigger) + 1), 3
+   End If
+End Sub
+
+Sub Event_PressedEnter(Text)
+
+   If Left(Text, 1) = "/" Then ci_Command BotVars.Username, Mid(Text, Len("/") + 1), 4
+End Sub
+
+
+Private Sub ci_Command(Username, Message, dspId)
+
+   If DateDiff("s", miLastRequest, Now) < miAFlood Then Exit Sub
+
+   msg = Split(Message, " ", 2)
+   If LCase(msg(0)) = miCmd And UBound(msg) > 0 Then      
+      Set db = GetDBEntry(Username)
+      If db.Rank < miAccess AND Username <> BotVars.Username Then Exit Sub
+      If Username = BotVars.Username Then VetoThisMessage
+      GetRequestInfo msg(1), Username, dspId
+   End If
+End Sub
+
+
+Private Sub GetRequestInfo(Message, Username, dspId)
+   
+   user = Split(Message)(0)
+         
+   If Len(user) < 3 OR Len(user) > 15 Then
+      Dsp dspId, Username & ", usernames must be greater than 3 characters and less than 16 characters.", Username, vbGreen
+      Exit Sub
+   End If
+   
+   realm = Mid(Split(Message)(2), 2)
+   stats = Mid(Split(Message)(1), 2)
+
+   newCookie = newCookie + Ubound(miRequests.Keys)
+   
+   miRequests.Item(newCookie) = Array(user, GetMyProduct(realm), stats, Username, dspId)
+
+   GetClanTag newCookie, user
+End Sub
+
+
+Private Sub GetClanTag(cookie, name)
+
+   DataBuffer.InsertDWord cookie
+   DataBuffer.InsertNTString CStr(name)
+   DataBuffer.SendPacket &H35
+End Sub
+
+
+Private Sub GetMemberInfo(cookie, tag, name)
+
+   DataBuffer.InsertDWord cookie
+   DataBuffer.InsertNonNTString StrReverse(tag)
+   DataBuffer.InsertNTString CStr(name) 
+   DataBuffer.SendPacket &H82
+End Sub
+
+
+Private Sub GetGeneralInfo(ID, cookie, name, product)
+      
+   DataBuffer.InsertByte ID
+   DataBuffer.InsertDWord cookie
+   DataBuffer.InsertNTString CStr(name)
+   DataBuffer.InsertNonNTString product
+   DataBuffer.SendPacket &H44
+End Sub
+
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)
+
+   If Protocol = "BNCS" Then
+      If ID = &H35 Then
+         Set pak = DataBufferEx()
+         pak.Data = Data
+         pak.position = 4
+         cookie = pak.GetDWORD
+         
+         If NOT miRequests.Exists(cookie) Then Exit Sub
+         
+         status = pak.GetByte
+         des = pak.GetString
+         loc = pak.GetString
+         tag = pak.getraw(4)
+                  
+         If status = 0 Then  '// Lookup successful
+            sTag = StrReverse(Replace(right(tag, 4), chr(0), vbNullString))
+            If sTag <> vbNullString Then
+               miRequests.Item(cookie) = Array(miRequests.Item(cookie)(0), miRequests.Item(cookie)(1), miRequests.Item(cookie)(2), miRequests.Item(cookie)(3), miRequests.Item(cookie)(4), sTag)
+               xTag = sTag
+               For i = Len(xTag)+1 To 4
+                  xTag = xTag & chr(0)
+               Next
+               GetMemberInfo cookie, xTag, miRequests.Item(cookie)(0)
+            Else
+               user = miRequests.Item(cookie)(0)
+               realm = miRequests.Item(cookie)(1)
+               stats = miRequests.Item(cookie)(2)
+               username = miRequests.Item(cookie)(3)
+               dspId = miRequests.Item(cookie)(4)
+               text = """ " & user & " "" is not in a clan on " & GetMyProduct(realm) & " in " & GetMyRealm & "."
+ 
+               Select Case Lcase(stats)
+                  Case "c": Dsp dspId, text, Username, vbGreen
+                  Case "a"
+                     Dsp dspId, text, Username, vbGreen
+                     GetGeneralInfo 4, cookie, user, StrReverse(UCase(realm))
+                  Case "l"
+                     GetGeneralInfo 4, cookie, user, StrReverse(UCase(realm))                  
+               End Select
+            End If
+         Else
+            Dsp miRequests.Item(cookie)(4), "Request failed. Player does not exist.", miRequests.Item(cookie)(3), vbGreen
+            miLastRequest = Now
+         End If
+      End If
+         
+      If ID = &H82 Then
+         Set pak = DataBufferEx()
+         pak.Data = Data
+         pak.position = 4
+         cookie = pak.GetDWORD
+         status = pak.GetByte
+         tag = pak.GetString
+         rank = pak.GetByte
+         datejoin = pak.GetFILETIME
+         
+         If status = 0 Then         
+            Select Case rank
+               Case 4 : rank = "Chieftan"
+               Case 3 : rank = "Shaman"
+               Case 2 : rank = "Grunt"
+               Case 1 : rank = "Peon"
+               Case 0 : rank = "Probationary member"
+            End Select
+
+            user = miRequests.Item(cookie)(0)
+            realm = miRequests.Item(cookie)(1)
+            stats = miRequests.Item(cookie)(2)
+            username = miRequests.Item(cookie)(3)
+            dspId = miRequests.Item(cookie)(4)
+            sTag = miRequests.Item(cookie)(5)
+            
+            text = """ " & user & " "" is a " & rank & " of clan " & tag & " (" & sTag & "), joined on " & FormatDateTime(Split(dateJoin)(0), 1) & " @ " & Split(dateJoin, " ", 2)(1) & "."
+            
+            Select Case Lcase(stats)
+               Case "c": Dsp dspId, text, Username, vbGreen
+               Case "a"
+                  Dsp dspId, text, Username, vbGreen
+                  GetGeneralInfo 4, cookie, user, StrReverse(UCase(realm))
+               Case "l"
+                  GetGeneralInfo 4, cookie, user, StrReverse(UCase(realm))                  
+            End Select            
+         Else
+            Dsp dspId, "Request failed. Please try again later.", Username, vbGreen
+            miLastRequest = Now
+         End If
+      End If
+      
+      If ID = &H44 Then
+         Set pak = DataBufferEx()
+         pak.Data = Data
+         pak.position = 4
+         subID = pak.GetByte
+         cookie = pak.GetDWORD
+         iconID = pak.GetRaw(4)
+         records = pak.GetByte
+
+         If NOT miRequests.Exists(cookie) Then Exit Sub
+         
+         user = miRequests.Item(cookie)(0)
+         realm = miRequests.Item(cookie)(1)
+         stats = miRequests.Item(cookie)(2)
+         username = miRequests.Item(cookie)(3)
+         dspId = miRequests.Item(cookie)(4)
+
+         For i = 0 To records -1
+            lType = pak.GetDWord
+            wins = pak.GetWord
+            loss = pak.GetWord
+            level = pak.GetByte
+            xpd = pak.GetByte
+            xp = pak.GetWord
+            rank = pak.GetDWord
+            
+            Select Case lType
+               Case 1413824845: lType = "Team"
+               Case 1397705807: lType = "Solo"
+               Case 1179009312: lType = "FFA"
+            End Select
+            
+            Select Case i
+               Case 0: text = "Icon info [" & GetUserIcon(iconID) & "] ~~ " & lType & ": Wins [" & wins & "], Losses [" & loss & "], Level [" & level & "], Experience [" & xp & "], Rank [" & rank & "]"
+               Case Else: text = lType & ": Wins [" & wins & "], Losses [" & loss & "], Level [" & level & "], Experience [" & xp & "], Rank [" & rank & "]"
+            End Select
+            Dsp dspId, text, Username, vbGreen
+         Next
+         
+         text = vbNullString
+         
+         raceRecords = pak.GetByte
+         
+         totalL = 0
+         totalW = 0
+         
+         For i = 0 To raceRecords
+            Select Case raceRecords
+               Case 6
+                  If i < 5 Then
+                     Select Case i
+                        Case 0: race = "Random"
+                        Case 1: race = "Human"
+                        Case 2: race = "Orc"
+                        Case 3: race = "Undead"
+                        Case 4: race = "Night Elf"
+                     End Select
+                     wins = pak.GetWord
+                     loss = pak.GetWord
+                     
+                     totalL = totalL + loss
+                     totalW = totalW + wins
+                     
+                     If wins = 0 Then 
+                        winP = "0"
+                     Else
+                        winP = FormatNumber(((wins/(wins+loss))*100), 2)
+                     End If
+                     
+                     text = text & race & ": Wins [" & wins & "], Loss [" & loss & "], " & winP & " win % ~~ "
+                  Else
+                     wins = pak.GetWord
+                     loss = pak.GetWord                     
+                  End If             
+               Case 5
+                  If i < 4 Then
+                     AddChat vbMagenta, "Reading race record #" & i & " ..."
+
+                     AddChat vbGreen, "Wins: " & pak.GetWord
+                     AddChat vbGreen, "Loss: " & pak.GetWord
+                  End If                  
+            End Select
+         Next
+         
+         If totalL = 0 Then
+            totP = "0"
+         Else
+            totP = FormatNumber(((totalW/(totalW+totalL))*100), 2)
+         End If
+         
+         Dsp dspId, "Race info:. " & Left(text, Len(text) -3) & "-- " & totP & " total win %", Username, vbGreen
+         miLastRequest = Now
+      End If
+   End If
+End Sub
+
+
+Private Function GetMyRealm
+
+   serv = LCase(BotVars.Server)
+
+   If InStr(serv, "east") > 0 Then
+         GetMyRealm = "Azeroth"
+   ElseIf InStr(serv, "west") > 0 Then
+         GetMyRealm = "Lordaeron"
+   ElseIf InStr(serv, "europe") > 0 Then
+         GetMyRealm = "Northrend"         
+   ElseIf InStr(serv, "asia") > 0 Then
+         GetMyRealm = "Kalimdor"         
+   ElseIf InStr(serv, "63.240") > 0 Then
+         GetMyRealm = "Azeroth"
+   ElseIf InStr(serv, "63.241") > 0 Then
+         GetMyRealm = "Lordaeron"         
+   ElseIf InStr(serv, "213.248") > 0 Then
+         GetMyRealm = "Northrend"     
+   ElseIf InStr(serv, "211.233") > 0 Then
+         GetMyRealm = "Kalimdor"         
+   End If
+End Function
+
+
+Private Function GetMyProduct(prod)
+
+   Select Case LCase(prod)
+      Case "roc" : GetMyProduct = "war3"
+      Case "tft" : GetMyProduct = "w3xp"
+   End Select
+End Function
+
+
+Private Function GetUserIcon(icon)
+
+   icon = StrReverse(Lcase(icon))
+   Select Case Left(icon, 1)
+      Case "o": a = "Orc"
+      Case "e": a = "Night Elf"
+      Case "u": a = "Undead"
+      Case "h": a = "Human"
+      Case "n": a = "Random/Tournament"
+   End Select
+   
+   Select Case Mid(icon, 2)
+      Case "peo": b = "Peon"
+   
+     '// Tournament
+      '// W3XP     
+      Case "bal": b = "Doomguard"                
+      Case "inf": b = "Infernal"            
+      Case "fgu": b = "Felguard"
+      Case "plh": b = "Pit Lord"
+      Case "war": b = "Archimonde"
+      '// WAR3      
+      Case "bwm": b = "Deathwing"
+      Case "rdr": b = "Red Dragon"
+      Case "adr": b = "Blue Dragon"
+      Case "grd": b = "Green Dragon Whelp"
+            
+     '// Random
+      Case "myr": b = "Myrmidon"
+      Case "nsw": b = "Siren"      
+      Case "hyc": b = "Dragon Turtle"      
+      Case "vsh": b = "Sea Witch"      
+      Case "evm": b = "Illidan"
+      
+     '// Human
+      '// W3XP     
+      Case "rif": b = "Rifleman"
+      Case "sor": b = "Sorceress"      
+      Case "spt": b = "Spellbreaker"      
+      Case "blm": b = "Blood Mage"
+      Case "jai": b = "Jaina"
+      '// WAR3      
+      Case "foo": b = "Footman"
+      Case "amg": b = "Archmage"
+      Case "med": b = "Medivh"
+      Case "amg": b = "Archmage"
+      
+            
+     '// Night Elf
+      '// W3XP     
+      Case "sen": b = "Huntress"  
+      Case "dot": b = "Druid of the Talon"  
+      Case "dry": b = "Dryad"  
+      Case "kee": b = "Keeper of the Grove"              
+      Case "wrd": b = "Maiev"  
+      '// WAR3      
+      Case "arc": b = "Archer"  
+      Case "doc": b = "Druid of the Claw"  
+      Case "moo": b = "Priestess of the Moon"  
+      Case "fur": b = "Furion Stormrage"  
+      
+                 
+     '// Orc
+      '// W3XP     
+      Case "hun": b = "Troll Headhunter"      
+      Case "shm": b = "Shaman"        
+      Case "spw": b = "Spirit Walker"    
+      Case "shd": b = "Shadow Hunter"    
+      Case "rex": b = "Rexxar"         
+      '// WAR3      
+      Case "thr": b = "Thrall"         
+      Case "tau": b = "Tauren"         
+      Case "gru": b = "Grunt"         
+      Case "amg": b = "Far Seer"         
+      
+     '// Undead
+      '// W3XP
+      Case "cry": b = "Crypt Fiend"          
+      Case "ban": b = "Banshee"                
+      Case "obs": b = "Destroyer"          
+      Case "crl": b = "Crypt Lord"          
+      Case "syl": b = "Sylvanas"          
+      '// WAR3
+      Case "gho": b = "Ghoul"          
+      Case "abo": b = "Abomination"                
+      Case "lic": b = "Lich"               
+      Case "tic": b = "Tichondrius"                
+   End Select
+   
+   GetUserIcon = "Tier: " & a & " - Icon: " & b
+End Function

@@ -1,0 +1,172 @@
+Script("Name") = "Run"
+Script("Author") = "FireFox@Azeroth"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 41
+Script("Description") = "Runs a specified program."
+Script("Prefix") = "Run"
+
+'// Thanks The-Black-Ninja for pointing out the wrong description. Forgot that I copied this from another script to simplify things.
+
+Public version
+
+Sub Event_Load()
+  version = Script("Major") & "." & Script("Minor") & "." & Script("Revision")
+  
+  AddChat Color.Khaki, Script("Prefix"), Color.Lime, " Successfully loaded ", Color.RoyalBlue, Script("Name") &" Script ", Color.Lime, "v", Color.Yellow, version, Color.Lime, " by ", Color.Orange, Script("Author")
+
+  Call cCmds()
+  Call cSets()
+End Sub
+
+Sub Event_Command(Command)
+  If NOT(Command.Docs.Owner = Script("Name")) Then Exit Sub
+  If NOT Command.HasAccess Then Exit Sub
+
+  With Command
+    Dim usage
+    usage = "Proper usage: " & BotVars.Trigger & .Name
+
+    Select Case LCase(.Name)
+      Case "run"
+        If .IsValid Then
+          tmpArr = Split(strRev(.Argument("Path")), ".")
+          If Instr(.Argument("Path"), "$") Then
+            tmpProgs = GetSettingsEntry("Programs")
+            tmpProg = split(.Argument("Path"), "$")(0)
+            runProg = """" & split(.Argument("Path"), "$")(0) & """"
+            runTitle = split(.Argument("Path"), "$")(1)
+
+            writeSettingsEntry "Programs", tmpProgs & runTitle & "=>'" & tmpProg & "'<="
+            .Respond "Starting " & runTitle
+          Else
+            .Respond "Starting " & strRev(tmpVar(1)) & "." & strRev(tmpArr(0))
+          End If
+
+          Set runEXEC = CreateObject("Wscript.shell")
+          runEXEC.run(Rep(runProg, "'", """"))
+          Set runExec = Nothing
+        Else
+          .Respond usage
+        End If
+      Case "rfl"
+        If .IsValid Then
+          tmpStart = .Argument("Title")
+          tmpProgs = GetSettingsEntry("Programs")
+          If Instr(tmpProgs, tmpStart) Then
+            tmpProgE = Split(Split(tmpProgs, tmpStart & "=>")(1), "<=")(0)
+            .Respond "Starting " & .Argument("Title")
+
+            Set runEXEC = CreateObject("Wscript.shell")
+            runEXEC.run(Rep(tmpProgE, "'", """"))
+            Set runExec = Nothing
+          Else
+            addChat Color.Khaki, Script("Prefix"), Color.Red, " Program does not exist on the list. Please use '" & BotVars.Trigger & "runlist' to retrive the programs currently on the list."
+          End If
+        Else
+          .Respond usage
+        End If
+      Case "runlist", "rl"
+        If .IsValid Then
+          tmpProgs = GetSettingsEntry("Programs")
+          tmpList = Split(tmpProgs, "=>")
+          itemList = tmpList(0)
+
+          For i = 0 to ubound(tmpList)
+            tmpItem = tmpList(i)
+            If Instr(tmpItem, "<=") Then
+              itemList = itemList & ", " & Split(tmpItem, "<=")(1)
+            End If
+          Next
+
+          itemList = Left(itemList, Len(itemList)-2)
+          .Respond "The following programs are on your list: " & itemList
+        Else
+          .Respond usage
+        End If
+    End Select
+  End With
+End Sub
+
+Function strRev(tmpRev)
+  strRev = strReverse(tmpRev)
+End Function
+
+Function Rep(tmpRep, oldStr, newStr)
+  Rep = Replace(tmpRep, oldStr, newStr)
+End Function
+
+Private Sub cCmds()
+  If GetSettingsEntry("version") <> version Then
+    Dim Command, Parameter
+
+    Set Command = OpenCommand("run")
+    If Command Is Nothing Then
+      addChat color.Yellow, Script("Prefix"), Color.Pink, " Commands for the Enhanced Moderation Script will now be created......"
+      Set Command = CreateCommand("run")
+      With Command
+        Set Parameter = .NewParameter("Path", False, "String")
+        Parameter.Description = "The Username you want to remove from the channel. Limited to A-Za-z0-9_-.() and must start with a letter or number."
+        .Parameters.Add Parameter
+
+        .RequiredRank = 200
+        .Description = "Runs the program spcified by the PATH argument."
+        .Save
+      End With
+      AddChat color.Yellow, Script("Prefix"), color.Pink, " Successfully created command (run). Syntax: .run <Program> [Save] [Title]"
+    End If
+
+    Set Command = OpenCommand("rfl")
+    If Command Is Nothing Then
+      addChat color.Yellow, Script("Prefix"), Color.Pink, " Commands for the Enhanced Moderation Script will now be created......"
+      Set Command = CreateCommand("rfl")
+      With Command
+        Set Parameter = .NewParameter("Title", False, "String")
+        Parameter.Description = "The title of the stored program that you wish to run."
+        .Parameters.Add Parameter
+
+        .RequiredRank = 200
+        .Description = "Runs the specified program from the saved list."
+        .Save
+      End With
+      AddChat color.Yellow, Script("Prefix"), color.Pink, " Successfully created command (rfl). Syntax: .rfl <Title>"
+    End If
+
+    Set Command = OpenCommand("runlist")
+    If Command Is Nothing Then
+      addChat color.Yellow, Script("Prefix"), Color.Pink, " Commands for the Enhanced Moderation Script will now be created......"
+      Set Command = CreateCommand("runlist")
+      With Command
+
+        .RequiredRank = 200
+        .Description = "Lists all programs from the program list."
+        .Save
+      End With
+      AddChat color.Yellow, Script("Prefix"), color.Pink, " Successfully created command (rfl). Syntax: .runlist"
+    End If
+
+    Set Command = Nothing
+    Set Parameter = Nothing
+
+    addChat color.Yellow, Script("Prefix"), Color.Green, " Commands were created successfully."
+  End If
+End Sub
+
+Private Sub cSets()
+  If version <> GetSettingsEntry("version") Then
+
+    WriteSettingsEntry "version", version
+
+    Do while tmpVar > 5000 or tmpVar = vbNull AND GetSettingsEntry("waittime") <> vbNull
+      If tmpVar <> "" AND tmpVar < 5000 Then
+        MsgBox(tmpVar)
+      Else
+        MsgBox("You must enter a setting less than five (5) and is not equivalent to a NullString.")
+      End If
+
+      WriteSettingsEntry "waittime", tmpVar
+    Loop
+
+    WriteSettingsEntry "Programs", "Stealthbot Launcher=>'C:\Program Files (x86)\Stealthbot 2.7\Launcher.exe'"
+  End If
+End Sub

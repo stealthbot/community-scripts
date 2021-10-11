@@ -1,0 +1,234 @@
+Script("Name") = "Antiflood"
+Script("Author") = "7thAce"
+Script("Major") = 1
+Script("Minor") = 2
+Script("Revision") = 0
+Script("Description") = "Detects and takes actions against floods/loads."
+
+'Consts, will clean up later
+'Penalties
+Const TotalCredits = 75
+Const OffCredits = 710
+Const maxping = 250
+Const pingpenalty = 10
+Const productpenalty = 2
+Const BanEvasionPenalty = 25
+Const MaxBanCount = 20 '// Bans per time period.
+'Actions
+Const Joinbackup = True 'Joins a backup if bot has no ops
+Const BackupChannel = "Clan Wylf" 'Channel to join.  Leave blank to automatically go to op Yourname
+Const BackupIfNotClan = False 'Joins the backup channel if /clan private cannot be used (Not a clan channel)
+
+Public CC
+Public RC
+Public NumberofBans
+Const resettime = 3 '// Time in minutes to reload the credits
+Const ACS = True '// Addchat messages, change to False to disable
+Public FloodMode
+
+Sub event_serverinfo(message)
+If instr(message, "was banned by") > 0 Then
+ NumberOfBans = NumberofBans + 1
+ If floodmode = 0 and NumberOfBans > MaxBanCount Then
+  Call TenFourTen()
+ End If
+End If
+End Sub
+
+Sub event_load()
+CC = TotalCredits '// CC = CurrentCredits
+RC = OffCredits
+NumberOfBans = 0
+CreateObj "LongTimer", "Reset"
+Reset.Enabled = True
+Reset.Interval = resettime * 60
+
+CreateObj "LongTimer", "Reban"
+Reban.Enabled = False
+Reban.Interval = 15
+FloodMode = 0
+
+CreateObj "LongTimer", "Open"
+Open.Enabled = False
+Open.Interval = 12
+
+CreateObj "LongTimer", "Close"
+Close.Enabled = False
+Close.Interval = 4
+
+CreateObj "LongTimer", "NoFlood"
+NoFlood.Enabled = False
+NoFlood.Interval = 90
+
+Set cmd = OpenCommand("rs")
+If cmd Is Nothing Then
+ Set cmd = CreateCommand("rs")
+ With cmd
+	.Description = "Reloads Script"
+	.RequiredRank = 70
+	.Save
+ End With
+ Addchat vbmagenta, "Created rs command!"
+End If
+
+Set cmd = OpenCommand("dpon")
+If cmd Is Nothing Then
+ Set cmd = CreateCommand("dpon")
+ With cmd
+	.Description = "Enables the dane protocol"
+	.RequiredRank = 100
+	.Save
+ End With
+ Addchat vbmagenta, "Created dpon command!"
+End If
+
+Set cmd = OpenCommand("dpstatus")
+If cmd Is Nothing Then
+ Set cmd = CreateCommand("dpstatus")
+ With cmd
+	.Description = "Displays the status of the Dane Protocol"
+	.RequiredRank = 50
+	.Save
+ End With
+ Addchat vbmagenta, "Created dpstatus command!"
+End If
+
+If totalcredits < 1 Then Call TenFourTen()
+End Sub
+
+Sub Event_Command(Command)
+Select Case LCase(Command.Name)
+Case "rs" : Call rs()
+Case "dpon" : Call tenfourten()
+Case "dpstatus" : Call dpstatus(Command)
+End Select
+End Sub
+
+Sub dpstatus(Command)
+If Floodmode = True Then
+ Command.Respond "Dane protocol is active!"
+Else
+ Command.Respond "Dane protocol is not active!"
+End If
+End Sub
+
+Sub rs()
+Call ReloadScript()
+AddQ "/c pub"
+AddQ "Reloaded Scripts."
+End Sub
+
+Sub event_userjoins(Username, flags, message, ping, product, level, OSS, banned)
+If left(Username, 3) = "WA-" or left(lcase(Username), 6) = "snowa-" Then Exit Sub
+If floodmode = 1 Then Exit Sub
+If ping => maxping Then
+ CC = CC - Pingpenalty
+ If ACS = True Then Addchat vbmagenta, "Ping over limit of " & maxping & ".  Counter is at ", vbyellow, CC
+ If floodmode Then RC = RC - PingPenalty
+End If
+If product = "SEXP" or product = "STAR" Then
+ CC = CC - ProductPenalty
+ If ACS = True Then Addchat vbmagenta, "Product is a Starcraft product.  Counter is at ", vbyellow, CC
+  If floodmode Then RC = RC - ProductPenalty
+End If
+If Banned = True Then
+ CC = CC - BanEvasionPenalty
+ If ACS = True Then Addchat vbmagenta, "User is evading a ban.  Counter is at ", vbyellow, CC
+  If floodmode Then RC = RC - BanEvasionPenalty
+End If
+If instr(Username, "#") > 0 Then
+ Numberpenalty = int(Split(Split(Username, "#")(1), "@")(0))
+ CC = CC - NumberPenalty
+ If ACS = True Then Addchat vbmagenta, "# in the username.  Counter is at ", vbyellow, CC
+  If floodmode Then RC = RC - NumberPenalty
+End If
+'If channel.user.flags
+'If CC <= 0 Then Call takeaction(Username)
+If CC <= 0 Then Call TenFourTen()
+End Sub
+
+Sub TenFourTen()
+If floodmode = 1 Then Exit Sub
+Floodmode = 1
+'NoFlood.Enabled = True 
+Close.Enabled = True
+ Command Botvars.username, "/cq", True
+ Command Botvars.username, "/greet off", True
+AddQ "/c priv"
+AddQ "Dane Protocol activated!  Use ^rs to disable."
+End Sub
+
+Sub close_timer()
+AddQ "/c priv"
+Close.Enabled = False
+Open.Enabled = True
+End Sub
+
+Sub open_timer()
+AddQ "/c pub"
+Close.Enabled = True
+Open.Enabled = False
+End Sub
+
+Sub takeaction(Username)
+If floodmode = 1 Then Exit Sub
+Floodmode = 1
+If BackupChannel = vbnullstring Then Backupchannel = "op " & Botvars.username
+ Addchat "Courier New", vbred, "-----------------------------------"
+ Addchat "Courier New", vbred, "--********Flood Detected!********--"
+ Addchat "Courier New", vbred, "--Taking Action based on settings--"
+ Addchat "Courier New", vbred, "-----------------------------------"
+ Addchat "Courier New", vbred, "Reload scripts to disable flood mode"
+ Command Botvars.username, "/cq", True
+ Command Botvars.username, "/greet off", True
+ If Channel.self.flags = 2 Then
+  If ACS = True Then Addchat vbyellow, "I have operator status, closing the channel and banning flooders."
+  If instr(lcase(Channel.Name), "clan") = 0 Then
+   If ACS = True Then Addchat vbyellow, "This is not a clan channel, I can't use /clan private"
+   If BackupIfNotClan = True Then
+    If ACS = True Then Addchat vbgreen, "Joining backup channel."
+    AddQ "/j " & backupchannel
+   Else
+    If ACS = True Then Addchat vbyellow, "Waiting out the flood, attempting to ban all flooders."
+    Call ByeByeFlooders(Username)
+   End If
+   Else
+   'AddQ "/c priv"
+   Call ByeByeFlooders(Username)
+  End If
+ Else
+ 'No ops
+  If ACS = True Then Addchat vbyellow, "I don't have ops, joining a backup channel if enabled."
+  If joinbackup = True Then
+   AddQ "/j " & backupchannel
+   If ACS = True Then Addchat vbgreen, "Fleeing from the flood!"
+  Else
+   If ACS = True Then Addchat vbyellow, "Waiting out the flood, backup channel not enabled."
+  End If
+ End If
+End Sub
+
+Sub ByeByeFlooders(Username)
+For i = 1 To Channel.Users.Count
+Banhammer = 0
+Username = Channel.users(i).name
+  If GetDBEntry(Username).Rank < 0 Then
+   If left(lcase(username), 3) <> "WA-" or left(lcase(username), 6) <> "SnoWA-" Then
+     AddQ "/ban " & Username
+  End If
+ End If
+Next
+Reban.Enabled = True
+End Sub
+
+Sub reset_timer()
+ If CC <> Totalcredits Then
+ CC = Totalcredits
+ If ACS = True Then addchat vbcyan, "Credits reset"
+ End If
+NumberofBans = 0
+End Sub
+
+Sub NoFlood_timer()
+  If RC > 0 Then Call rs()
+End Sub

@@ -1,0 +1,70 @@
+Option Explicit
+
+Script("Name")     = "Reconnect"
+Script("Author")   = "AwaKening"
+Script("Major")    = 1
+Script("Minor")    = 0
+Script("Revision") = 1
+Script("Description") = "Reconnects your bot to battle.net if not online"
+
+'UPDATES
+'  1.0.1 11/18/2010
+'     - Added a disconnect call before every reconnect attempt
+
+
+'// True/False Log reconnect information
+Private Const doLog        = True
+
+'// Seconds - How often to check and attempt reconnect
+Private const recoInterval = 90
+
+
+Private packetReceived
+
+Sub Event_Load()
+	CreateObj "LongTimer", "Reconnect"
+	Reconnect.Interval = recoInterval
+	Reconnect.Enabled  = True
+End Sub
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)
+	packetReceived = True
+End Sub
+
+Sub Event_LoggedOff()
+	packetReceived = False
+End Sub
+
+Sub Reconnect_Timer()
+	If packetReceived Then
+		packetReceived = False
+		Exit Sub
+	End If
+
+	Dim stealthBug
+
+	If IsOnline Then
+		stealthBug = "(Undetected Disconnect)"
+	End If
+
+	If doLog Then
+		logAttempt StringFormat("{0}{1}Reconnect Attempt{1}{2}", Now, vbTab, stealthBug)
+	End If
+
+	AddChat color.Orange, "Attempting to Reconnect  " &stealthBug
+
+	SSC.Disconnect
+	SSC.Connect
+End Sub
+
+Sub logAttempt(newLine)
+	Dim fso: Set fso = CreateObject("Scripting.FileSystemObject")
+	Dim file
+
+	Set file = fso.OpenTextFile(BotPath & "Reconnects.txt", 8, True)
+	file.WriteLine newLine
+	file.Close
+
+	Set file = Nothing
+	Set fso  = Nothing
+End Sub

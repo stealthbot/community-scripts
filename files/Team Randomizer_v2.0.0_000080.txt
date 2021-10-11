@@ -1,0 +1,147 @@
+Script("Name") = "Team Randomizer"
+Script("Author") = "SoCxFiftyToo and Shubit"
+Script("Major") = 2
+Script("Minor") = 0
+Script("Revision") = 0
+
+' written by Shubit (based on Team Randomizer Plugin by SoCxFiftyToo)
+' 8/10/2009
+' ver 2.0.0
+
+Private mPlayers
+Private mCreator
+
+Sub Event_Load()
+
+    Dim Command, Parameter
+    
+    Set Command = OpenCommand("teams")
+    If Command Is Nothing Then
+        Set Command = CreateCommand("teams")
+        With Command
+            .Description = "Creates random teams."
+            .RequiredRank = 50
+            Set Parameter = .NewParameter("Teamsize", False, "Numeric")
+            With Parameter
+                .Description = "Number of players per team."
+                .SpecialNotes = ""
+            End With
+            .Parameters.Add Parameter
+            .Save
+        End With
+    End If
+	
+	Set Command = OpenCommand("newteams")
+    If Command Is Nothing Then
+        Set Command = CreateCommand("newteams")
+        With Command
+            .Description = "Deletes all registered players and resets the creator."
+            .RequiredRank = 50
+            .Save
+        End With
+    End If
+	
+	Set Command = OpenCommand("signup")
+    If Command Is Nothing Then
+        Set Command = CreateCommand("signup")
+        With Command
+            .Description = "Add the player to the registered players."
+            .RequiredRank = 0
+            .Save
+        End With
+    End If
+	
+    Set Parameter = Nothing
+    Set Command = Nothing
+	
+	Set mPlayers = CreateObject("Scripting.Dictionary")
+	mCreator = ""
+
+End Sub
+
+Sub Event_Command(Command)
+    If(Command.Docs.Owner = Script("Name")) Then 'Its one of our Commands
+        Select Case LCase(Command.Name)
+            Case "teams":
+                If Command.IsValid And Command.HasAccess Then
+                    If(Command.Argument("Teamsize") < 2) Then
+                        Command.Respond "Each team should at least have 2 players"
+                    Else
+                        If mCreator <> "" Or mCreator = Command.Username Then
+							WriteTeams Command
+						End If
+                    End If
+                Else
+                    Command.Respond "Proper syntax for this command is: .teams <players per team>"
+                End If
+
+            Case "newteams":
+                If Command.IsValid And Command.HasAccess Then
+					mPlayers.RemoveAll
+					mPlayerCount = 0
+					Command.Respond "All registrations have been deleted. Creator has been set to " & Command.Username & "."
+					mCreator = Command.Username
+                Else
+                    Command.Respond "Proper syntax for this command is: .teams <players per team>"
+                End If
+
+            Case "signup":
+                If Command.IsValid Then
+					If mPlayers.Exists(Command.Username) Then
+						Command.Respond Command.Username & " is still playing with us :D"
+					Else
+						mPlayers.Add Command.Username, "Player" & mPlayerCount
+						Command.Respond Command.Username & " is playing with us :)"
+					End If
+                Else
+                    Command.Respond "Proper syntax for this command is: .signup"
+                End If				
+				
+        End Select
+    ElseIf (Command.Docs.Owner = vbNullString) Then 'Its a internal Command!
+        Command.Respond "TeamRandomizer Event_Command Observer for internal command " & Command.Name
+    End If
+End Sub
+
+Sub WriteTeams(Command)
+
+	mTeamsize = Command.Argument("Teamsize")
+
+	'// Populate Array based on dictionary	
+	Redim aPlayers(mTeamsize)
+	x = 0
+	For Each Username In mPlayers.Keys
+		aPlayers(x) = Username
+		x = x + 1
+	Next
+	
+	mPlayerCount = mPlayers.Count
+
+	'// Swap random elements of the array to shuffle the players
+	For x = 1 to 100
+		iA = getRanNum
+		iB = getRanNum
+		sH = aPlayers(iB)
+		aPlayers(iB) = aPlayers(iA)
+		aPlayers(iA) = sH
+	Next
+
+	sTeam = ""
+	for x = 0 to mPlayerCount - 1
+		If x Mod mTeamsize = 0 Then
+			Command.Respond "Team " & x \ mTeamsize & ": " & sTeam & " and " & aPlayers(x)
+			sTeam = ""
+		Else
+			sTeam = aPlayers(x) & ", "
+		End If
+	Next
+	
+	if sTeam <> "" Then
+		Command.Respond "Team " & (mPlayerCount \ mTeamsize)+1 & ": " & sTeam & " and " & aPlayers(x)  
+	End If
+End Sub
+
+'// Used to get a random number between minimum and maximum.
+Function getRanNum
+  getRanNum = Int(mPlayerCount * Rnd )
+End Function

@@ -1,0 +1,420 @@
+Option Explicit
+
+Script("Name")     = "announce"
+Script("Author")   = "AwaKening"
+Script("Major")    = 1
+Script("Minor")    = 1
+Script("Revision") = 4
+Script("Filename") = "Announce.txt"
+Script("Commands") = "announce [message]:announce delete:announce reload (will load any new announcements from file)"
+Script("Description") = "Add multiple announcements on different intervals to repeat specified times:"&_
+                        "Use (/announce reload) when adding to Announcements.txt manually"
+
+
+'// (String) Filename to store announcements
+Private Const announce_File = "Announcements.txt"
+
+'******************'
+' IMPORTANT NOTES *'
+'******************'
+
+'  - Open the announcements file and change the timer or repeat number to 0 to disable that message
+'  - After adding/removing a line to the TXT manually, you will need to type /announce reload, or reload your script.
+'  - Please stick to the same format in your TXT file as the first line there shows you 
+
+'*************'
+' TO DO LIST *'
+'*************'
+' - Create method to pause an announcement
+
+
+'*************'
+'* CHANGELOG *'
+'*************'
+
+' Written by AwaKening 10/15/2007
+'
+' v1.1.4 updated 07/22/2010
+'    - Bug fix with announcements added externally via chat
+' v1.1.3 updated 06/29/2010
+'    - Added command announce delete
+'    - Repeats of matching announcements will now be merged together
+' v1.1.2 updated 04/22/2010
+'    - Now using Shell.Application when opening Announcements.txt
+' v1.1.1 updated 01/22/2010
+'    - Fixed Failed Announcement when used externally
+' v1.1.0 updated 01/05/2010 by AwaKening
+'    - Converted to Script Format and created command
+'    - Added function to open the announcements file locally if no arguments are added to command
+'    - Changed some variable names
+'    - Created LoadAnnouncements Sub and moved some functionality from event_load
+' v1.0.4 updated 01/04/2010 by AwaKening
+'    - Added comments to global variables
+'    - Fixed a bug with increment timer
+'    - Removed the output type since it's easily done in the message
+'    - Delay now converts using CLng instead of CInt
+' v1.0.3 updated 04/06/2009 by AwaKening
+'    - Fixed an issue with on/off setting
+'    - announcements will now disable in text file when repeats are reached (unless infinite)
+'    - Added announce reload feature
+' v1.0.2 updated 12/20/2008 by AwaKening
+'    - Announce messages are now stored as a TXT
+'    - Most of the code rewritten
+' v1.0.1 updated 10/20/2007 by AwaKening
+'    - Option added to specify timer for each message
+
+
+'*************'
+'*  GLOBALS  *'
+'*************'
+
+Private announce_Delay()	'// Integer Array - Seconds between stored announcements
+Private announce_Repeat()	'// Integer Array - How many times to send the announcement
+Private announce_Message()	'// String Array  - The actual message to announce
+
+Private announce_FSO		'// Object  - FileSystemObject
+Private announce_User		'// String  - Stored username of command triggered user
+Private announce_Q		'// Integer - Bot Responses
+Private announce_Counter	'// Integer - Incrementing counter every 1 second for timer
+Private announce_cmdIssued	'// Boolean - Command just issued, skip event pressedenter, whisper, and usertalk
+
+'***************'
+' BOT EVENTS   *'
+'***************'
+
+Sub Event_Load()
+	Set announce_FSO = CreateObject("Scripting.FileSystemObject")
+
+	CreateObj "LongTimer", "timeout"
+	timeout.Interval = 30
+	timeout.Enabled  = False
+
+	CreateObj "LongTimer", "Main"
+	Main.Interval = 1
+	Main.Enabled  = False
+
+	Call CreateCommands()
+	Call LoadAnnouncements()
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+	ProcessText Username, Message, 3
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+	ProcessText Username, Message, 1
+End Sub
+
+Sub Event_PressedEnter(Text)
+	ProcessText BotVars.username, Text, 4
+End Sub
+
+Sub Event_UserLeaves(Username, Flags)
+	If Username = announce_User Then Call timeout_Timer()
+End SUb
+
+Sub Event_Command(Command)
+	Select Case LCase(Command.Args)
+	Case ""
+		If Command.IsLocal Then
+			CreateObject("Shell.Application").Open BotPath & announce_File
+			Command.Respond "Use (/announce reload) if you make any changes"
+		Else
+			Command.Respond "You must specify (reload) or a new message"
+		End If
+		Exit Sub
+	Case "reload"
+		Call LoadAnnouncements()
+		Command.Respond "ReLoaded announcements from TXT"
+		Exit Sub
+	Case "delete", "remove", "off", "del", "rem"
+		If UBound(announce_Message)=0 Then
+			Command.Respond "No announcements found"
+			Exit Sub
+		Else
+			Command.Respond "Enter a portion of the message to remove"
+			announce_Q = -1
+		End If
+	Case Else
+		Call announce_ReDim(UBound(announce_Message)+1)
+		announce_Message(UBound(announce_Message)) = Command.Args
+
+		Command.Respond "New Announcement... How often in seconds do you want this message repeated?"
+
+		timeout.Interval = 60
+		timeout.Enabled  = True
+		announce_Q = 0
+	End Select
+
+	If Command.IsLocal Then
+		announce_User = BotVars.Username
+	Else
+		announce_cmdIssued = True
+		announce_User = Command.Username
+	End If
+End Sub
+
+
+'**********'
+'* TIMERS *'
+'**********'
+
+Sub timeout_Timer()
+	announce_cmdIssued = False
+	timeout.Enabled = False
+	Call announce_ReDim(UBound(announce_Message)-1)
+	AddQ "Failed to Add new Announcement."
+	announce_User = vbNullString
+	announce_Q = 0
+End Sub
+
+Sub Main_Timer()
+	If UBound(announce_Message)=0 Then Exit Sub
+	If NOT(IsOnline) Then Exit Sub
+
+	Dim i
+
+	announce_Counter = announce_Counter+1
+
+	For i=1 to UBound(announce_Message)
+		If announce_Delay(i) > 0 AND Abs(announce_Repeat(i)) > 0 Then
+			If announce_counter Mod announce_Delay(i) = 0 Then
+ 				announce_Repeat(i) = announce_Repeat(i) - 1
+				AddQ announce_Message(i)
+				If announce_Repeat(i) >= 0 Then
+					Call announce_Update(i)
+				End If
+			End If
+		End If
+	Next
+End Sub
+
+
+'*************'
+'* SCRIPT    *'
+'* FUNCTIONS *'
+'*************'
+
+Private Sub ProcessText(Username, ByVal Message, Origin)
+	If NOT(Username = announce_User) Then Exit Sub
+
+	If announce_cmdIssued Then
+		announce_cmdIssued = False
+		Exit Sub
+	End If
+
+	If Username = BotVars.Username Then VetoThisMessage
+
+	If announce_Q = -1 Then
+		announce_Delete Username, Message, Origin
+		Exit Sub
+	End If
+
+	If NOT IsNumeric(Message) Then
+		Dsp Origin, "Invalid amount specified.", Username, color.Orange
+		Call timeout_Timer()
+		Exit Sub
+	End If
+
+	announce_Q = announce_Q+1
+
+	Select Case announce_Q
+	Case 1
+		announce_Delay(UBound(announce_Delay)) = cLng(Message)
+		Dsp Origin, "Delay set to " & Message & ".. How many times do you want this repeated" & _
+		" (-1 = Infinately)", Username, vbCyan
+	Case 2
+		announce_Repeat(UBound(announce_Repeat)) = cLng(Message)
+		Dsp Origin, "Repeat set to " &Message& "..  Announcement Complete!", Username, vbCyan
+
+		timeout.Enabled = False
+
+		Call announce_Write()
+		announce_User = vbNullString
+		announce_Q    = 0
+	End Select
+End Sub
+
+Private Sub announce_Delete(Username, Message, Origin)
+	Dim i, j, found
+
+	For i=0 to UBound(announce_Message)
+		If InStr(1, announce_Message(i), Message, 1)>0 Then
+			j = Int(i)
+			found = found+1
+		End If
+	Next
+
+	If found = 1 Then
+		announce_Repeat(j) = 0
+		Call announce_Update(j)
+		Dsp Origin, "Announcement Removed", Username, color.Cyan
+	ElseIf found>1 Then
+		Dsp Origin, "Found multiple matches.  Be more specific", Username, color.Orange
+	Else
+		Dsp Origin, "Could not match to any announcements", Username, color.Orange
+	End If
+
+	announce_User = vbNullString
+	announce_Q    = 0
+End Sub
+
+Sub announce_ReDim(Index)
+	ReDim Preserve announce_Message(Index)
+	ReDim Preserve announce_Delay(Index)
+	ReDim Preserve announce_Repeat(Index)
+End Sub
+
+Private Sub announce_Write()
+	Dim File, i, s
+
+	i = UBound(announce_Message)
+	s = " || "
+	Set File = announce_FSO.OpenTextFile(BotPath & announce_File, 8, True)
+	File.WriteLine StringFormat("{1}{0}{2}{0}{3}", s, announce_Message(i), announce_Delay(i), announce_Repeat(i))
+	File.Close
+	Set File = Nothing
+
+	Call LoadAnnouncements()
+
+	Main.Enabled = True
+End Sub
+
+Private Sub announce_Update(Index)
+	Dim File, i, Lines, s
+
+	Set File = announce_FSO.OpenTextFile(BotPath & announce_File, 1, True)
+	If File.AtEndOfStream Then
+		File.Close
+		Set File=Nothing
+		Exit Sub
+	End If
+
+	Lines = Split(File.Readall, vbCrlf)
+	File.Close
+
+	If Len(Lines(Ubound(Lines)))=0 Then
+		ReDim Preserve Lines(UBound(Lines)-1)
+	End If
+
+	Set File = announce_FSO.OpenTextFile(BotPath & announce_File, 2, True)
+	s = " || "
+
+	For i=0 to UBound(Lines)
+		If Split(Lines(i), " || ")(0) = announce_Message(Index) Then
+			Lines(i) = announce_Message(Index) &s& announce_Delay(Index) &_
+			s& announce_Repeat(Index)
+		End If
+		File.WriteLine Lines(i)
+	Next
+
+	File.Close
+	Set File = Nothing
+End Sub
+
+Private Sub LoadAnnouncements()
+	Dim File, FileArray, i, j, itmp, jtmp, s, repeat
+
+	If NOT announce_FSO.FileExists(BotPath & announce_File) Then
+		Set File = announce_FSO.OpenTextFile(BotPath & announce_File, 2, True)
+		File.WriteLine "Message || Delay Timer seconds (-1 = Disabled) || " & _
+		"Repeat Count (-1 = repeat indefinitely)"
+		File.Close
+	End If
+
+	Set File = announce_FSO.OpenTextFile(BotPath & announce_File, 1, True)
+	FileArray = Split(File.ReadAll, vbCrlf)
+	File.Close
+
+	If UBound(FileArray)>1 Then
+		s = " || "
+
+		'// Search for duplicates
+		For i=1 to UBound(FileArray)
+			itmp = Split(LCase(FileArray(i)), s)
+
+			For j=i+1 to UBound(FileArray)
+				jtmp = Split(LCase(FileArray(j)), s)
+
+				If UBound(jtmp)=2 Then
+					If itmp(0) = jtmp(0) Then
+						repeat = True
+
+						If jtmp(2) <> "-1" Then
+							itmp(2) = Int(jtmp(2)) + Abs(itmp(2))
+						End If
+
+						FileArray(i) = StringFormat("{1}{0}{2}{0}{3}", s, jtmp(0), jtmp(1), itmp(2))
+						FileArray(j) = vbNullString
+					End If
+				End If
+			Next
+		Next
+
+		If repeat Then
+			Set File = announce_FSO.OpenTextFile(BotPath & announce_File, 2, True)
+			File.WriteLine "Message || Delay Timer seconds (-1 = Disabled) || " & _
+			"Repeat Count (-1 = repeat indefinitely)"
+
+			For i=1 to UBound(FileArray)
+				If Len(FileArray(i))>0 Then
+					File.WriteLine FileArray(i)
+				End If
+			Next
+
+			File.Close
+			Set File = announce_FSO.OpenTextFile(BotPath & announce_File, 1, True)
+			FileArray = Split(File.ReadAll, vbCrlf)
+			File.Close
+		End If
+
+		j = UBound(FileArray)
+
+		If Len(FileArray(j))=0 Then j=j-1
+
+		Call announce_ReDim(j)
+
+		For i=1 to j
+			announce_Delay(i) = 0
+			announce_Repeat(i) = 0
+			If Len(FileArray(i))>0 Then
+				itmp = Split(FileArray(i), " || ")
+				announce_Message(i) = itmp(0)
+				If UBound(itmp)>0 Then
+					If IsNumeric(itmp(1)) Then announce_Delay(i) = cLng(itmp(1))
+				End If
+				If UBound(itmp)>1 Then
+					If IsNumeric(itmp(2)) Then announce_Repeat(i) = cLng(itmp(2))
+				End If
+			End If
+		Next
+	Else
+		ReDim announce_Message(0)
+	End If
+
+	If UBound(announce_Message)=0 Then
+		Main.Enabled = False
+	Else
+		Main.Enabled = True
+	End If
+
+	Set File = Nothing
+End Sub
+
+Private Sub CreateCommands()
+	If NOT(OpenCommand("announce") Is Nothing) Then Exit Sub
+
+	Dim Command
+
+	Set Command = CreateCommand("announce")
+	With Command
+		.Aliases.Add "announcement"
+		.Aliases.Add "announcements"
+		.RequiredRank = 70
+		.Description = "Add an announcement or (reload)"
+		.Save
+	End With
+	AddChat 9118312, "Command (announce) successfully created."
+
+	Set Command = Nothing
+End Sub

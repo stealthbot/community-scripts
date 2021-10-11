@@ -1,0 +1,246 @@
+Script("Name") = "AntiSpam"
+Script("Author") = "Script Conversion: GurkenKinG Plugin Version: Swent"
+Script("Major") = 1
+Script("Minor") = 3
+Script("Revision") = 5
+Script("Description") = "Kicks spammers out of the channel"
+
+
+'// ver 1.35
+'//   *Added the protect_safelisted setting. False by default. If True, users on bot's safelist are protected from Anti-Spam
+'// ver 1.33
+'//   *The safe_level setting can now handle flags (Thanks bambambigellow)
+'//      -Setting must be either an access level or a flag. It will not handle a combination.
+'// ver 1.32
+'//   *Fixed a problem with the channel ops check
+'// ver 1.31
+'//   *Made some minor tweaks to various anti-spam components
+'//   *Fixed an error where a user could be kicked after a single message
+'//   *Added the ignore_emotes setting
+'// ver 1.3
+'//   *Added increasing timeban duration for repeat offenders (can be disabled)
+'//   *Added descriptions of sensitivity in .aslevel command response
+'// ver 1.2
+'//   *Added some additonal spam checks based on various suggestions
+'//      -Anti-spam will now trigger based on repetitive characters/words and repetitive messages
+'//      -These additional checks can be disabled in pluginsettings.ini
+'// ver 1.1
+'//   *Fixed rare error where anti-spam would trigger after a user only typed one message
+
+
+Public asMsgLog, asInterval, asMsgLimit, asDisplay, asLvlDscrps
+
+Sub Event_Load()
+
+  Set asMsgLog = CreateObject("Scripting.Dictionary")
+
+  '// **Do not modify settings here** Settings modifications should be made in the scripts.ini
+  WriteSettingsEntry "level", 6
+  WriteSettingsEntry "aslevel_cmd_access", 100
+  WriteSettingsEntry "safe_access", 40
+  WriteSettingsEntry "protect_safelisted", True
+  WriteSettingsEntry "ignore_emotes", False
+  WriteSettingsEntry "repeat_sensitive", True
+  WriteSettingsEntry "repetitive_msg_sensitive", True
+  WriteSettingsEntry "display_trigger", True
+  WriteSettingsEntry "punish_cmd", "kick"
+  WriteSettingsEntry "tban_time", 10
+  WriteSettingsEntry "inc_duration", True
+  WriteSettingsEntry "offense_memory", 24
+
+  '// If punish_cmd is timeban make sure they have the plugin
+
+  asLvlDscrps = Array("Extremely Loose","Loose","Moderate","Sensitive","Extremely Sensitive")
+
+  Call set_sensitivity()
+End Sub
+
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+
+  GetDBEntry Username, myAccess, myFlags
+  If Username = BotVars.Username Then asDisplay = 4 Else asDisplay = 3 End If
+
+  If Left(Message, 1) = BotVars.Trigger Or Left(Message, 1) = "/" Then
+
+    If Len(Message) < 2 Then Exit Sub
+    cmd = Split(Mid(LCase(Trim(Message)), 2))
+    If cmd(0) = "aslevel" Then
+      aslevel_cmd cmd, Username, myAccess: Exit Sub
+    End If
+  End If
+
+  '// User is safelisted?
+  If GetSettingsEntry("protect_safelisted") Then
+    If IsSafelisted(Username) Then Exit Sub
+  End If
+
+  '// At or above safe level / has safe flag?
+  strSafe = GetSettingsEntry("safe_level")
+  If IsNumeric(strSafe) Then
+    If myAccess >= CInt(strSafe) Then Exit Sub
+  Else
+    If Instr(myFlags, strSafe) Then Exit Sub
+  End If
+
+  '// Make sure they aren't an op
+  If GetInternalDataByUsername(Username, 1) And 2 Then Exit Sub
+
+  '// Is this a repetitive message?
+  If GetSettingsEntry("repetitive_msg_sensitive") Then
+
+    '// Long enough to indicate spam?
+    If Len(Message) > 150 \ GetSettingsEntry("level") Then
+      arrMsg = Split(Message)
+
+      '// Check for repetitive words
+      For i = 0 to UBound(arrMsg)
+        If UBound(arrMsg) > 75 \ GetSettingsEntry("level") And Len(arrMsg(i)) > 1 And UBound(Split(Message, " " & arrMsg(i) & " ")) > UBound(arrMsg) \ 2 Then
+          index = i
+          repCheck = 1
+        End If
+      Next
+
+      '// Check for repetitive characters
+      For i = 1 to Len(Message)
+        strRepChar = String(75 \ GetSettingsEntry("level"), Mid(Message, i, 1))
+        If Len(Trim(strRepChar)) > 0 And Instr(Message, strRepChar) Then
+          index = i
+          repCheck = 2
+        End If
+      Next
+
+      If repCheck > 0 Then
+        spam = True
+        If Not asMsgLog.Exists(Username) Then asMsgLog.Add Username, Array(0, "", 0, 0, 1)
+        If repCheck = 1 Then display_trigger "Repetitive word: """ & arrMsg(index) & """"
+        If repcheck = 2 Then display_trigger "Repetitive character: '" & Mid(Message, index, 1) & "'"
+      End If
+    End If
+  End If
+
+  If asMsgLog.Exists(Username) Then
+
+    '// Was this message sent within the spam interval?
+    If GetGTC() - asMsgLog.Item(Username)(0) <= asInterval Or spam Then
+
+      '// Is this user spamming?
+      If GetSettingsEntry("repeat_sensitive") And asMsgLog.Item(Username)(2) >= asMsgLimit - 1 And Match(asMsgLog.Item(Username)(1), Message, 1) Then
+        display_trigger asMsgLog.Item(Username)(2) + 1 & " *identical* messages within the spam interval (" & asInterval & " ms)"
+        spam = True
+      ElseIf asMsgLog.Item(Username)(2) = asMsgLimit Then
+        display_trigger asMsgLog.Item(Username)(2) + 1 & " messages within the spam interval (" & asInterval & " ms)"
+        spam = True
+      End If
+
+      '// If they're spamming, punish them
+      punishCmd = Trim(GetSettingsEntry("punish_cmd"))
+      If spam Then
+        If punishCmd = "timeban" Then
+          If psPlugins.Exists("timeban") Then
+
+            '// If they've been punished recently (past 24 hours) increase the severity
+            If GetSettingsEntry("inc_duration") Then
+              If abs(DateDiff("h", asMsgLog.Item(Username)(3), Now())) < CInt(GetSettingsEntry("offense_memory")) Then
+                intDuration = GetSettingsEntry("tban_time") * asMsgLog.Item(Username)(4) ^ 2
+                strOffense = " - Offense #" & asMsgLog.Item(Username)(4)
+              End If
+              asMsgLog.Item(Username) = Array(0, "", 0, Now(), asMsgLog.Item(Username)(4) + 1)
+            Else
+              asMsgLog.Remove Username
+            End If
+            If Len(intDuration) = 0 Then intDuration = GetSettingsEntry("tban_time")
+
+            Call timeban_Event_PressedEnter("/timeban " & Username & " s/" & intDuration & " Spamming" & strOffense)
+          Else
+	    AddChat vbRed, "Anti-Spam Error: You must have the timeban plugin if punish_cmd=timeban. Type /getplugin timeban"
+	  End If
+        Else
+          Command BotVars.Username, "/" & punishCmd & " " & Username & " Spamming", True
+          asMsgLog.Remove Username
+        End If
+        Exit Sub
+      End If
+      asMsgLog.Item(Username) = Array(GetGTC(), Message, asMsgLog.Item(Username)(2) + 1, asMsgLog.Item(Username)(3), asMsgLog.Item(Username)(4))
+    Else
+      asMsgLog.Item(Username) = Array(GetGTC(), Message, 1, asMsgLog.Item(Username)(3), asMsgLog.Item(Username)(4))
+    End If
+  Else
+    asMsgLog.Add Username, Array(GetGTC(), Message, 1, 0, 1)
+  End If
+End Sub
+
+
+Sub Event_UserEmote(Username, Flags, Message)
+
+  If Not GetSettingsEntry("ignore_emotes") Then
+    Event_UserTalk Username, Flags, Message, 0
+  End If
+End Sub
+
+
+Sub Event_PressedEnter(Text)
+
+  If Len(Text) < 2 Or Left(Text, 1) <> "/" Then Exit Sub
+  cmd = Split(Mid(LCase(Trim(Text)), 2))
+
+  Select Case cmd(0)
+    Case "aslevel"
+      VetoThisMessage
+      Event_UserTalk BotVars.Username, "", Text, 0
+  End Select
+End Sub
+
+
+Sub aslevel_cmd(cmd, Username, Access)
+
+  If Access < CInt(GetSettingsEntry("aslevel_cmd_access")) And Username <> BotVars.Username Then Exit Sub
+
+  If UBound(cmd) = 0 Then
+    intLevel = GetSettingsEntry("level")
+    dsp asDisplay, "The Anti-Spam sensitivity is at level " & intLevel & " (" & asLvlDscrps(intLevel \ 3) & ").", Username, vbCyan
+  Else
+    If IsNumeric(cmd(1)) Then
+      If cmd(1) > 0 And cmd(1) < 14 Then
+        WriteSettingsEntry "level", Int(cmd(1)), "", True
+        Call set_sensitivity()
+        dsp asDisplay, "Set Anti-Spam sensitivity to level " & cmd(1) & " (" & asLvlDscrps(cmd(1) \ 3) & ").", Username, vbCyan
+      Else
+        dsp asDisplay, "The Anti-Spam level must be an integer from 1 to 13", Username, vbRed
+      End If
+    Else
+      dsp asDisplay, "Proper format: " & BotVars.Trigger & "aslevel <integer>", Username, vbRed
+    End If
+  End If
+End Sub
+
+
+Sub set_sensitivity()
+
+  '// Custom timing changes can be made here *if you know what you're doing*
+  '//   asInterval = maximum interval between each message in milliseconds
+  '//   asMsgLimit = required number of consecutive messages within interval
+  Select Case GetSettingsEntry("level")
+    Case 13: asInterval = 3500: asMsgLimit = 1 'Extremely Sensitive
+    Case 12: asInterval = 3400: asMsgLimit = 1 '   ''
+    Case 11: asInterval = 3300: asMsgLimit = 2 'Sensitive
+    Case 10: asInterval = 3100: asMsgLimit = 2 '   ''
+    Case 9:  asInterval = 2900: asMsgLimit = 2 '   ''
+    Case 8:  asInterval = 2700: asMsgLimit = 2 'Moderate
+    Case 7:  asInterval = 2650: asMsgLimit = 2 '   ''  
+    Case 6:  asInterval = 2600: asMsgLimit = 2 '   ''
+    Case 5:  asInterval = 2400: asMsgLimit = 2 'Loose
+    Case 4:  asInterval = 2200: asMsgLimit = 2 '   '' 
+    Case 3:  asInterval = 2000: asMsgLimit = 2 '   ''
+    Case 2:  asInterval = 1900: asMsgLimit = 3 'Extremely Loose
+    Case 1:  asInterval = 1800: asMsgLimit = 3 '   ''
+  End Select
+End Sub
+
+
+Sub display_trigger(Trigger)
+   
+  If GetSettingsEntry("display_trigger") Then
+    AddChat vbCyan, "Anti-Spam Triggered: " & Trigger
+  End If
+End Sub

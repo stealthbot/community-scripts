@@ -1,0 +1,428 @@
+Option Explicit
+
+Script("Name")     = "Ghost-Forwarding"
+Script("Author")   = "AwaKening"
+Script("Major")    = 2
+Script("Minor")    = 1
+Script("Revision") = 3
+Script("Description") = "Forward ghost commands and display response"
+
+
+'// The following command names had to be changed for compatibility purpose
+'// with internal commands and other scripts
+' enable   = enbalehost
+' disable  = disablehost
+' say      = hostsay
+' announce = hostannounce
+
+' CHANGELOGS:
+'
+' 2.1.3 | December 27, 2010
+'     - Fixed runtime error 500 line 99 undefined variable (introduced in v2.1.2)
+' 2.1.2 | December 26, 2010
+'     - Fixed runtime error 500 line 85 undefined variable (ghost)
+'     - Removed some unnecessary locals where ghostName could be used instead
+' 2.1.1 | December 13, 2010
+'     - Fixed expired suspensions that weren't dropping
+' 2.1.0 | December 12, 2010
+'     - Added feature to suspend users from using ghost commands
+'     - Added feature to unhost games stuck in the lobby after a users attempts to host
+'     - Added commands (suspend, unsuspend, suspended)
+'     - Added settings (lobbyMax, suspendDays, suspended)
+' 2.0.5 | May 16, 2010
+'     - Added an auto-whisper to host (getclan) when a new member joins
+' 2.0.4 | May 9, 2010
+'     - Added a host offline message (only works if your host is in clan)
+' 2.0.3 | May 4, 2010
+'     - Stopped duplicate messages in channel from displaying (game over msg)
+'     - Added a setting to make games pub or priv when using the host command
+'     - Fixed stats and statsdota when specifying another username
+' 2.0.2 | May 3, 2010
+'     - Fixed stats and statsdota
+'     - Fixed type mismatch line 128 when reloading script
+' 2.0.1 | April 30, 2010
+'     - Added command statsdota
+'     - added command stats
+'     - Added command addfriend
+'     - Added command delfriend
+'     - Added command countadmins
+'     - Added command checkban
+'     - Added command reloadcfg
+'     - Added command rb (refreshbanlist)
+'     - Added command rload
+'     - Added command rmap
+'     - Fixed checkadmin command
+'     - Removed popup on command creation (was interfering with other scripts)
+
+Private Const Title = "AwaKening's Ghost-Forwarding"
+
+Private recentGames(20)
+Private lastMessage
+Private ghostName
+
+Sub Event_Load()
+	Randomize
+
+        Call CreateCommands()
+        Call CreateSettings()
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+	If ghostMessage(Username) Then
+		If NOT(lastMessage = Message) Then
+			AddQ Output(Message)
+			Call checkLobbyTime(Message)
+		End If
+        End If
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+	If LCase(Username) = LCase(ghostName) Then
+		lastMessage = Message
+	End If
+End Sub
+
+Sub Event_ClanMemberUpdate(Username, Rank, Online)
+	'// Effective way to see if a new member joined the clan
+	If Rank=0 Then
+		If GetPositionByName(Username)>0 Then
+			If Clan.GetUserIndex(ghostName)>0 Then
+				AddQ StringFormat("/w {0} {1}getclan", ghostName, _
+				GetSettingsEntry("ghostTrig"))
+			End If
+		End If
+	End If
+End Sub
+
+Sub Event_Command(Command)
+        Dim cmd, game, ghostIndex
+
+	ghostName  = GetSettingsEntry("ghostName")
+	ghostIndex = Clan.GetUserIndex(ghostName)
+
+	With Command
+		If ghostIndex > 0 Then
+			If NOT(Clan.Members(ghostIndex).IsOnline) Then
+				Command.Respond ghostName& " is currently offline"
+				Exit Sub
+			End If
+		End If
+
+		If isSuspended(.Username) Then
+			.Respond "Your Ghost Access is temporarily suspended"
+			Exit Sub
+		End If
+
+        	Select Case LCase(.Name)
+		Case "suspend"
+			If .IsValid Then
+				.Respond command_Suspend(.Argument("User"), .Argument("Days"))
+			End If
+			Exit Sub
+		Case "unsuspend"
+			If .IsValid Then
+				.Respond command_Unsuspend(.Argument("User"))
+			End If
+			Exit Sub
+		Case "suspended"
+			.Respond command_Suspended()
+			Exit Sub
+		Case "host", "priv", "pub"
+			If .Args = "" Then
+				game = CreateGN()
+			Else
+				game = .Args
+			End If 
+			cmd = StringFormat("{0} {1} {2}", convertCMD(.Name), .Username, game)
+		Case "privby", "pubby"
+			If .Args = "" Then Exit Sub
+
+			If UBound(Split(.Args))=0 Then
+				game = CreateGN()
+			Else
+				game = Split(.Args)(1)
+			End If
+			cmd = StringFormat("{0} {1} {2}", .Name, Split(.Args)(0), game)
+		Case "stats", "statsdota"
+			If .Args = "" Then
+				cmd = StringFormat("{0} {1}", .Name, .Username)
+			Else
+				cmd = StringFormat("{0} {1}", .Name, .Args)
+			End If
+		Case Else
+			cmd = Trim(StringFormat("{0} {1}", .Name, .Args))
+        	End Select
+	End With
+
+       	AddQ StringFormat("/w {0} {1}{2}", ghostName, GetSettingsEntry("ghostTrig"), cmd)
+End Sub
+
+Private Function command_Unsuspend(Username)
+	Dim suspended, i, user
+
+	If Not(isSuspended(Username)) Then
+		command_unSuspend = Username & " is not suspended"
+		Exit Function
+	End If
+
+	Call command_Suspend(Username, 0)
+
+	command_Unsuspend = "Ghost suspension lifted from " &Username	
+End Function
+
+Private Function command_Suspend(Username, Days)
+	Dim suspended, user, expiration, i
+
+	If Not(IsNumeric(Days)) Then
+		Days = cInt(GetSettingsEntry("suspendDays"))
+	End If
+
+	suspended  = Split(Replace(GetSettingsEntry("suspended"), ",", ""))
+	expiration = CDate(Date + Days)
+
+	For i=0 to UBound(suspended)
+		user = Split(suspended(i), "|")(0)
+		If LCase(user) = LCase(Username) Then
+			suspended(i) = StringFormat("{0}|{1}", Username, expiration)
+			Exit For
+		End If
+	Next
+
+	If i>UBound(suspended) Then
+		ReDim Preserve suspended(i)
+		suspended(i) = StringFormat("{0}|{1}", Username, expiration)
+	End If
+
+	WriteSettingsEntry "suspended", Join(suspended, ", ")
+
+	command_Suspend = StringFormat("{0} has been suspended from ghost access until {1}", _
+	Username, expiration)
+End Function
+
+Private Function command_Suspended()
+	Dim suspended: suspended = GetSettingsEntry("suspended")
+
+	If Len(suspended) <= 2 Then
+		command_Suspended = "No Ghost Suspensions found"
+	Else
+		command_Suspended = "GHOST (name|suspended till): " &suspended
+	End If
+End Function
+
+Private Function isSuspended(Username)
+	Dim suspended, user, i, expiration
+
+	suspended = Split(Replace(GetSettingsEntry("suspended"), ",", ""))
+
+	For i=0 to UBound(suspended)
+		If Len(suspended(i))>0 Then
+			user       = Split(suspended(i),"|")(0)
+			expiration = Split(suspended(i),"|")(1)
+
+			If Date >= CDate(expiration) Then
+				suspended(i) = ""
+			ElseIf LCase(Username) = LCase(user) Then
+				isSuspended = True
+				Exit For
+			End If
+		End If
+	Next
+
+	'// Wipe out any expired suspensions
+	WriteSettingsEntry "suspended", Join(suspended, ", ")
+End Function
+
+'// The main purpose of this next function is to
+'// check the settings for the ghost name everytime
+'// we receive a whisper to keep from checking with userTalk
+'// (save resources)
+
+Private Function ghostMessage(ByVal Username)
+	ghostName = GetSettingsEntry("ghostName")
+
+        If LCase(Username) = LCase(ghostName) Then
+		ghostMessage = True
+	End If
+End Function
+
+Private Function convertCMD(Name)
+	If LCase(Name) = "pub" Then
+		convertCMD = "pubby"
+	ElseIf LCase(Name) = "host" AND isTrue("hostPublic") Then
+		convertCMD = "pubby"
+	Else
+		convertCMD = "privby"
+	End If
+End Function
+
+Private Function isTrue(Entry)
+	Select Case LCase(GetSettingsEntry(Entry))
+		Case "n", "no", "false", "0": isTrue = False
+		Case Else:                    isTrue = True
+	End Select
+End Function
+
+Private Function CreateGN()
+'// Create a random game name
+'// and make sure we don't re-use a recent name
+
+	Dim intRand, Done, i
+
+	Do Until Done
+		Done = True
+		intRand = Int(Rnd*999+1)
+
+		For i=0 to UBound(recentGames)
+			If recentGames(i) = intRand Then
+				Done = False
+				Exit For
+			End If
+		Next
+	Loop
+
+	For i=UBound(recentGames) to 1 STEP -1
+		recentGames(i) = recentGames(i-1)
+	Next
+	recentGames(0) = intRand
+
+	intRand = "00" & CStr(intRand)
+	intRand = Right(intRand, 3)
+	
+	CreateGN = GetSettingsEntry("gamePrefix") & intRand
+End Function
+
+Private Sub checkLobbyTime(Message)
+	If (InStr(Message, "] is in the lobby")=0) Then Exit Sub
+
+	Dim mins
+	mins = cInt(Split(Split(Message, " : ")(3), "m")(0))
+
+	If mins > cInt(GetSettingsEntry("lobbyMax")) Then
+		AddQ StringFormat("/w {0} {1}unhost", _
+		GetSettingsEntry("ghostName"), GetSettingsEntry("ghostTrig"))
+	End If
+End Sub
+
+Private Function OutPut(ByVal Message)
+	Select Case LCase(GetSettingsEntry("useEmote"))
+	Case "n", "no", "f", "false", "0"
+		OutPut = Message
+	Case Else
+		Output = "/me " &Message
+	End Select
+End Function
+
+Private Sub CreateCommands()
+        Dim ghostCommands, ghostAccess, i, version, param
+
+	If Not(OpenCommand("suspend") Is Nothing) Then Exit Sub
+
+	With CreateCommand("suspend")
+		Set param = .NewParameter("User", False, "Word")
+		param.Description = "User to suspend"
+		.Parameters.Add param
+
+		Set param = .NewParameter("Days", True, "Numeric")
+		param.Description = "How many days"
+		.Parameters.Add param
+
+		.RequiredRank = 80
+		.Description  = "Suspend user access to ghost commands"
+		.Save
+	End With
+
+	With CreateCommand("unsuspend")
+		Set param = .NewParameter("User", True, "Word")
+		param.Description = "User to unsuspend"
+		.Parameters.Add param
+
+		.RequiredRank = 80
+		.Description  = "Remove a ghost suspension"
+		.Save
+	End With
+
+	With CreateCommand("suspended")
+		.Aliases.Add "suspensions"
+		.RequiredRank = 60
+		.Description  = "List suspended users"
+		.Save
+	End With
+
+	Set param = Nothing
+
+	version = Replace(GetSettingsEntry("version"), ".", "")
+	If IsNumeric(version) Then
+		If cInt(version) >= 202 Then Exit Sub
+	End If
+
+        ghostCommands = Array("addadmin", "addban", "hostannounce", "autohost", "channel", _
+        "checkadmin", "countbans", "deladmin", "delban", "disablehost", "enablehost", _
+	"end", "exit", "getclan", "getfriends", "getgame", "getgames", "hold", "hostsg", _
+        "load", "loadsg", "map", "priv", "privby", "pub", "pubby", "hostsay", "saygame", _
+	"saygames", "unhost", "host", "statsdota", "stats", "addfriend", "delfriend", _
+	"countadmins", "checkban", "reloadcfg", "rb", "top", "rload", "rmap")
+
+	ghostAccess = Array(200, 70, 70, 70, 70, 20, 20, 200, 70, 70, 70, 20, 200, 20, _
+	20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 60, 60, 60, 20, 20, 0, 0, 70, 70, _
+	20, 20, 200, 70, 0, 70, 70)
+
+	On Error Resume Next
+        For i=0 to UBound(ghostCommands)
+		If OpenCommand(ghostCommands(i)) Is Nothing Then
+                	With CreateCommand(ghostCommands(i))
+                		.RequiredRank = ghostAccess(i)
+                		.Save
+			End With
+		End If
+
+		If Err.Number<>0 Then
+			Err.Clear
+			AddChat color.Orange, "Could not create command '" &ghostCommands(i)&_
+			"' (conflicting with another script command)"
+		End If
+	Next
+
+        AddChat color.Plum, "New Ghost Commands have been created"
+	AddChat color.Plum, "(Access levels can be changed in command manager)"
+End Sub
+
+Private Sub CreateSettings()
+        Dim version, response
+
+        version = Script("Major")&"."&Script("Minor")&"."&Script("Revision")
+
+        If GetSettingsEntry("version") = version Then Exit Sub
+
+        WriteSettingsEntry "version", version
+        AddChat color.Plum, StringFormat("{0} has been updated to {1}", title, version)
+
+	If GetSettingsEntry("lobbyMax") <> "" Then Exit Sub
+	WriteSettingsEntry "lobbyMax (info)", "Number of minutes in lobby before Stealth will unhost it" & _
+	" the next time someone issues a command to check games or host"
+	WriteSettingsEntry "lobbyMax", 20
+
+	If GetSettingsEntry("suspendDays") <> "" Then Exit Sub
+	WriteSettingsEntry "suspendDays (info)", "Number of days to suspend a user if none is specified"
+	WriteSettingsEntry "suspendDays", 1
+
+	WriteSettingsEntry "suspended", ""
+
+	If GetSettingsEntry("hostPublic") <> "" Then Exit Sub
+	WriteSettingsEntry "hostPublic", "N"
+
+	If GetSettingsEntry("useEmote") <> "" Then Exit Sub
+
+        WriteSettingsEntry "ghostName", InputBox("What is your ghost's Username?", title, "")
+        WriteSettingsEntry "ghostTrig", InputBox("What is your ghost's Trigger?", title, "!")
+        WriteSettingsEntry "gamePrefix", InputBox("Enter a gamename prefix for unspecified" &_
+        " game names", title, "")
+
+        response = MsgBox("Would you like to Emote all responses?", vbYesNo, title)
+        If response = vbYes Then
+                response = "Y"
+        Else
+                response = "N"
+        End If
+
+        WriteSettingsEntry "useEmote", response
+End Sub

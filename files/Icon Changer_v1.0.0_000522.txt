@@ -1,0 +1,312 @@
+Option Explicit
+
+Script("Name")     = "Icon Changer"
+Script("Author")   = "Starfish41"
+Script("Major")    = 1
+Script("Minor")    = 0
+Script("Revision") = 0
+Script("Filename") = "IconChanger.txt"
+Script("Commands") = "icon"
+Script("Description") = "Select an icon by name or race + row"
+
+'*************'
+'*  GLOBALS  *'
+'*************'
+
+Const IC_TYPEBYTE = &H44 'D'
+Const IC_STARTBYTE = &H0a 'LF'
+Const IC_ENDBYTE1 = &H33 '3'
+Const IC_ENDBYTE2 = &H57 'W'
+
+Const IC_CHAR_TOURNEY = "D"
+Const IC_CHAR_RANDOM = "R"
+Const IC_CHAR_ORC = "O"
+Const IC_CHAR_HU = "H"
+Const IC_CHAR_NE = "N"
+Const IC_CHAR_UD = "U"
+
+Const IC_DEFAULT_RACE = "R"
+Const IC_DEFAULT_ROW = 0 'if equal to ZERO then RESPOND on INVALID INPUT'
+
+'****************'
+'*  BOT EVENTS  *'
+'****************'
+
+Sub Event_Load()
+	Dim Command, Parameter
+
+	Set Command = OpenCommand("icon")
+    If Command Is Nothing Then
+        Set Command = CreateCommand("icon")
+        With Command
+            .RequiredRank = 50
+			.Description = "Sets the Icon"
+
+			Set Parameter = .NewParameter("IconName", True, "String")
+			With Parameter
+				.Description = "Specifies the Icon (Use Wc3 unitnames) "
+			End With
+			.Parameters.Add Parameter
+
+            .Save
+        End With
+    End If
+End Sub
+
+Sub Event_Command(Command)
+	If Command.IsLocal Then Command.Username = BotVars.Username
+
+	If Command.IsValid And Command.HasAccess And Command.Name = "icon" Then
+		Dim string, race, row
+		string = LCase( Command.Argument("IconName") )
+		race = IC_DEFAULT_RACE
+		row = IC_DEFAULT_ROW
+		If Len(string) > 2 Then
+			Select Case string
+			'// Tourney
+				'// TFT
+				Case "felguard":
+					race = IC_CHAR_TOURNEY
+					row = 1
+				Case "infernal":
+					race = IC_CHAR_TOURNEY
+					row = 2
+				Case "doomguard":
+					race = IC_CHAR_TOURNEY
+					row = 3
+				Case "pit lord":
+					race = IC_CHAR_TOURNEY
+					row = 4
+				Case "archimonde":
+					race = IC_CHAR_TOURNEY
+					row = 5
+				'// ROC
+				Case "green dragon whelp":
+					race = IC_CHAR_TOURNEY
+					row = 1
+				Case "blue dragon":
+					race = IC_CHAR_TOURNEY
+					row = 2
+				Case "red dragon":
+					race = IC_CHAR_TOURNEY
+					row = 3
+				Case "deathwing":
+					race = IC_CHAR_TOURNEY
+					row = 4
+
+			'// Random (TFT)
+				Case "myrmidon":
+					race = IC_CHAR_RANDOM
+					row = 1
+				Case "siren":
+					race = IC_CHAR_RANDOM
+					row = 2
+				Case "naga siren":
+					race = IC_CHAR_RANDOM
+					row = 2
+				Case "dragon turtle":
+					race = IC_CHAR_RANDOM
+					row = 3
+				Case "sea witch":
+					race = IC_CHAR_RANDOM
+					row = 4
+				Case "naga sea witch":
+					race = IC_CHAR_RANDOM
+					row = 4
+				Case "illidan":
+					race = IC_CHAR_RANDOM
+					row = 5
+
+			'// Human
+				'// TFT
+				Case "rifleman":
+					race = IC_CHAR_HU
+					row = 1
+				Case "sorceress":
+					race = IC_CHAR_HU
+					row = 2
+				Case "spellbreaker":
+					race = IC_CHAR_HU
+					row = 3
+				Case "blood mage":
+					race = IC_CHAR_HU
+					row = 4
+				Case "jaina":
+					race = IC_CHAR_HU
+					row = 5
+				'// ROC
+				Case "footman":
+					race = IC_CHAR_HU
+					row = 1
+				Case "knight":
+					race = IC_CHAR_HU
+					row = 2
+				Case "archmage":
+					race = IC_CHAR_HU
+					row = 3
+				Case "medivh":
+					race = IC_CHAR_HU
+					row = 4
+
+			'// Night Elf
+				'// TFT
+				Case "huntress":
+					race = IC_CHAR_NE
+					row = 1
+				Case "druid":
+					race = IC_CHAR_NE
+					row = 2
+				Case "druid of the talon":
+					race = IC_CHAR_NE
+					row = 2
+				Case "dryad":
+					race = IC_CHAR_NE
+					row = 3
+				Case "keeper of the grove":
+					race = IC_CHAR_NE
+					row = 4
+				Case "maiev":
+					race = IC_CHAR_NE
+					row = 5
+				Case "warden":
+					race = IC_CHAR_NE
+					row = 5
+				'// ROC
+				Case "archer":
+					race = IC_CHAR_NE
+					row = 1
+				Case "druid of the claw":
+					race = IC_CHAR_NE
+					row = 2
+				Case "priestess of the moon":
+					race = IC_CHAR_NE
+					row = 3
+				Case "furion":
+					race = IC_CHAR_NE
+					row = 4
+				Case "furion stormrag":
+					race = IC_CHAR_NE
+					row = 4
+
+			'// Orc
+				'// TFT
+				Case "headhunter":
+					race = IC_CHAR_ORC
+					row = 1
+				Case "troll headhunter":
+					race = IC_CHAR_ORC
+					row = 1
+				Case "shaman":
+					race = IC_CHAR_ORC
+					row = 2
+				Case "spirit walker":
+					race = IC_CHAR_ORC
+					row = 3
+				Case "shadow hunter":
+					race = IC_CHAR_ORC
+					row = 4
+				Case "rexxar":
+					race = IC_CHAR_ORC
+					row = 5
+				Case "beastmaster":
+					race = IC_CHAR_ORC
+					row = 5
+				'// ROC
+				Case "grunt":
+					race = IC_CHAR_ORC
+					row = 1
+				Case "tauren":
+					race = IC_CHAR_ORC
+					row = 2
+				Case "far seer":
+					race = IC_CHAR_ORC
+					row = 3
+				Case "thrall":
+					race = IC_CHAR_ORC
+					row = 4
+
+			'// Undead
+				'// TFT
+				Case "fiend":
+					race = IC_CHAR_UD
+					row = 1
+				Case "crypt fiend":
+					race = IC_CHAR_UD
+					row = 1
+				Case "banshee":
+					race = IC_CHAR_UD
+					row = 2
+				Case "destroyer":
+					race = IC_CHAR_UD
+					row = 3
+				Case "crypt lord":
+					race = IC_CHAR_UD
+					row = 4
+				Case "sylvanas":
+					race = IC_CHAR_UD
+					row = 5
+				'// ROC
+				Case "ghoul":
+					race = IC_CHAR_UD
+					row = 1
+				Case "abomination":
+					race = IC_CHAR_UD
+					row = 2
+				Case "lich":
+					race = IC_CHAR_UD
+					row = 3
+				Case "tichondrius":
+					race = IC_CHAR_UD
+					row = 4
+
+				'//Other things
+				Case Else:
+					If IsNumeric( Right( string ,1 ) ) Then
+						row = CInt( Right( string ,1 ) )
+						Select Case Left( string, Len(string)-1 )
+							Case "human":
+								race = IC_CHAR_HU
+							Case "hu":
+								race = IC_CHAR_HU
+							Case "orc":
+								race = IC_CHAR_ORC
+							Case "ud":
+								race = IC_CHAR_UD
+							Case "undead":
+								race = IC_CHAR_UD
+							Case "ne":
+								race = IC_CHAR_NE
+							Case "nightelf":
+								race = IC_CHAR_NE
+							Case "ra":
+								race = IC_CHAR_RANDOM
+							Case "random":
+								race = IC_CHAR_RANDOM
+							Case "tourney":
+								race = IC_CHAR_TOURNEY
+							Case Else:
+								row = IC_DEFAULT_ROW
+						End Select
+					End If
+			End Select
+		Elseif Len( string ) = 2 Then
+			race = UCase( Left( string ,1 ) )
+			If race = "T" Then race = IC_CHAR_TOURNEY
+			row = Cint( Right( string ,1 ) )
+		End if
+
+		If row > 0 Then
+			Dim tier
+			tier = row + 1
+			DataBuffer.InsertByte IC_STARTBYTE
+			DataBuffer.InsertByte Asc(UCase(tier))
+			DataBuffer.InsertByte Asc(UCase(race))
+			DataBuffer.InsertByte IC_ENDBYTE1
+			DataBuffer.InsertByte IC_ENDBYTE2
+			DataBuffer.SendPacket IC_TYPEBYTE
+			AddChat vbYellow, "Changing icon: " & UCase( string )
+		Else
+			Command.Respond "Invalid imput! Name or race + row (e.g: sorceress, u1, NE3, Orc4 )"
+		End If
+	End if
+End Sub

@@ -1,0 +1,2915 @@
+Script("Name")     = "Texas Hold'em Poker"
+Script("Author")   = "Reuben1st - R.E.U.B.E.N@USWest/USEast"
+Script("Major")    = 1
+Script("Minor")    = 0
+Script("Revision") = 3
+Script("Description") = "Texas Hold'em Poker"
+
+'- Thank you -
+'- Snap and Jack for their trivia script, which I used for various codes and ideas. I take no credit for the code I used.
+'- The-Black-Ninja for your tutorials on StealthBot.net
+
+'-Change Log-
+'	ver 1.0.3
+'	- Added an update checker (Checks when bot first runs or manually > [Trigger]Tx update).
+'	- Added amount of different hands won to the database. ([Trigger]Tx achieve). - Displays the type of hands won.
+'	- Added "ver" command ([Trigger]Tx ver). - Displays current script version.
+'	- Added "daily" command ([Trigger]Tx daily) - Used to find out when you can claim your next daily prize.
+'	- Fixed in-bot commands ("/" and "//") as a result of ver 1.0.2
+'	- Fixed "donate" command where chips in the database were not being recognised as a value.
+'	- Fixed daily prizes for different countries using "dd/mm/yyyy" format.
+'	- Changed the "Daily" column in the "TexasDB" from Date/Time to Memo.
+'
+'	ver. 1.0.2
+'	- Added daily rewards (given to people when they join).
+'	- Removed "0" from the left of cards lower than a "10".
+'	- Allowed any amount of chips to be donated from in-bot.
+'	- Fixed problem with game autostart when someone joins a game after it has already started.
+'	- Fixed "[" and "]" being cut out of player names when using commands.
+'	- Fixed "pot" and "myhand" commands.
+'	- Fixed error when people said "leave" or "quit".
+'	- Fixed problem with trigger (" [Trigger]Tx [Command]" would have activated a command).
+'	
+'	ver. 1.0.1
+'	- Fixed problem with raise #
+'	- Fixed error when players emote nothing "/me "
+'	- Fixed card storing error which gave repeat cards.
+'	- Fixed problem with returning chips when using "/new"
+'	- Changed Sub Event_ServerInfo(Message) to Sub Event_LoggedOn(Username, Product)
+'	- Removed script testing commands.
+
+
+'*******Please report any gameplay issues to the author of this script.*******
+
+'**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS**			
+'**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS**
+'**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS**
+'**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS** 			**DO NOT EDIT BELOW THIS**
+
+Public TexasDB : TexasDB = BotPath()& "Scripts\TexasDB.mdb"
+Public TexasConfig : TexasConfig = BotPath()& "Scripts\TexasConfig.ini"
+
+Public TexasStore : Set TexasStore = CreateObject("Scripting.Dictionary") : TexasStore.CompareMode = 1
+Public PlayerStore : Set PlayerStore = CreateObject("Scripting.Dictionary") : PlayerStore.CompareMode = 1
+Public PotnGame : Set PotnGame = CreateObject("Scripting.Dictionary") : PotnGame.CompareMode = 1
+Public TxStrike : Set TxStrike = CreateObject("Scripting.Dictionary")
+
+Public TxFSO : Set TxFSO = CreateObject("Scripting.FileSystemObject")
+Public TxCon : Set TxCon = CreateObject("ADODB.connection")
+
+Public GameCommands : GameCommands = "[Start][forcestart][Turn][Stop][MyHand][Join][Call][Raise][Fold][Stand][AllIn][Seats][TableCards][Pot][Level]"
+Public AliasCommands : AliasCommands = "[Set][Remove][Edit][GetAlias][Disable][Enable][AliasDisable][AliasEnable]"
+Public StatCommands : StatCommands = "[Stats][Chips][BestHand][HandsPlayed][HandsWon][LastPlayed][Donations][Biggestpot][Mostchips][Top][Achieve]"'[Badge]
+Public HelpCommands : HelpCommands = "[Commands][Help][Donate][Ver][Daily][Update]"
+Public ConfigCommands : ConfigCommands = "[AutoStart][MsgInterval][AFKPunish][MoveTime][StartingChips][NewGameDelay][Emote]"
+Public MsgCommands : MsgCommands = "[0][1][2][3][4][5][6][7][8][9][MsgSep][Container][TableSep]"
+Public OtherCommands : OtherCommands = "[Block][UnBlock][Safelist][UnSafelist]" 'Add your own commands here
+Public AllCmds : AllCmds = "[GameCmds][AliasCmds][StatCmds][HelpCmds][MsgCmds][ConfigCmds][OtherCmds]"
+	'Used to determine if a "texas" command exists
+Public AllCommands : AllCommands = LCase(AllCmds & HelpCommands & GameCommands & AliasCommands & StatCommands & ConfigCommands & MsgCommands & OtherCommands)
+
+Public HandRank : HandRank = Array("highcard","pair","twopair","threeofakind","straight","flush","fullhouse","fourofakind","straightflush","royalflush")
+
+Public Timer, UsernameStore, MessageControl, MessageStore, MessageDelay, TableMessage, WhisperMessage, TxConflict
+Public AddPM, Personal, Whisper, Change, PersonalQ, PersonalT
+Public TxBlinds, TxTurn, FirstTime, Chips, ChangeStatus, TxUsername
+Public TxRS, SaveSeats
+Public TxCardSuits : TxCardSuits = Array("Clubs","Spades","Hearts","Diamonds")
+Public StoreCards : StoreCards = False
+Public TxLine()
+Public TxScriptVersion
+
+Sub Event_FirstRun()
+	TxScriptVersion = Script("Major") & "." & Script("Minor") &"." & Script("Revision")
+	If TxLatestVersion <> TxScriptVersion Then 
+		AddChat VBYellow, StringFormat("Texas Hold'em Poker Version: {0} is available for download. To download please go to: {1}",TxLatestVersion,"http://www.stealthbot.net/forum/index.php?/topic/6826-texas-holdem-poker/")
+	End If
+End Sub
+
+Sub Event_Load()
+	TxScriptVersion = Script("Major") & "." & Script("Minor") &"." & Script("Revision")
+	Dim AttemptTime
+	AttemptTime = Timer
+	TxConnect
+	
+	MemoField ="Daily"
+	sql = "ALTER TABLE TxUsers ALTER " & MemoField & " MEMO NULL"
+	TxCon.Execute (Sql)
+	
+	If Not TxFSO.FileExists(TexasConfig) Then
+		TxConfig
+	End If
+	
+	AddChat 10920128, "Texas Hold'em Poker ", VBCyan, "(Version: " & TxScriptVersion &  ")", 10920128," has been restored."
+
+	FirstTime = True
+	Read
+	CreateObj "LongTimer", "TxClear"
+	TxClear.Interval = 3
+	TxClear.Enabled = True
+	CreateObj "LongTimer", "TxMove"
+	TxMove.Interval = 0
+	TxMove.Enabled = True
+	'For Reloading
+	If TxGet("game", "timerv") <> "" and TxGet("game", "timerv") > 0 Then Timer = GetGTC - (TxGet("main","movetime") - 0 -TxGet("game", "timerv"))*1000
+	CreateObj "LongTimer", "Msg"
+	'Increase Interval to reduce flooding 
+	Msg.Interval = TxGet("main","msginterval") ' delay between Texas messages (includes whispers) // 0 is not recommended
+	Msg.Enabled = True
+	CreateObj "LongTimer", "Delay"
+	Delay.Interval = TxGet("main","newgamedelay") ' delay between new games
+	Delay.Enabled = False
+	If GameStatus = "Calculating" Then PotCalc()
+End Sub
+
+Sub TxConfig()
+	Dim FileTxt
+	Set FileTxt = TxFSO.OpenTextFile(TexasConfig, 2, True)
+	With FileTxt
+		.Writeline "[main]"
+		.Writeline "; Players required for autostarting"
+		.Writeline "autostart=3"
+		.Writeline "; Punishment for players taking longer than the movetime. Punishments: [fold] and [stand]"
+		.Writeline "afkpunish=stand"
+		.Writeline "; Chips given for first time players, max = $100,000"
+		.Writeline "startingchips=10000"
+		
+		.Writeline "[tx messages]"
+		.Writeline "; Text must be enclosed in quotation marks("""")."
+		.Writeline "emote=""False"""
+		.Writeline "; Message separator for multiple messages sent within the msginterval. " 
+		.Writeline "txmsgseparate="" >> """
+		.Writeline "; The card container must have ""tx"" because tx represents the suit which will get replaced in game."
+		.Writeline "txcardcontainer="" [tx]"""
+		.Writeline "; Tablecard separator"
+		.Writeline "tableseparate="" | """
+		
+		.Writeline "[disable]"
+		.Writeline "; Example usage: start=[disablealias] Or set=[disable] Or set=[disablealias][disable]"
+		.Writeline "[access]"
+		.Writeline "; Required access for a command, to disable use the bot command ""/tx disable [command]"" or manually disable as shown above under [disable]"
+		.Writeline "set=1"
+		.Writeline "remove=1"
+		.Writeline "disable=1"
+		
+		.Writeline "[commands]"
+		.Writeline "; Aliases must be contained in ¿? E.G. stand=¿s?¿leave?¿quit?"
+		.Writeline "; It is better to use the bot command ""/tx set [command] = [alias]"" to avoid any possible alias conflicts."
+		.Writeline "join=¿j?"
+		.Writeline "call=¿c?"
+		.Writeline "raise=¿r?"
+		.Writeline "fold=¿f?"
+		.Writeline "allin=¿ai?"
+		.Writeline "stand=¿s?"
+		.Writeline "aliasdisable=¿disablealias?"
+		.Writeline "aliasenable=¿enablealias?"
+		
+		.Writeline "[hand messages]"
+		.Writeline "; %hc/%lc = Your highest/lowest card, %p1/%p2 = Pair #1/Pair #2, %r = Multiples of the card worth the same value"
+		.Writeline "; %s = How high the straight is, %fs = Flush suit, %fr = Highest flush card, %k1/%k2/%k3 = Kicker cards #1/2/3 respectively."
+		.Writeline "; It is better to change these messages using the bot command ""/tx [1-9] [New message]"" to ensure you have the required arguments."
+		.Writeline "[game]"
+		.Writeline ";	Do not edit anything below this."
+		.Writeline "txg1="
+		.close
+	End With
+	Dim Rank
+	For Rank = 0 To 9
+		TxGet "hand messages",HandRank(Rank)
+	Next
+	AddChat VBYellow, "Texas Config file has been created."
+	NewGame
+End Sub
+
+Function CardTest(Reason)
+	If Reason = "Test" Then DealtCards = 52 Else DealtCards = 7
+	Dim TestAllCards
+	Do Until Dealt = DealtCards
+	Randomize
+		Dim T, X, Card, Rank
+		T = Int(((14 + 1) - 2) * Rnd + 2) 			'Rank
+		x = Int((Ubound(TxCardSuits) + 1) * Rnd)	'Suit
+			If len(T) < 2 Then T = "0"+0 & T
+			Rank = ""
+			select Case T
+				Case 14 Rank = "A"
+				Case 13 Rank = "K"
+				Case 12 Rank = "Q"
+				Case 11 Rank = "J"
+			End Select
+			If Rank = "" Then Rank = T
+			Card = Rank & "(" & TxCardSuits(X) & ")"
+		If TxCount(TestAllCards,"*" & Card) > 0 Then
+			CardReset = 1
+		Else	
+			CardReset = 0 : Dealt = Dealt + 1
+		End If
+		If CardReset = 0 Then
+			TestAllCards = TestAllCards & "*" & Card
+			Dim Colour
+			Select Case TxCardSuits(X)
+				Case "Clubs" Colour = 16770128
+				Case "Spades" Colour = 16460128
+				Case "Hearts" Colour = 134628
+				Case "Diamonds" Colour = 4578965
+			End Select
+			If Reason = "Test" Then AddChat Colour, "Card" & Dealt & ": " & Card
+			Cards = Cards &","& Card & "*" & T
+		End If
+	Loop
+	If Reason = "Reward" Then CardTest = Right(Cards,Len(Cards)-1)
+End Function
+
+Sub Read()
+	If Not StoreCards And Not FirstTime Then Exit Sub
+	If TexasStore.Count <> 0 and TexasStore.Count < 17 Then TexasRewrite
+	Dim Filetxt, i, TL,PotRead, TexasPotSplit
+	Dim TexasLine, TexasLineSplit, TexasPlayerSplit, PVS, ActiveCardSplit, CardCounter
+	TexasStore.RemoveAll
+	PlayerStore.RemoveAll
+	PotnGame.RemoveAll
+	ChangeStatus = TxGet("game","changestatus")
+	For TL = 0 to 15
+		TexasLine = TxGet("game", "txg"&TL+1)
+		If TexasLine = "" Then NewGame : Exit For
+			TexasLineSplit = GS(TexasLine, ";")
+			TexasPlayerSplit = GS(TexasLineSplit(1),",")
+			TexasStore.item(TexasLineSplit(0)) = TexasLineSplit(1)
+		If TL > 0 And TL < 8 And TexasPlayerSplit(0) <> "Username" Then
+			PVS = Split(TexasPlayerSplit(1),"!")
+			PlayerStore.Add RemoveTx(TexasPlayerSplit(0)), TexasLineSplit(0)
+		End If
+	Next
+	TxTurn = True
+	FirstTime = False
+End Sub
+
+'*** Texas Database ***
+Public Sub TxDBCreate()
+	If TxFSO.FileExists(TexasDB) Then Exit Sub
+	Dim TxCatalog
+	Addchat VByellow, "Creating Texas Hold'em Poker user database..."
+	Set TxCatalog = CreateObject("ADOX.Catalog")
+	TxCatalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source="&TexasDB
+    TxConnect
+	Dim SQL
+	SQL =	"CREATE TABLE `TxUsers` (" & _
+			"`ID` COUNTER ," & _
+			"`Username` VARCHAR(32) NOT NULL, " & _
+			"`Chip Value` DOUBLE NOT NULL, " & _
+			"`Best Hand Value` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`Best Hand` VARCHAR(200) NOT NULL DEFAULT N/A, " & _
+			"`Flags` VARCHAR(32) NULL, " & _
+			"`Hands Played` INT NOT NULL DEFAULT 0, " & _
+			"`Hands Won` INT NOT NULL DEFAULT 0, " & _
+			"`Biggest Pot` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`Most Chips` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`Last Played` TIMESTAMP, " & _
+			"`Total Donations` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`Badge` MEMO NOT NULL DEFAULT None, " & _
+			"`Badges Earned` MEMO NULL, " & _
+			"`Daily` MEMO NULL)"
+	TxCon.Execute(SQL)
+
+	SQL =	"CREATE TABLE `TxAchievements` (" & _
+			"`ID` COUNTER ," & _
+			"`Username` VARCHAR(32) NOT NULL, " & _
+			"`Pair` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`TwoPair` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`ThreeofaKind` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`Straight` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`Flush` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`FullHouse` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`FourofaKind` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`StraightFlush` DOUBLE NOT NULL DEFAULT 0, " & _
+			"`RoyalFlush` DOUBLE NOT NULL DEFAULT 0)"
+	TxCon.Execute(SQL)
+End Sub
+
+Public Sub TxConnect()
+    If Not TxFSO.FileExists(TexasDB) Then TxDBCreate : Exit Sub
+    TxCon.ConnectionString = "Provider=Microsoft.Jet.OLEDB.4.0; Data Source="&TexasDB
+    TxCon.Open
+	NewField ="Daily"
+	If Not TxTableExists Then
+		SQL =	"CREATE TABLE `TxAchievements` (" & _
+				"`ID` COUNTER ," & _
+				"`Username` VARCHAR(32) NOT NULL, " & _
+				"`Pair` DOUBLE NOT NULL DEFAULT 0, " & _
+				"`TwoPair` DOUBLE NOT NULL DEFAULT 0, " & _
+				"`ThreeofaKind` DOUBLE NOT NULL DEFAULT 0, " & _
+				"`Straight` DOUBLE NOT NULL DEFAULT 0, " & _
+				"`Flush` DOUBLE NOT NULL DEFAULT 0, " & _
+				"`FullHouse` DOUBLE NOT NULL DEFAULT 0, " & _
+				"`FourofaKind` DOUBLE NOT NULL DEFAULT 0, " & _
+				"`StraightFlush` DOUBLE NOT NULL DEFAULT 0, " & _
+				"`RoyalFlush` DOUBLE NOT NULL DEFAULT 0)"
+		TxCon.Execute(SQL)
+	End If
+
+	On Error Resume Next
+	SQL = "SELECT " & NewField & " FROM `TxUsers`"
+	Set RS = TxCon.Execute(SQL)
+	
+	If RS.Fields(0) = "" Then 
+		sql = "ALTER TABLE TxUsers ADD " & NewField &" MEMO NULL" 
+		TxCon.Execute (Sql)
+	End If
+
+End Sub
+
+Public Function Field(Info)
+	Field = LCase(Info)
+	Select Case Lcase(Info)
+		'+ indicates the value is to be added
+		Case "user"						Field = "Username"
+		Case "flags"					Field = "Flags"
+		Case "chips","+chips","+dchips"	Field = "Chip Value"
+		Case "handv"					Field = "Best Hand Value"
+		Case "hand"						Field = "Best Hand"
+		Case "+hplayed"					Field = "Hands Played"
+		Case "+hwon"					Field = "Hands Won"
+		Case "bpot"						Field = "Biggest Pot"
+		Case "mchips"					Field = "Most Chips"
+		Case "lplayed"					Field = "Last Played"
+		Case "badge"					Field = "Badge"
+		Case "badegelist"				Field = "Badges Earned"
+		Case "+donations"				Field = "Total Donations"
+		Case "daily"					Field = "Daily"
+	End Select
+End Function
+
+Public Function TxDBTop(Data, Top)
+	Dim SQL, RS, I, X, Y, Info, Reason, Hand
+	If Data = "handv" Then Hand = "`, `Best Hand" Else Hand = ""
+	SQL = "SELECT `Username`, `" & Field(Data) & Hand & "` FROM `TxUsers` ORDER BY `" & Field(Data) & "` DESC"
+	Set RS = TxCon.Execute(SQL)
+	For I = 1 To Top
+		If RS.EOF Then Exit For
+		Info = RS.Fields(1)
+		
+		Select Case LCase(Data)
+			Case "chips" 	 	Info = FC(RS.Fields(1)) : Reason = "Chip Stack"
+			Case "handv" 	 	Info = RS.Fields(2)	 	: Reason = "Hand"
+			Case "+hwon" 	 	Info = RS.Fields(1)	 	: Reason = "Win"
+			Case "+hplayed"  	Info = RS.Fields(1)		: Reason = "Most Played Hand"
+			Case "bpot" 	 	Info = FC(RS.Fields(1))	: Reason = "Biggest Pot"
+			Case "mchips" 	 	Info = FC(RS.Fields(1))	: Reason = "Highest Total Chip Stack"
+			Case "+donations"	Info = FC(RS.Fields(1)) : Reason = "Total donation"
+		End Select
+
+		If Info <> "Cheater" Then
+			If IsNumeric(Info) Then If Info < 1 Then Info = "N/A"
+			If Info <> "N/A" And Info <> "" Then
+				If TxDBTop <> "" Then TxDBTop = TxDBTop & ", "
+				TxDBTop = TxDBTop & RS.Fields(0) & ": " & Info
+				X = X + 1
+			End If
+		End If
+        RS.MoveNext
+	Next
+	If X > 1 Then Y = "s"
+	If X <> "" Then TxDBTop = "Top(" & X & ") " & Reason & Y & "=> " & TxDBTop Else TxDBTop = "N/A"
+End Function
+
+Public Function TxDBRank(Username,Data)
+	Dim SQL, RS
+	If Username = "" Then
+		SQL = "SELECT COUNT(*) FROM `TxUsers`"
+	Else
+		SQL = "SELECT COUNT(*) FROM `TxUsers` WHERE `" & Field(Data) & "` >= (SELECT `" & Field(Data) & "` FROM `TxUsers` WHERE `Username` = '" & Username & "')"
+	End If
+	SET RS = TxCon.Execute(SQL)
+	TxDBRank = 0
+	If RS.Fields(0) <> 0 Then TxDBRank = RS.Fields(0)
+End Function
+' 
+Public Function TxDBInfo(Username,Data)
+	Dim Info,SQL, RS, I
+	If TxCount(Data,"¢") > 0 Then
+		For I = 0 To TxCount(Data,"¢")
+			If Info <> "" Then Info = Info & ", "
+			Info = Info & "`" & Field(GS(Data,"¢")(I)) & "`"
+		Next
+	Else
+		Info = "`"& Field(Data) & "`"
+	End If
+	SQL = "SELECT " & Info & " FROM `TxUsers` WHERE `Username` = '" & Username & "'"
+	SET RS = TxCon.Execute(SQL)
+
+	If RS.BOF = True AND RS.EOF = True Then
+		TxDBInfo = ""
+	Else
+		Info = ""
+		For I = 0 To TxCount(Data,"¢")
+			If Info <> "" Then Info = Info & ","
+			Info = Info & RS.Fields(I)
+		Next
+		TxDBInfo = Info
+	End If
+End Function
+
+Public Sub TxDBUpdate(Username,Update,Data)
+	Dim SQL,I, Info, A, C, DBData
+	A = "'"
+	Username = RemoveTx(Username)
+	StartingChips = TxGet("main","startingchips") + 0
+	If StartingChips > 100000 Then StartingChips = 10000
+	If TxDBInfo(Username,"User") = "" Then
+		If Update <> "+dchips" And Update <> "flags" Then TexasMessage 0, StringFormat("{0} as this is your first time, you have been given starting chips to the value of {1}.",GlobalUser(Username),FC(StartingChips))		
+		SQL = "INSERT INTO `TxUsers` (`Username`, `Chip Value`) VALUES ('" & Username & "', " & StartingChips & ")"
+		TxCon.Execute(SQL)
+	End If
+
+	If TxCount(Update,"¢") > 0 And TxCount(Data,"¢") > 0 Then 
+		For I = 0 To TxCount(Update,"¢")
+			C = GS(Update,"¢")(I)
+			DBData = A & GS(Data,"¢")(I) & A
+			If Left(C,1) = "+" Then DBData = "`" & Field(C) & "` + " & Int(GS(Data,"¢")(I))
+			If Info <> "" Then Info = Info & ", "
+			Info = Info & "`" & Field(C) & "` = " & DBData
+			If C = "+chips" Then 
+				If TxDBInfo(Username, Field("chips")) + 0 + GS(Data,"¢")(I) > TxDBInfo(Username, Field("mchips")) + 0 Then
+					Info = Info & ", `" & Field("mchips") & "` = " & DBData
+				End If
+			End IF
+		Next
+	Else
+		DBData = A & Data & A
+		If Left(Update,1) = "+" Then DBData = "`" & Field(Update) & "` + " & Data
+		Info = "`" & Field(Update) & "` = " & DBData
+		If Update = "+chips" Or Update = "+dchips" Then 
+			If TxDBInfo(Username, Field("chips")) + 0 + Data > TxDBInfo(Username, Field("mchips")) + 0 Then
+				Info = Info & ", `" & Field("mchips") & "` = " & DBData
+			End If
+		End IF
+	End If
+
+	SQL = "UPDATE `TxUsers` SET " & Info & _
+		 " WHERE `Username` = '" & Username & "'"
+	TxCon.Execute(SQL)
+End Sub
+
+Sub Event_Close()
+	TxCon.Close
+	'If config file is deleted but this script is still available.
+	If Not TxFSO.FileExists(TexasConfig) And TxFSO.FileExists(BotPath()& "Scripts\TexaS.txt") Then
+		TxConfig
+	End If
+	Dim StoreTimer
+	If TxGet("game","gamestatus") <> "Pause" Then StoreTimer = TxGet("main","movetime") + 0 + Msg.Interval - (GetGTC - Timer)/1000
+	StoreCards = True
+	If StoreTimer > 0 Then
+		If GameStatus <> "Start" And GameStatus <> "Idle" Then
+			TxWrite "game", "timerv", StoreTimer 'Remaining seconds
+		Else 
+			TxWrite "game", "timerv", TxGet("main","movetime")
+		End If
+	End If
+	If Delay.Enabled Then Delay_Timer
+	TxMove.Enabled = False
+	TexasRewrite
+	Msg_Timer 'Display all messages before it gets lost
+	
+	TxWrite "game","changestatus", ChangeStatus
+End Sub
+
+Sub Event_LoggedOn(Username, Product)
+	TxWrite "game", "gamestatus","Active"
+End Sub
+
+Sub Event_Shutdown()
+	TxWrite "game", "gamestatus","Pause"
+End Sub
+
+Sub Event_ServerError(Message)
+	If Message = "All connections closed."  Then TxWrite "game", "gamestatus","Pause"
+	If Message = "That user is not logged on." And GameStatus <> "Idle" Then If Playing(SeatToUser(TCPlayer)) Then PlayerLeave(TCPlayer)
+End Sub
+
+Public Sub TxMove_Timer()
+'Current time - time whispered - message delay = move time
+	If TxGet("game","gamestatus") <> "Active" Then TxMove.Enabled = False : Exit Sub
+	If GameStatus = "Start" Then TxWrite "game", "timerv", 0 : TxMove.Enabled = False : Exit Sub
+	If (GetGTC - Timer)/1000 < TxGet("main","movetime") + 0 + Msg.Interval Then Exit Sub Else TxMove.Enabled = False
+	If GameStatus = "GameStart" or GameStatus = "Torunament" or GameStatus = "Stopping" Then TxMove.Enabled = True Else Exit Sub
+	Whisper = 0
+	Dim Info, NP
+	Info = LS(TCPlayer,",")
+	NP = GS(ActiveSeats,"/"&UsertoSeat(Info(0)))
+	
+	If Info(7) = "No move" Then 
+		NDNP
+		TexasMessage 0, StringFormat("{0}'s time has run up!",GlobalUser(Info(0)))
+		Select Case Lcase(TxGet("main", "afkpunish"))
+			Case "fold" RL UserToSeat(Info(0)), Info(7), "fold^"
+			Case "stand" PlayerLeave(UsertoSeat(Info(0)))
+		End Select
+		If Remaining =< 1then		
+			LastMan 
+		Else
+			TexasMessage 0 , StringFormat("*{0} now has {1} seconds to make a move.*",SeatToUser(TCPlayer),TxGet("main","movetime"))
+			WhisperCards
+		End If
+	End If
+End Sub
+
+Public Sub TxNewQ(Text)
+	Dim TxT, SetPoint, Max, Sep, A, B
+	Sep = TxGet("tx messages", "txmsgseparate")
+	If TxCount(Text,Sep) = 0 Then If TxCount(Text,", ") > 0 Then Sep = ", " Else Sep = " "
+	SetPoint = 225
+	TxT = Text : Max = TxCount(Text,Sep)+1
+	Do Until Finished
+		Redim Preserve TxLine(Z)
+			If TxCount(TxT,Sep) > 0 Then B = Split(Text,Sep,Y + 2)(Y) & Sep
+			If Len(B) > SetPoint Then B = Left(TxT,SetPoint)
+		If Len(A & B) =< SetPoint And Len(TxT) > SetPoint Then 
+			A = A & B : If Y =< Max Then Y = Y + 1
+		Else 
+			If Len(TxT) =< SetPoint Then A = TxT & Sep : Y = Max
+			If Len(A) =< SetPoint Then 
+				TxLine(Z) = A : Z = Z + 1
+				TxT = Replace(TxT,TxLine(Z-1),"")
+			End If
+			If Len(TxT) =< SetPoint And Y = Max Then Finished = True
+			A = ""
+		End If
+		
+		If TxCount(TxT,Sep) > 0 Then
+			If Len(GS(TxT,Sep)(1)) > SetPoint Then 
+				If Sep <> " " Then 
+					If Sep <> ", " Then Sep = ", " Else Sep = " "
+					Y = 0 : Max = TxCount(TxT,Sep)+1 : Text = TxT : A = "" 'Start again with a new separator
+				End If
+			End If
+		Else 
+			B = Left(TxT,SetPoint) : Y = Max - 1
+		End If
+		REM If Z = 3 Then Finished = True
+	Loop
+	A = TxLine(UBound(TxLine))
+	TxLine(UBound(TxLine)) = Left(A,Len(A)-Len(Sep))
+End Sub
+
+Public Sub Msg_Timer()
+	If TxGet("game","gamestatus") = "Pause" Then Msg.Enabled = False : Exit Sub
+	Dim MS, MS1, A, C, I, X, Y, Sep
+	Sep = TxGet("tx messages", "txmsgseparate")
+	MS = MessageStore
+	Msg.Enabled = False
+	If TxCount(MS,"has won") > 0 Then WhisperMessage = ""
+	If MS = "" And TableMessage = "" And WhisperMessage = "" Then Exit Sub
+	If AddPM <> "" Then 'This will repeat until the message gets displayed
+		TexasMessage 3, AddPM
+		If MS = "" Or TableMessage = "" Or WhisperMessage = "" Then 
+			A = GS(Personal, ",")
+			TxPC A(0), A(1), A(2)
+		Else
+			TexasMessage 3, AddPM
+		End If
+	End If
+
+	C = GS(MS, Sep)
+	For I = 0 To Ubound(C) 
+		Dim T, R, TxM
+		LM = ""
+		R = ""
+		If TxCount(C(I),"&") > 0 Then 'Removes multiples of the same user
+			T = GS(C(I)," & ")
+			For X = 0 To Ubound(T)
+				If X = Ubound(T) Then TxM = Split(T(Ubound(T))," ", 2) : T(X) = TxM(0)
+				If InStr(R,"%"&T(X)&"%") = 0 Then 
+					R = R & "%"&T(X)&"%"
+					If LM = "" Then LM = T(X) Else LM = LM & " & " & T(X)
+				End If
+			Next
+			LM = LM & " " & TxM(1)
+			LM = Replace(LM, "has", "have")'Proper grammar
+			MS = Replace(MS, C(I), LM)
+		End If
+		
+		If TxCount(C(I), "It is now") > 0 Then MS = Replace(MS, "." & Sep & C(I), Turn) 'makes all the multiple turns the same message
+	Next
+	A = Turn
+	If A <> "." Then MS = Replace(MS, A,"") : If TableMessage = "" And TxCount(MS, "has won") = 0 Then MS = MS & A 'Ensures it only displays the current player once
+
+	If TxCount(MS, "has won") > 0 And TableMessage <> "" Then A = "."
+
+	If Replace(LCase(TxGet("tx messages","emote")),"""","") = "true" Then TxDsp = 2 Else TxDsp = 1
+
+	If MS <> "" Then 
+		TxNewQ "Texas: " & MS
+		For I = 0 To UBound(TxLine)
+			Dsp TxDsp, TxLine(I),TxUsername, VBYellow
+		Next
+		MessageStore = ""
+	End If
+	If TableMessage <> "" And TxGet("game", "reveal") = "True" Then Dsp TxDsp, "TableCards: " & TableMessage & A ,TxUsername,VBYellow : TableMessage = ""
+	If WhisperMessage <> "" Then Dsp 1, "/w " & WhisperMessage,0,VBGreen : WhisperMessage = ""
+	
+	MessageDelay = GetGTC
+End Sub
+
+Public Sub TexasMessage(M,A) 'Flood Prevention
+	Dim Message, Table, Whisper, MS, User, LikeMessage, LM,  I, X, MsgSep
+	MsgSep = TxGet("tx messages","txmsgseparate")
+	If TxCount(A," ") = 0 Then A = GlobalUser(RemoveTx(A))
+	Select Case M
+		Case 0 Message = A	'Texas Messages
+		Case 1 TableMessage = A'Table = A	'Only shows recent table cards 
+		Case 2 WhisperMessage = A'Whisper = A	'Only whispers current player and removes all previous whispers
+		Case 3 Personal = A 'Storage for personal commands
+	End Select
+
+	If GetGTC - MessageControl < Msg.Interval*1000 Then
+		REM If GameStatus <> "Idle" And GameStatus <> "Start" Then 
+			REM If M = 0 Then MessageStore = Message 'Show only last message due to longer delays with long messages.
+		REM Else
+		
+			If M = 0 Then
+				If MessageStore = "" Then
+					MessageStore = Message
+				Else
+					If Message <> "" Then
+						If TxCount(Message,MsgSep) = 0 Then UnLikeMessage = Message Else UnLikeMessage = GS(Message, MsgSep)(0)
+						LikeMessage = Split(UnLikeMessage," ",2) 'Splits into Username / Message
+						MS = MessageStore
+						Dim C, LikeMS
+						If TxCount(MS, "Waiting for ") > 0 Then MS = Replace(MS, MsgSep & "Waiting for " & Left(GS(MS,"Waiting for ")(1),1) & " more player(s).", "")
+						If TxCount(MS, MsgSep) > 0 Then
+							If TxCount(MS, "has won") = 0 Then
+								If TxCount(MS,LikeMessage(1)) > 0 Then
+									Message = Replace(MS, LikeMessage(1), "& " & LikeMessage(0) & " " & LikeMessage(1))
+									MS = "" 'Recent messages will be placed after ">>"
+								End If
+							Else
+								If TxCount(Message, "Waiting") = 0 Then Message = ""
+							End If
+						Else
+							MS = Replace(MS, Message, "") 'If only one message is stored
+							If TxCount(MS, "&") = 0 Then LikeMS = Split(MS," ", 2) Else LikeMS = Split(GS(MS," & ")(TxCount(MS," & "))," ", 2)
+							If MS <> "" Then
+								If LikeMS(1) = LikeMessage(1) Then
+									MS = Replace(MS, LikeMS(1), "& " & LikeMessage(0) & " " & LikeMessage(1))		
+									Message = ""
+								End If
+							End If
+						End If
+						
+						If MS = "" Then 
+							MessageStore = Message 
+						Else 
+							If Message <> "" Then MS = MS & MsgSep & Message 'Add to end of storage
+							MessageStore = MS
+						End If
+					End If
+				End If
+			End If
+		REM End If
+	Else
+		If M = 0 Then MessageStore = Message
+	End If
+	
+	MessageControl = GetGTC
+	If Msg.Interval =< 0 Then
+		Msg_Timer
+	Else
+		Msg.Enabled = True
+	End If
+End Sub
+
+Sub TxPM(Username,TxDsp,Message)
+
+	If TxGet("game","gamestatus") = "Pause" Then Exit Sub
+'Dsp 1 = Normal | Dsp 2 = Emote | Dsp 3 = Whisper | Dsp 4 = AddChat
+	Dim Strike
+	If MessageStore = "" Or TableMessage = "" Or WhisperMessage = "" Then
+		If TxDsp <> 4 Then PersonalQ = PersonalQ + 1
+	If PersonalQ > 3 Then Exit Sub
+		If Replace(LCase(TxGet("tx messages","emote")),"""","") = "true" And TxDsp = 1 Then TxDsp = 2
+		Dsp TxDsp, "Texas: " & Message,Username,VBYellow
+		If TxDsp = 4 Or Username = BotVars.Username Then VetoThisMessage : Exit Sub 'No strikes required if displayed inbot
+		If TxStrike.Exists(Username) Then Strike = GS(TxStrike.Item(Username),",")(0) Else Strike = 0
+		TxStrike.Item(Username) =  Strike + 1 & "," & GetGTC
+		TxClear.Enabled = True
+		
+		If PersonalQ > 2 Then AddChat VBRed, StringFormat("Texas: Future commands will be ignored for {0} seconds.",TxClear.Interval) 
+	End If
+
+End Sub
+
+Public Sub TxClear_Timer()
+	Dim User, Strike
+	For Each User In TxStrike.Keys
+	Strike = GS(TxStrike.Item(User),",")
+		If GetGTC - Strike(1) > TxClear.Interval * 1000 Then
+			TxStrike.Item(User) = Replace(Strike(0),Strike(0),Strike(0) - 1) &","&Strike(1)
+		End If
+		If Strike(0) - 1 = 0 Then TxStrike.Remove(User)
+	Next
+	If PersonalQ > 0 Then PersonalQ = PersonalQ - 1
+	If TxStrike.Count = 0 And PersonalQ = 0 Then TxClear.Enabled = False
+End Sub
+
+Public Sub Delay_Timer()
+	Delay.Enabled = False
+	TexasCommands PotnGame.Item("Command")
+End Sub
+
+'***********************
+'* Deal a Random Card  *
+'*    not in play      *
+'***********************
+Sub NewCard(Command,CardReset)
+	Dim AllCards
+	AllCards = TexasStore.Item("ActiveCards~")
+
+	Dim Z,count, Dealt, DealtCards, Repeat, cards
+			If LS("TableCards~", ",")(1) = "" Then Repeat = 3 Else Repeat = 1
+			If Command = "startplayer" Then DealtCards = PlayerCount*2 Else DealtCards = Repeat
+			Dealt = 0
+	Do Until Dealt = DealtCards
+		Randomize
+		Dim T, X, Card, Rank
+		T = Int(((14 + 1) - 2) * Rnd + 2)
+		x = Int((Ubound(TxCardSuits) + 1) * Rnd)
+			If len(T) < 2 then T = "0"+0 & T
+			Rank = ""
+			select Case T
+				Case 14 Rank = "A"
+				Case 13 Rank = "K"
+				Case 12 Rank = "Q"
+				Case 11 Rank = "J"
+			End Select
+			If Rank = "" then Rank = T
+			Card = Rank & "(" & TxCardSuits(X) & ")"
+		If TxCount(AllCards,"*" & Card) > 0 Then 
+			CardReset = 1
+		Else
+			CardReset = 0 : Dealt = Dealt + 1
+		End If
+		If CardReset = 0 Then
+			AllCards = AllCards & "*" & Card
+			Cards = Cards &","& Card & "*" & T
+			PotnGame("Cards") = Cards
+		End If
+	Loop
+End Sub
+
+Sub ReturnAll()
+	If TxGet("game","txg1") = "" Then Exit Sub
+	TexasRewrite
+	Dim I, Info
+	For I = 1 To 7
+		Info = LS("Seat"&I,",")
+		If Info(0) <> "Username" And Info(1) <> "Value" Then TxDBUpdate Info(0),"+chips",GS(Info(1),"!")(0)
+	Next
+End Sub
+
+Sub TexasRewrite()
+	If Not StoreCards Then Exit Sub
+	If TexasStore.Count > 16 Then AddChat VBRed, "A possible problem has been prevented. Please report this to Reuben." : Exit Sub
+	Dim Key, I
+	For Each Key in TexasStore.Keys 'Don't want to make anoter document for storing this, so it will go into the config file
+		I = I + 1 : TxWrite "game","TxG"&I, Key&";"&TexasStore.Item(Key)
+	Next
+End Sub
+
+Sub NewGame()
+	StoreCards = True
+	Dim I, II
+	ReturnAll 'Return all chips before starting a new game
+	PlayerStore.RemoveAll
+	TxBlinds = TxGet("main", "txblinds")
+	TexasStore.item("Current~") = ",Idle,Pot1~,Seat2(C),"&TxBlinds&","&GS(TxBlinds,"/")(1)&"(B),Seat1(D)"
+	For I = 1 to 7
+		TexasStore.item("Seat"&I) = "Username,Value,»Score,Hand,»Card1,»Card2,Status,Action^"
+	Next
+	TexasStore.item("TableCards~") = ","
+	TexasStore.item("ActiveCards~") = ","
+	For II = 1 to 6
+		TexasStore.item("Pot"&II&"~") = ",0$"
+	Next
+	TexasRewrite
+	TxWrite "game", "timerv", TxGet("main","movetime")
+	StoreCards = False
+	AddChat VBYellow, "Texas: A new game has been created."
+	TxWrite "game", "gamestatus","Active"
+End Sub
+
+Sub TexasCommands(Command)
+	If PlayerStore.Count =< 1 Then Exit Sub
+	TxMove.Enabled = False
+	Dim I, L,C,TL, PotRead, TexasPotSplit
+	Dim TexasLine(), TexasLineSplit, TexasPlayerSplit, PVS
+	Dim Currrent, Number, PlayerTotalCount
+	Dim URange, Cards,CardSplit,ActiveCards,DealOrder, DealCard, Current, Reason, Repeat, CurrentTable
+	Dim PlayerKey,User
+
+	PlayerKey = PlayerStore.Keys
+	Command = Lcase(Command)
+	Select Case Command
+		Case "startplayer","starttable"
+			If PlayerStore.Count = 1 Then Exit Sub
+			If Command = "starttable" Then If Not TxHaveCards Then Exit Sub
+			Dim Active, Round
+			Dim PotTotal, Pot, P, M
+			Round = Ubound(LS("TableCards~","*"))
+			If Round < 5 Then
+				If TxCount(ActiveSeats,"/"&TGADealer) = 0 Then NDealer = GS(ActiveSeats,"/")(1) Else NDealer = TGADealer
+				If Command = "startplayer" Then Active = GS(ActiveSeats,"/"&NDealer)(1)&"/"&NDealer
+				NewCard Command,0
+				Cards = GS(PotnGame("Cards"),",")
+				For C = 1 to Ubound(Cards)
+					If Command = "startplayer" Then 
+						If C =< Ubound(Cards)/2 Then I = 1 else I = 2
+						DealCard = GS(Active&Active,"/")
+						Current = DealCard(C)
+						Reason = Replace(TexasStore.item(Current),"»Card"&I,Cards(C)) 
+						If I = 2 Then TxDBUpdate SeatToUser(Current),"+hplayed¢lplayed",1&"¢"&Now()
+					Else 
+						If TexasStore.item("TableCards~") = "," Then CurrentTable = Cards(C) Else CurrentTable = TexasStore.item("TableCards~")&","&Cards(C)
+						Reason = CurrentTable
+						Current = "TableCards~"
+					End If
+						TexasStore.Item(Current) = Reason
+						CardSplit = GS(Cards(C),"*")
+						ActiveCards = ActiveCards &"*"& CardSplit(0)
+				Next
+				TexasStore.item("ActiveCards~") = TexasStore.item("ActiveCards~") & ActiveCards
+				For Each User In PlayerKey
+					If LS(UsertoSeat(User),",")(5) <> "»Card2" Then OutcomeCalculator User, 1
+				Next
+
+				If Remaining =< 1 Then TexasCommands "starttable" : Exit Sub
+				If Command = "starttable" Then TexasMessage 1, TableCards : WhisperCards
+			Else	
+			TexasMessage 1, TableCards
+				PotCalc()
+			End If
+		Case "texasround"
+			Dim TLS, TI, ClearPot, BlindChange
+				If GameStatus = "Stopping" Then
+					If TxGet("main","txblinds") <> GameBlinds Then BlindChange = True
+					NewGame
+					TexasMessage 0, StringFormat("The game has now stopped, to start a new game type: '{0}tx start'",BotVars.Trigger) 
+					If BlindChange Then TexasMessage 0, "GameBlinds have been successfully been changed."
+				Else
+				Dim AP, PlayerSeat, BigBlind, BB, SmallBlind, SB, DealerChange
+				ChangeStatus = ""
+				TxWrite "game","changestatus",""
+					If Remaining = 1 And Remaining + Waiting <> TxGet("main","autostart")+0 Then TexasMessage 0, "Waiting for more people to join." : Exit Sub
+					
+					For I = 1 To 7
+						TLS = LS("Seat"&I,",")
+						TI = TexasStore.item("Seat"&I)
+						If TLS(0) <> "Username" Then
+							If GS(TLS(1),"!")(0)+0 =< 0 Then 'Eliminated
+								If I = Right(TGADealer,1)+0 Then DealerChange = 1 : RL "Current~", GameStatus, "Start"
+								PlayerLeave "Seat"&I
+								RL "Seat"&I,TI,"Username,Value,»Score,Hand,»Card1,»Card2,Status,Action^"	
+							End If
+							If Right(LS("Current~",",")(1),5) = "Start" Then RL "Seat"&I, TI, TLS(0)&","&GS(TLS(1),"!")(0)&"!0,»Score,Hand,»Card1,»Card2,Playing,No move"
+						End If
+					Next
+					RL "Current~", GamePot, "Pot1~"
+					RL "ActiveCards~", TexasStore.Item("ActiveCards~"),","
+					RL "TableCards~", TexasStore.Item("TableCards~"),","
+					For ClearPot = 1 to 6
+						RL "Pot"&ClearPot&"~",TexasStore.Item("Pot"&ClearPot&"~"),",0$"
+					Next
+					PlayerKey = PlayerStore.Keys
+					If Remaining = 1 And Waiting <> TxGet("main","autostart")+0 = 0Then 
+						RL "Current~", GameStatus, "Start"
+						RL UserToSeat(Playerkey(0)), LS(UserToSeat(Playerkey(0)),",")(6), "Fold" 
+						TexasMessage 0, "Waiting for more people to join."
+						Exit Sub
+					End If
+					
+					If PlayerStore.Count =< 1 Then Exit Sub
+					For Each User In PlayerStore.Keys
+						RL UserToSeat(User), TPlayerInfo(User)(6), "Playing"
+					Next
+					If GameStatus = "Auto-Start" Then DealerChange = 1 Else DealerChange = 0
+					Dim NewDealer
+					If DealerChange <> 1 Then NewDealer = GS(GS(ActiveSeats,"/"&TGADealer)(1),"/")(1) Else NewDealer = TGADealer
+					If TxCount(ActiveSeats,NewDealer) = 0 Then NewDealer = GS(ActiveSeats,"/")(1) 'Just so there is always a dealer.
+					TxBlinds = TxGet("main", "txblinds")
+					
+					RL "Current~", GameBlinds, TxBlinds
+					RL "Current~", GameBet, GS(TxBlinds,"/")(1)&"(B)"
+					RL "Current~", ActingDealer, NewDealer&"(D)"
+					TexasCommands "startplayer"
+
+					Dim SBD, BBD, CPlayer
+					SaveSeats = ActiveSeats 'For people who are all in after the small/big blinds
+					SB = GS(GS(ActiveSeats,"/"&TGADealer)(1),"/")(1)
+					TempPot SeatToUser(SB),"SB",0
+					
+					If TxCount(SaveSeats,"/") = 2 Then BigBlind = "/"&GS(SaveSeats,"/")(1) Else BigBlind = GS(SaveSeats,"/"&SB)
+					BB = GS(BigBlind(1),"/")(1)
+					TempPot SeatToUser(BB),"BB",0
+					If PlayerCount = 2 Then
+						If TxCount(SaveSeats, SB) > 0 Then 'Check if the current player is all in
+							CPlayer = SB
+						Else
+							CPlayer = BB
+						End If
+					Else
+						CPlayer = GS(GS(SaveSeats,"/"&BB)(1),"/")(1)
+					End If
+					RL "Current~", GameStatus, "GameStart"
+					RL "Current~", CurrentPlayer, CPlayer&"(C)"
+					TxTurn = False
+					TxWrite "game", "gamestatus" , "Active"
+					TexasMessage 0, StringFormat("The game has started. Game blinds are: {0}",TxBlinds)
+				End If
+	End Select
+End Sub
+Public Function TxHaveCards()
+TxHaveCards = True
+	For TL = 1 to 7
+		TPS = LS("Seat"&TL,",")
+		If TPS(0) <> "Username" And TPS(6) = "Playing" Then
+			If TPS(4) = "»Card1" Or TPS(5) = "»Card2" Then TxHaveCards = False : Exit For
+		End If
+	Next
+End Function
+Sub PlayerLeave(Seat) ' Transfer player role the left
+	Dim TxP, TxV, User, AddMsg
+	TxP = TPlayerInfo(Seat)
+	TxV = GS(TxP(1),"!")
+	TxDBUpdate SeatToUser(Seat),"+chips",TxV(0)
+	If PlayerCount > 1 And TxCount(ActiveSeats,"/") > 2 Or GameStatus = "Start" Then
+		If GameStatus <> "Start" Then
+			If Seat = TGADealer Then RL "Current~", ActingDealer, GS(GS(ActiveSeats,"/"&Seat)(1),"/")(1)&"(D)"
+			If Seat = TCPlayer Then RL "Current~", CurrentPlayer, GS(GS(ActiveSeats,"/"&Seat)(1),"/")(1)&"(C)" : Change = True
+			RL GamePot,TexasStore.Item(GamePot),","&GS(LS(GamePot,"$")(0),",")(1)+0+TxV(1)&"$"&LS(GamePot,"$")(1)
+		End If
+		If PlayerStore.Exists(SeatToUser(Seat)) Then PlayerStore.Remove(SeatToUser(Seat))
+		RL Seat, TexasStore.Item(Seat), "Username,Value,»Score,Hand,»Card1,»Card2,Status,Action^"
+		If Change Then TxTurn = False : AddMsg = Turn : Whisper = 0
+		TexasMessage 0, StringFormat("{0} has left the table{1}",GlobalUser(RemoveTx(TxP(0))),AddMsg)
+		Change = False : TxTurn = False 'Need to reset it so turn messages will display again.
+	End If
+	
+	If Remaining = 1 Then 
+		If PlayerStore.Exists(SeatToUser(Seat)) Then PlayerStore.Remove(SeatToUser(Seat)) 'For rejoining users
+		If TxP(6) = "Fold" Then Exit Sub
+		If TexasStore.Item("Pot1~") <> ",0$" Then PotAdd() : PotCalc() 'Last player will receive the pot
+		For Each User In PlayerStore.Keys
+			RL UserToSeat(User), TPlayerInfo(User)(6), "Fold"
+		Next
+		RL "Current~", GameStatus, "Start"
+		AutoStart
+		Exit Sub
+	End If
+	
+	If GameStatus <> "Idle" Then
+		If PlayerCount = 0 Then NewGame : Exit Sub
+		AutoStart
+	End If
+End Sub
+
+Public Function NDNP()
+	TxMove.Enabled = False
+	Dim Seats
+	Seats = GS(ActiveSeats,"/"&TCPlayer)
+	If Ubound(Seats) > 0 Then If PlayerCount > 1 And Seats(1) <> "" Then RL "Current~", CurrentPlayer, GS(Seats(1),"/")(1)&"(C)"
+End Function
+					
+Sub PotAdd()
+	Dim Action, Pot, NewPot, PlayerValue, PotValue, NextPot,PotPlayers
+	Dim PlayerKey, User, I, NPV, CurrentPot, Fold, ValueOrder, N, P, Y, VO, R, T, A, O, Act, UserSeat, PC
+	Playerkey = PlayerStore.Keys
+	ValueOrder = "0<"&(1*10^301)&"<" 'Pots worth $301 or 1 may cause an error
+	R = "0<"
+	RL GamePot, LS(GamePot,"$")(1),""
+	For A = 1 to 2
+		For Each User In PlayerKey
+			UserSeat = UserToSeat(User)
+			Action = LS(UserSeat,",")
+			Act = GS(Action(7),"^")
+			If Act(0) <> "Action" Then 'For recently joined
+				Pot = LS(GamePot,",")
+				PlayerValue = GS(Action(1),"!")(1)+0
+				CurrentPot = Right(GS(GamePot,"~")(0),1)
+				VO = GS(ValueOrder,"<")
+				Y = 0 : O = 0
+				If A = 1 Then
+					Do Until Y = 1
+					P = GS(ValueOrder,VO(O+1)&"<")
+						If PlayerValue = VO(O)+0 Or Act(0) = "fold" Then 
+							Y = 1
+						Else		
+							If PlayerValue > VO(O)+0 And PlayerValue < VO(O+1)+0 Then 
+								ValueOrder = P(0)&PlayerValue&"<"&VO(O+1)&"<"&P(1)
+								Y = 1
+							Else
+								O = O + 1
+							End If
+						End If
+					Loop				
+				Else
+					If Act(0) = "fold" Then 
+						Fold = Fold+PlayerValue
+						RL GamePot, GS(Pot(1),"$")(0),GS(Pot(1),"$")(0)+0+PlayerValue
+						RL UserSeat, Action(6),"Fold"
+						RL UserSeat, Action(7),"No move"
+					Else
+						If UBound(VO) = 2 And Action(6) = "Playing" Then 'All checked
+								NextPot = "Pot"&CurrentPot&"~"
+								NewPot = LS(NextPot,",")
+								NPV = GS(NewPot(1),"$")(0)+0
+								RL NextPot, TexasStore.Item(NextPot),","&NPV&"$"&UserSeat&"*"&GS(NewPot(1),"$")(1)
+						Else
+							For I = 1 to UBound(VO)-2
+								If PlayerValue >= VO(I)+0 And Action(6) = "Playing" Then
+								NextPot = "Pot"&CurrentPot+I-1&"~"
+								NewPot = LS(NextPot,",")
+								NPV = GS(NewPot(1),"$")(0)+0
+									RL NextPot, TexasStore.Item(NextPot),","&NPV+VO(I)-0-VO(I-1)&"$"&UserSeat&"*"&GS(NewPot(1),"$")(1)
+								End If
+							Next
+						End If
+						If Act(0) = "allin" Then RL UserSeat, Action(6),"All-In"
+						RL UserSeat, Action(7),"No move"
+						If Act(0) <> "fold" And Act(0) <> "No move" Then PC = PC + 1
+					End If
+					RL UserSeat, Action(1), GS(Action(1),"!")(0)&"!0"
+				End If
+				PlayerStore.item(User) = UserSeat
+			End If
+		Next
+		Pot = LS(GamePot,",")
+		RL GamePot, GamePot,","&GS(Pot(1),"$")(0)+0+Fold&"$"&GS(Pot(1),"$")(1)
+	Next
+	
+	If PC > 1 Then TxWrite "game", "reveal","True" Else TxWrite "game", "reveal", "False"
+	Dim Number, NP
+	If UBound(VO)+0 < 3 Then Number = CurrentPot+0 Else Number = CurrentPot-3+UBound(VO)
+	If Ubound(LS("Pot"&Number&"~","*")) > TxCount(ActiveSeats,"/")/2 Then Number = Number + 1 Else
+	RL "Current~", GamePot, "Pot"&Number&"~"
+	RL "Current~", GameBet, "0(B)"
+End Sub
+
+Sub TempPot(Username,AP,Value)
+	Whisper = 0
+	Dim PS, PE, PV, PVS, BlindSplit, Bet, Blind, PPSplit, PotUpdate, PotSplit, PotUsers, CallAmount, NewValue
+	Dim PR, Seat
+	If Username <> "" Then
+		If PlayerStore.Exists(Username) Then 
+		PS = PlayerStore.item(Username)
+		PV = LS(PS,",")
+		PVS = GS(PV(1),"!")
+			If AP = "SB" Then 
+				Bet = GS(GameBlinds,"/")(0)+0 
+				CallAmount = Bet 
+			Else 
+				If Value = 0 Then Value = TGBet
+					Bet = Value-PVS(1)
+				CallAmount = Value
+			End If
+		End IF
+		If TCPlayer = PS Or AP <> "" Then
+			If Left(AP,2) = "AI" Then PV(6) = "All-In" : NewValue = 0 : Bet = Value+PVS(1) Else NewValue = PVS(0)-Bet
+			If NewValue+0 =< 0 Then NewValue = 0 : Bet = Value+PVS(1) : CallAmount = PVS(0)+0+PVS(1) : RL PS, PV(7), "allin^" ' For Small/BigBlinds
+			If AP = "BB" Or AP = "SB" Then Username = ""
+			RL PS, PV(1), NewValue&"!"&CallAmount
+				If Right(AP,1) <> "B" Then
+					Dim Action, Act, Move
+						Action = LS(UserToSeat(Username),",")
+						Act = GS(Action(7),"^")
+						Select Case Act(0)
+							Case "allin" Move = "gone All-In $" & CallAmount
+							Case "call" If CallAmount+0 = 0 Then Move = "checked" Else Move = "called $" & CallAmount
+							Case "raise" Move = "raised to $" & CallAmount
+						End Select
+						Change = False
+					If Move <> "" Then TexasMessage 0, StringFormat("{0} has {1}",GlobalUser(Username), Move) '& Turn
+				End If
+			If CallAmount+0 < TGBet+0 Then CallAmount = TGBet
+			RL "Current~", LS("Current~",",")(5), CallAmount&"(B)"
+
+			If Right(AP,1) = "R" Then
+				For PR = 1 To TxCount(ActiveSeats,"/")/2'PotnGame.item("ActivePlayers")+0
+				Seat = GS(ActiveSeats,"/")(PR)
+					If UserToSeat(Username) <> Seat And GS(LS(Seat,",")(7),"^")(0) <> "allin" And GS(LS(Seat,",")(7),"^")(0) <> "fold" Then RL Seat, LS(Seat,",")(7), "No move"
+				Next
+			End If
+		End If
+	End If
+
+	If Remaining =< 1 And Right(AP,1) <> "B" And Right(AP,1) <> "R" Then
+		If Remaining = 1 Then LastMan() Else PotAdd() : If Ubound(LS("TableCards~","*")) = 5 Then PotCalc() Else TexasCommands "starttable"
+		Exit Sub
+	End If
+	If Right(AP,1) <> "B" and Remaining > 0 then WhisperCards
+End Sub
+
+Sub Seat(Username,Value)
+	Y = Year(Now()) : M = Month(Now()) : D = Day(Now())
+	H = Hour(Time) : N = Minute(Time) : S = Second(Time)
+	EnterDate = StringFormat("{0}%{1}%{2}%{3}%{4}%{5}",Y,M,D,H,N,S)
+			
+	RewardDate = TxDBInfo(Username,"daily")
+	If RewardDate = "" Then RewardDate = Now() - 1 Else RewardDate = TxDate(RewardDate,True)
+	LastReward = DateDiff("d",RewardDate,Now())
+	Reward = TxRewards("daily")
+If LastReward >= 1 Then TxDBUpdate Username,"+chips¢daily",Reward-Value&"¢"&EnterDate : Addchat VBGreen, Username & "'s daily prize is: " & FC(Reward)
+	Dim Number, Player, SeatSplit, UsedSeat, P, NewSeat, Info, Blinds
+	Blinds = GS(TxGet("main", "txblinds"),"/")(1) + 0
+	If Value+0 < Blinds*10 Then TexasMessage 0, StringFormat("{0}, you must join with at least 10x the big blind. ({1}).",Username,FC(Blinds*10)) : Exit Sub'Minimum join
+	If Value+0 > Blinds*100 Then TexasMessage 0, StringFormat("{0}, you must join with less than 100x the big blind: ({1}).",Username,FC(Blinds*100)) : Exit Sub'Maximum join
+
+	For Number = 1 to 7 
+		If Playing(Username) then Player = Username else Player = "Username"
+		UsedSeat = UsertoSeat(Username)
+		If UserToSeat(Username) <> "" then P = GS(LS(UserToSeat(Username),",")(1),"!")(0)
+		SeatSplit = LS("Seat"&Number,",")
+		If TxDBInfo(Username,"Chips") = "" then Info = 0 else Info = TxDBInfo(Username,"Chips")
+		If P = "Value" Or P = "" Then P = 0
+		If TxDBInfo(Username,"Chips") <> "" and Info + P - Value < 0 then TexasMessage 0, StringFormat("{0} you are trying to join with {1}. You have {2}.", _
+			GlobalUser(Username),FC(Value),FC(TxDBInfo(Username,"Chips")+P)) : Exit Sub
+		
+		If Right(GameStatus,5) = "Start" and PlayerStore.Exists(Username) then 
+			PlayerLeave(UsertoSeat(Username)) 
+			Player = Username 
+			NewSeat = UsedSeat
+			PlayerStore.Item(Username) = NewSeat 
+			Exit For
+		Else
+			NewSeat = "Seat"&Number
+			If Player <> "Username" Then Player = AddTx(Player)
+			If Lcase(SeatSplit(0)) = Lcase(Player) Then Exit For
+		End If
+		If Number = 1 And Username <> "Username" And IsNumeric(P) Then TxDBUpdate Username,"+chips",P
+	next
+	If number > 7 Then TexasMessage 0,"No more seats are available." : Exit Sub
+	If Username = "Username" Or Value = "" Then Exit Sub
+	TxDBUpdate Username,"+chips","-"&Value
+	RL NewSeat,TexasStore.item(NewSeat),StringFormat("{0},{1}!0,»Score,Hand,»Card1,»Card2,Fold,Action^",AddTx(Username),Value)
+	If GameStatus = "Idle" Then RL "Current~", "Idle", "Start"
+	PlayerStore.Item(Username) = NewSeat
+	TexasMessage 0, StringFormat("{0} has joined the table with {1}." ,GlobalUser(Username),FC(Value))
+	AutoStart
+End Sub
+
+Public Sub AutoStart()
+	If GameStatus = "Stopping" Then Exit Sub
+	Dim User, Auto
+	If PlayerStore.Count >= 2 then
+		For Each User in PlayerStore.Keys
+			If TPlayerInfo(User)(6) = "Fold" Then 
+				Auto = Auto + 1
+			Else
+				If TPlayerInfo(User)(4) = "»Card1" Or TPlayerInfo(User)(5) = "»Card2" Then 
+					RL PlayerStore.Item(User), TPlayerInfo(User)(6), "Fold"
+					Auto = Auto + 1
+				Else
+					Auto = 0 : Exit for
+				End If
+			End If
+		Next
+	End If
+	If Auto >= TxGet("main","autostart")+0 then 
+		RL "Current~", "Start", "Auto-Start"
+		If Not Delay.Enabled Then TexasMessage 0, StringFormat("Game is auto-starting please wait {0} seconds.",Delay.Interval)
+		If Delay.Interval =< 0 Then Delay_Timer() Else Delay.Enabled = True
+		PotnGame.Item("Command") = "texasround"
+	Else
+		If PlayerStore.Count < TxGet("main","autostart")+0 And GameStatus <> "GameStart" Then 
+			TexasMessage 0, "Waiting for " & TxGet("main", "autostart") - Waiting & " more player(s)."
+		End If
+	End If
+End Sub
+
+Public Sub RL(Key, ReplaceWhat, ReplaceWith)
+	TexasStore.Item(Key) = Replace(TexasStore.Item(Key),ReplaceWhat,ReplaceWith)
+End Sub
+
+	Public Function GameStatus : GameStatus = LS("Current~",",")(1) End Function
+	Public Function GamePot : GamePot = LS("Current~",",")(2) End Function
+	Public Function CurrentPlayer : CurrentPlayer = LS("Current~",",")(3) End Function
+	Public Function GameBlinds : GameBlinds = LS("Current~",",")(4) End Function
+	Public Function GameBet : GameBet = LS("Current~",",")(5) End Function
+	Public Function ActingDealer : ActingDealer = LS("Current~",",")(6) End Function
+	
+	Public Function TGBlinds : TGBlinds = GS(GameBlinds,"/")(1) End Function
+	Public Function TCPlayer : TCPlayer = GS(currentplayer,"(C)")(0) End Function
+	Public Function TGBet : TGBet = GS(GameBet,"(B)")(0) End Function
+	Public Function TGADealer : TGADealer = GS(ActingDealer,"(D)")(0) End Function
+	Public Function FC(Value) 
+		Dim I, A, B, C, X, Y
+		FC = FormatCurrency(Value) 
+		'Replace those long numbers with a word
+		I = TxCount(FC,",")
+		A = Split(FC, ",", 2)
+		If Ubound(A) > 0 Then
+			If TxCount(A(1),",") > 0 Then 
+				B = Replace(A(1),",","")
+				For X = 1 to Len(B)-3
+					Y = Y & "0"
+				Next
+				B = Round(B / (1 & Y),2)
+			End If
+		Else B = 0
+		End If
+		C = A(0) + B
+		If C >= 1000 Then C = C / 1000 : I = I + 1
+		'Sadly you have found this, go ahead and remove the "case else" I wont stop you ch ea ti ng anymore
+		Select Case I
+			Case 0,1 Exit Function 
+			Case 2 I = "Mi"&"lli"&"on" 	'1,000,000 / 999,999,999
+			Case 3 I = "Bil"&"l"&"ion" 	'1,000,000,000 / 999,999,999,999
+			Case 4 I = "Tr"&"i"&"lli"&"on"	'1,000,000,000,000 / 999,999,999,999,999 >> Anyone over this point is a  c h e a t e r, 999 trillion really?
+			Case Else FC = "Ch"&"e"&"ate"&"r" : Exit Function
+		End Select
+		FC = "$" & C & " " & I
+	End Function
+	
+	Public Function TPlayerInfo(User)
+		If Len(User) = 5 And Left(User,4) = "Seat" Then 
+			TPlayerInfo = LS(User,",")
+		Else
+			TPlayerInfo = LS(UserToSeat(User),",") 
+		End If
+	End Function
+	
+	Public Function AddTx(Username) : AddTx = "%Tx%" & Username End Function
+	Public Function RemoveTx(Tx) 
+		If TxCount(Tx,"%Tx%") > 0 Then RemoveTx = GS(Tx,"%Tx%")(1) Else RemoveTx = Tx 
+	End Function
+
+	Public Function GlobalUser(Username)'Only used for displaying names in chat
+		  GlobalUser = Username
+		  If TxCount(GlobalUser, "#") > 0 Then GlobalUser = GS(GlobalUser,"#")(0)
+		  If TxCount(GlobalUser, "@") > 0 Then GlobalUser = GS(GlobalUser,"@")(0)
+	End Function
+
+	Public Function LastMan()
+		Dim User, F, P, M, NM, AI
+		For Each User in PlayerStore.Keys
+			M = TPlayerInfo(User)
+			If M(6) = "Playing"	then P = P + 1
+			If M(7) = "fold^"	then F = F + 1
+			If M(7) = "allin^"	then AI = AI + 1
+			IF M(7) = "No move" then NM = NM + 1
+		Next
+		If P - F - AI = 1 or NM = 0 then 
+			If P - F - AI = 1 and AI > 0 then LastMan = 1 'Last player has to decide what to do.
+			If P - F = 1 or NM = 0 then PotAdd() : TexasCommands "starttable" 'All have folded / All have made a move
+		Else 
+			LastMan = 1 
+		End If
+		If LastMan = 1 Then
+			If PlayerCount = 2 Then 'If a player has gone all-in and you have already called that amount // for small/bigblinds
+				Dim A, B, BUser
+				For Each User In PlayerStore.Keys
+					Info = TPlayerInfo(User)
+					If Info(7) = "allin^" then A = GS(Info(1),"!")(1)+0
+					If Info(7) = "No move" then B = GS(Info(1),"!")(1)+0 : BUser = User
+				Next
+				If A = B then Exit Function Else RL "Current~", CurrentPlayer, UserToSeat(BUser)&"(C)"
+			End If
+			WhisperCards
+		End If
+	End Function
+
+	Public Function Turn()
+		If Remaining = 0 Or SeatToUser(TCPlayer) = "Username" Or PlayerCount < 2 Or TxTurn Then
+			Turn = "."
+		Else
+			Turn = "."& TxGet("tx messages", "txmsgseparate") & "It is now " &GlobalUser(SeatToUser(TCPlayer))& "'s turn."
+			TxTurn = True
+			WhisperCards
+		End If
+	End Function
+
+	Public Function Remaining()
+		Dim User, Info
+		Remaining = 0
+		For Each User In PlayerStore.Keys
+			Info = TPlayerInfo(User)
+			If Info(7) = "No move"And Info(6) = "Playing" And Info(0) <> "Username" then 
+				Remaining = Remaining + 1	
+			End If
+		Next
+	End Function
+
+	Public Function Playing(Username)
+		If PlayerStore.Exists(Username) Then Playing = True Else Playing = False 
+	End Function
+
+	Public Function LS(SplitWhat, By)
+		If TxCount(SplitWhat, "%Tx%") > 0 Then SplitWhat = RemoveTx(SplitWhat)
+		LS = Split(TexasStore.Item(SplitWhat), By)
+	End Function
+
+	Public Function GS(SplitWhat, By) : GS = Split(SplitWhat, By) End Function
+
+	Public Function UserToSeat(Username)
+		If TxCount(Username, "%Tx%") > 0 Then Username = RemoveTx(Username)
+		If Playing(Username) Then UserToSeat = PlayerStore.Item(Username)
+	End Function
+
+	Public Function SeatToUser(Seat) : SeatToUser = RemoveTx(LS(Seat,",")(0)) End Function
+
+	Public Function Waiting()
+		Dim TL, TPS
+		Waiting = 0
+		For TL = 1 to 7
+			TPS = LS("Seat"&TL,",")
+			If TPS(6) = "Fold" And TPS(0) <> "Username" Then Waiting = Waiting + 1
+		Next
+	End Function
+
+	Public Function PlayerCount()
+		Dim TL, TPS
+		PlayerCount = 0
+		For TL = 1 to 7
+			TPS = LS("Seat"&TL,",")
+			If TPS(6) = "Playing" And TPS(0) <> "Username" Then PlayerCount = PlayerCount + 1
+		Next
+	End Function
+
+	Public Function ActiveSeats()
+		Dim TL, TPS
+		For TL = 1 to 7
+			TPS = LS("Seat"&TL,",")
+			If TPS(6) = "Playing" And GS(TPS(7),"^")(0) <> "allin" And GS(TPS(7),"^")(0) <> "fold" Then ActiveSeats = ActiveSeats&"/Seat"&TL
+		Next
+		ActiveSeats = ActiveSeats&ActiveSeats
+	End Function
+
+	Public Function TableCards()
+		Dim CS, T, C, CContainer
+		For T = Ubound(LS("TableCards~","*"))-1 to 0 Step - 1
+			CS = TxGet("tx messages","tableseparate")
+			C = GS(LS("TableCards~",",")(T),"*")(0)
+			CContainer = GS(TxGet("tx messages","txcardcontainer"),"tx")
+			If Left(C,1) = "0" Then C = Right(C,Len(C)-1)
+			C = Replace(C,"(",CContainer(0))
+			C = Replace(C,")",CContainer(1))
+		
+			If T = Ubound(LS("TableCards~","*"))-1 then CS = ""
+			TableCards = C & CS & TableCards
+		Next
+	End Function
+		'I don't know how to do the proper way of counting, so I use this alternate method
+	Public Function TxCount(CountIn,CountWhat) : TxCount = Ubound(GS(CountIn,CountWhat)) End Function
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+	TxPC Username,1, Message
+End Sub
+
+Sub Event_UserEmote(Username, Flags, Message)
+	TxPC Username,2, Message
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+	TxPC Username,3, Message
+End Sub
+
+Sub Event_PressedEnter(Text)
+	Dim TxDsp
+	If Left(Text,2) = "//" Then Text = Split(Text,"//",2)(1) : TxDsp = 1
+	If Left(Text,1) = "/" And TxDsp = "" Then Text = Split(Text,"/",2)(1) : TxDsp = 4
+	TxPC BotVars.Username,TxDsp, Text
+End Sub
+
+Sub PotCalc()
+	If Not TxHaveCards Then Exit Sub
+	Dim TLS, TPS, TPV, TexasPlayerSplit, Reveal
+	Dim pots, PotSplit, UserSplit, PotCount, z, x, q, qq
+	Dim HighestScore1, HighestScore2, HighestPlayer, PlayerInfo, HighestScore
+	RL "Current~", GameStatus, "Calculating"
+	Change = False
+
+	If TxGet("game","reveal") = "True" Then Reveal = True
+	PotnGame.RemoveAll
+	For qq = 1 to 7
+		TexasPlayerSplit = LS("Seat"&qq,",")
+		If TexasPlayerSplit(0) <> "Username" And TexasPlayerSplit(6) <> "Fold" And TexasPlayerSplit(7) <> "fold^" Then PotnGame.Add "Seat"&qq, TexasStore.item("Seat"&qq)
+	Next
+	For pots = 1 to 6
+		x = 1 : TLS = LS("Pot"&pots&"~", ",")
+		If right(TLS(1),1) = "*" Then
+			TPS = GS(TLS(1),"*") : TPV = GS(TLS(1),"$")
+			If TPV(0) > 0 Then 
+			PotCount = PotCount + 1
+
+			PotSplit = GS(TPV(1),"*")
+			HighestPlayer = ""
+			HighestScore = 0
+				For q = 0 To Ubound(PotSplit)-1
+				PlayerInfo = GS(PotnGame.item(PotSplit(q)),",")
+					If PotnGame.item(PotSplit(q)) <> "" Then
+						If PlayerInfo(6) <> "Fold" And PlayerInfo(7) <> "fold^" Then
+							If PlayerInfo(2) + 0 >= HighestScore + 0 Then
+								If PlayerInfo(2) + 0 > HighestScore + 0 Then
+									HighestPlayer = PlayerInfo(0) 'New Winner
+									HighestScore = PlayerInfo(2)
+								Else
+									If HighestPlayer <> PlayerInfo(0) Then HighestPlayer = HighestPlayer & "&" & PlayerInfo(0) 'Split Pot
+									HighestScore = PlayerInfo(2)
+								End If
+							End If
+						End If
+					End If
+				Next
+			PotnGame.Add "Pot"&PotCount, TPV(0) &"$"& HighestPlayer &"$"& HighestScore
+			End If
+		End If
+	Next
+	Dim PotWinner,xx,yy,PotValue,DividePot,PotKey, zzz,TexasWin,pp,WS,Winner(), PW, RoundPlayers
+	For xx = PotCount to 1 Step -1
+		PotValue = GS(PotnGame("Pot"&xx),"$")
+		
+		If Ubound(PotValue) = 1 then PotWinner = PotValue(1): PW = 0 Else PotWinner = GS(PotValue(1),"&") : PW = Ubound(PotWinner)
+		For yy = 0 to PW
+			DividePot = Round(PotValue(0)/(PW+1),2)
+			If Ubound(PotValue) = 1 Then PotKey = PotWinner&"Winnings" Else PotKey = PotWinner(yy)&"Winnings"
+			PotKey = RemoveTx(PotKey)
+			If PotnGame.Exists(PotKey) Then		 
+				PotnGame.Item(PotKey) = GS(PotnGame.Item(PotKey),"%")(0) + DividePot &"%"& PotValue(2)
+			Else
+				PotnGame.Add PotKey, DividePot &"%"& PotValue(2)
+			End If						
+		Next
+	Next
+		'All the round players
+		RoundPlayers = GS(LS("Pot1~","$")(1),"*")
+		For pp = 0 to ubound(RoundPlayers)-1
+			Redim Preserve Winner(WS)
+			If PotnGame.Exists(SeatToUser(RoundPlayers(pp))&"Winnings") Then Winner(WS) = SeatToUser(RoundPlayers(pp)) : WS = WS + 1 
+		Next
+	Dim WinningHand, WithHand
+	For zzz = WS-1 to 0 Step -1
+		Dim Seat, Player, Winnings, HandValue, Data
+		Seat = UserToSeat(Winner(zzz))
+		Player = Winner(zzz)
+		Winnings = GS(PotnGame.Item(Player&"Winnings"),"%")(0)
+		HandValue = GS(PotnGame.Item(Player&"Winnings"),"%")(1)
+		WinningHand = GS(PotnGame.item(Seat),",")
+		If Reveal Then WithHand = " with a " & WinningHand(3) &", " Else WithHand = ""
+		If TxDBInfo(Player, "User") = "" Then 
+			TxDBUpdate Player, "handv¢hand¢+hwon", HandValue &"¢"& WinningHand(3) &"¢"& 1
+		Else
+			If HandValue+0 > TxDBInfo(Player, "handv")+0 Then TxDBUpdate Player, "handv¢hand¢+hwon", HandValue &"¢"& WinningHand(3) &"¢"& 1
+		End If
+		If Winnings + 0 > TxDBInfo(Player, "bpot")+0 + 0 Then TxDBUpdate Player, "bpot", Winnings
+		If Reveal Then TxHandRecord Player,HandValue
+		TexasWin = GlobalUser(Player) &" has won: $" & Winnings & WithHand & TexasWin
+		RL Seat, LS(Seat,",")(1),GS(LS(Seat,",")(1),"!")(0)+0 + Winnings &"!0"
+		RL Seat, LS(Seat,",")(6), "Playing"
+	Next
+	TexasMessage 0, TexasWin
+	Dim User, ClearPot
+	For Each User In PlayerStore.Keys
+		RL UserToSeat(User), TPlayerInfo(User)(6), "Playing"
+	Next
+	For ClearPot = 1 to 6
+		RL "Pot"&ClearPot&"~",TexasStore.Item("Pot"&ClearPot&"~"),",0$"
+	Next
+	WhisperMessage = "" : Whisper = 1
+	If ChangeStatus <> "Stopping" Then ChangeStatus = "Start"
+	RL "Current~", GameStatus, ChangeStatus
+	If Delay.InterVal =< 0 Then Delay_Timer() Else Delay.Enabled = True
+	PotnGame.Item("Command") = "texasround"
+End Sub
+
+Sub TxPC(Username,TxDsp,Command)
+	If TxCount(TxDBInfo(Username,"flags"), "%B¿") > 0 And TxCount(TxDBInfo(Username,"flags"),"%I%") = 0 Then Exit Sub 'Blocked user
+	AddPM = ""
+	Dim Access, Flags, ReqAccess, Trigger, TriggerLess, Numeric
+	Dim InQ, GInfo, DBInfo, Data, I, Players, Seats, Value, CContainer, Scan
+	Dim TxP, TxV, U
+	Dim Usercommand, Cmd, TxCmd, TxStr, TxUStr,  Space, W, X, Y
+	If Trim(Command) = "" Then Exit Sub
+	U = Username : TxUsername = Username
+	OCmd = Command
+	If U = BotVars.Username And Lcase(Command) = "new" Then NewGame : VetoThisMessage : Exit Sub
+	If TxDsp = 4 Then Trigger = "/" Else Trigger = BotVars.Trigger
+	If MessageStore <> ""	Then InQ = InQ + 1
+	If TableMessage <> ""	Then InQ = InQ + 1
+	If WhisperMessage <> ""	Then InQ = InQ + 1
+		'4 messages in a row will cause a flood message.
+	If InQ = 3 And TxDsp <> 4 Then AddPM = U & "," & TxDsp & "," & Command : Msg_Timer : Msg.Enabled = True : Exit Sub
+	
+	If U = "%TxPA" Then Dsp TxDsp, Command,Username,VBYellow : Exit Sub
+	TxUStr = Command
+	Command = Trim(LCase(Command))
+	If TxDsp = 4 And Right(Command,9) = "testcards" Then CardTest("Test") : VetoThisMessage'Used for testing randomness of cards // inbot only using "/testcards"
+	
+	If Command = "?tx" Or Command = "?texas" Then 'This cannot be disabled
+		TxPM U, TxDsp, StringFormat("For a list of commands type {0}tx commands, to start a game type {0}tx start and to join once started type 'join', for help on a command type {0}tx help [command]" _
+			,Trigger)
+		Exit Sub
+	End If
+
+	If U = BotVars.Username or TxDsp = 4 Then Command = BotVars.Trigger & Command : TxUStr = Command : OCmd = BotVars.Trigger & Command
+	UserCommand = Split(Command, " ", 2)
+	If Playing(U) Then GInfo = TPlayerInfo(UserToSeat(U))
+	CContainer = GS(TxGet("tx messages","TxCardContainer"),"tx")
+	TxCmd = GS(UserCommand(0),Botvars.Trigger)
+
+	If Ubound(TxCmd) = 1 Then
+		If Left(OCmd,(Len(BotVars.Trigger))) <> BotVars.Trigger Then Exit Sub
+		If TxCmd(1) <> "tx" And TxCmd(1) <> "texas" Then Exit Sub
+			'User can only send a command once every msg interval(2 seconds) 
+			'Only 3 non-game related messages will be displayed within a 3 second interval. 9 seconds to fully reset the queue.
+		If TxStrike.Exists(U) Then Players = GS(TxStrike.Item(U),",") : If Players(0) > 2 Or GetGTC - Players(1) < Msg.Interval * 1000 Then Exit Sub 
+
+		If PersonalQ > 2 Then Exit Sub 
+		If Ubound(Usercommand) < 1 Then TxPM U, TxDsp, "To play try using one of the following commands: " & _
+			BotVars.Trigger & "tx start or type 'join' if a game has already been started. You can also type ?Tx for more information." : Exit Sub
+		Data = UserCommand(1)
+	Else
+		 Data = TxUStr
+	End If
+	Scan = False
+	If TxCount(TxUStr,"=") > 0 Then Data = GS(Data,"=")(0)
+	For Y = 0 To TxCount(Data," ")
+		If C <> "" Then C = C & " "
+		C = C & GS(Data, " ")(Y)
+		If ScanFor(C) <> "" Then 
+			Data = Replace(Data,C, ScanFor(C))
+			Cmd = ScanFor(C)
+			Scan = True 
+			Exit For
+		End If
+	Next
+	If Cmd = "" Then Cmd = Data
+
+	If Not Scan Then
+		If IsNumeric(Cmd) Then TxUStr = ""
+		If TxCount(TxUStr," ") > 1 And TxCount(TxUStr,BotVars.Trigger) > 0 Then Cmd = GS(TxUStr," ")(1) : TxUStr = Split(TxUStr," ", 3)(2) Else TxUStr = ""
+		If TxCount(LCase(AllCommands),"[" & LCase(Cmd) & "]") = 0 And Not IsNumeric(Cmd)Then
+		
+			If Ubound(TxCmd) = 1 Then TxPM U, TxDsp, "This is not a valid texas command, type: '" & _
+			Trigger & "tx commands' for a list of available commands." : Exit Sub
+		End If
+	Else
+		If TxCount(Data," ") > 0 Then 
+			If Ubound(TxCmd) = 1 Then TxUStr = Split(TxUStr," ", Y+3)(Y+2) Else TxUStr = Split(TxUStr," ", 2)(1) 
+		Else
+			TxUStr = Data
+		End If
+	End IF
+	Cmd = LCase(Cmd)
+	
+	If TxCount(TxGet("disable",Cmd),"[disable]") > 0 Then TxPM U, TxDsp, StringFormat("The command [{0}] has been disabled.",Cmd) : Exit Sub
+	If TxCount(TxGet("disable",Cmd),"[disablealias]") > 0 And Not Data = c Then TxPM U, TxDsp, StringFormat("Aliases for the command [{0}] have been disabled.",Cmd): Exit Sub
+
+	Access = GetDBEntry(U).Rank
+	If LCase(U) = LCase(BotVars.Username) Then Access = 201
+	ReqAccess = TxGet("access",cmd)
+	If ReqAccess = "" Then ReqAccess = 0
+	If ReqAccess + 0 > Access + 0Then TxPM U, TxDsp, StringFormat("The command [{0}] requires [{1}] access, you have [{2}] access.", _
+		Cmd,ReqAccess,Access) : Exit Sub
+	Data = ""
+	Players = ""
+	If Playing(U) Then TxP = TPlayerInfo(U) : TxV = GS(TxP(1),"!")
+
+	'TxUStr original text with upper and lowercase // TxStr original text in lowercase
+	TxUStr = Trim(TxUStr)
+	If TxCount(TxUStr,"=") = 0 Then
+		If TxCount(TxUStr,"""") > 0 Then TxUStr = GS(TxUStr,"""")(1)
+			If TxCount(LCase(StatCommands & OtherCommands & MsgCommands & "[donate][daily]"),"["& Cmd &"]") = 0 Then
+				If TxCount(TxUStr,"[") > 0 Then TxUStr = Replace(TxUStr,"[","")
+				If TxCount(TxUStr,"]") > 0 Then TxUStr = Replace(TxUStr,"]","")
+			End If
+	End If
+	
+	If LCase(TxUStr) = Cmd Then TxStr = "" Else TxStr = LCase(TxUStr)
+	Select Case Cmd
+		Case "join", "call", "raise", "fold", "stand", "allin" TriggerLess = True
+	End Select
+	If IsNumeric(TxUStr) Or TxUStr = "" Then Numeric = True Else Numeric = False
+
+	If Left(Usercommand(0),Len(BotVars.Trigger)) <> BotVars.Trigger Or TriggerLess Then
+		'Triggerless Commands - Game Related
+		If TxCount(TxStr," ") > 0 Then Exit Sub
+		If GameStatus <> "Idle" Then
+			If Not Playing(U) And Cmd <> "join" Then Exit Sub
+			If GameStatus <> "Start" And GameStatus <> "Calculating" Then
+				If Cmd <> "join" And Cmd <> "stand" Then TxTurn = False
+				If LCase(U) = LCase(SeatToUser(TCPlayer)) Then
+					If Cmd = "call" Or Cmd = "check"Then
+						If TxStr <> "" Then Exit Sub
+						If TGBet+0-TxV(1) >= TxV(0)+0 Then Cmd = "allin"
+						If Cmd <> "allin" Then
+							NDNP
+							RL UserToSeat(U), TxP(7),"call^"
+							TempPot U,"C" ,0
+						End If
+					End If
+					
+					If Cmd = "raise" And Numeric Then
+						If TxUStr = "" Then Value = TGBlinds + 0 + TGBet Else Value = TGBet + 0 + TxUStr
+						If Value+0 < TGBlinds + 0 then TexasMessage 0, StringFormat("You must raise to at least the big blind amount (${0}).",TGBlinds) : Exit Sub
+						If Value+0-TxV(1) >= TxV(0)+0 Then Cmd = "allin"
+						If Cmd <> "allin" Then
+							NDNP 
+							RL UserToSeat(U), TxP(7),"raise^" 
+							TempPot U, "R",Value+0
+						End If
+					End If
+					
+					If Cmd = "fold" And TxStr = "" Then
+						NDNP 
+						RL UserToSeat(U), TxP(7), "fold^"
+						TexasMessage 0, GlobalUser(U) & " has folded."
+						TempPot "", "", 0
+					End If
+					
+					If Cmd = "allin" Then
+						If TxV(0)+0 > TGBet+0 then I = "AI-R" Else I = "AI-C"
+						NDNP
+						RL UserToSeat(U), TxP(7),"allin^"
+						TempPot U, I, TxV(0)+0 
+					End If
+				End If
+			End If
+			If Cmd = "join" And GameStatus <> "Stopping" Then
+				If TxStr = "" Then
+					Value = (TGBlinds + 0) * 10 
+				Else 
+					If IsNumeric(TxStr) Then Value = TxStr Else TxPM U, TxDsp, "Please enter a numerical value." : Exit Sub
+				End If
+				Seat U, Value
+			End If
+			If Cmd = "stand" And TxStr = "" Then If Playing(U) Then PlayerLeave(UserToSeat(U))
+		End If
+	Else
+		'Trigger Commands - Game related
+		If Cmd = "tablecards" Then TexasMessage 1, TableCards
+		
+		If Cmd = "myhand" And TxStr = "" Then
+			If Not Playing(U) Then TxPM U, TxDsp, "You are not playing." : Exit Sub
+			'Dim C(0), C(1)
+			Dim Card(1)
+			Card(0) = GS(GInfo(4),"*")(0)
+			Card(1) = GS(GInfo(5),"*")(0)
+			For I = 0 to 1 
+				If Left(Card(I),1) = "0" Then Card(I) = Right(Card(I),Len(Card(I))-1)
+				Card(I) = Replace(Card(I),"(",CContainer(0))
+				Card(I) = Replace(Card(I),")",CContainer(1))
+			Next
+			Value = GS(GInfo(1),"!")
+			If Value(1)+0>0 then V = StringFormat(" You have already called {0}.",FC(Value(1)))
+			If GInfo(6) = "Fold" or GInfo(7) = "fold^" Then V = " You have folded."
+			
+			TxPM U, 3, StringFormat(" ({0}) Your cards are {1} and {2}. You have a {3}.{4}",FC(Value(0)),Card(0),Card(1),GInfo(3),V)
+		End If
+		
+		If TxCount(TxStr," ") < 1 Then 
+			If Cmd = "pot" Then 'Round must finish before a pot is updated / @tx Pot 1
+				If TxStr = "" Then
+					Dim PotTotal
+					GInfo = ""
+					For I = 1 to 6
+						Value = GS(LS("Pot"&I&"~",",")(1),"$")(0) + 0
+						If Value = 0 Then Exit For
+						PotTotal = PotTotal + Value
+					Next
+					If PotTotal = 0 Then Exit Sub
+					If I > 2 Then GInfo = " - " & (I - 1)
+
+					TxPM U, TxDsp, StringFormat("Total Pot: {0} => to check individual pots type: '{1}tx pot [1{2}]'",FC(PotTotal),Trigger,GInfo)
+				Else
+					If Not IsNumeric(TxStr) Then TxPM U, TxDsp, "Please enter a numerical pot number." : Exit Sub
+					Data = GS(LS("Pot"&TxStr&"~", ",")(1),"$")
+					Seats = GS(Data(1),"*")
+					For I = 0 to Ubound(Seats)-1
+						If Players <> "" Then Players = Players & ", "
+						Players = Players & SeatToUser(Seats(I))	
+					Next
+					
+					TxPM U, TxDsp, StringFormat("Pot{0} is worth {1}{2}Players involved ({3})",TxStr,FC(Data(0)),TxGet("tx messages", "txmsgseparate"),Players)
+				End If
+			End If
+
+			If Cmd = "level" Then
+				Dim SB, BB
+				If TxStr = "" Then
+					Data = TxGet("main", "txblinds")
+					TxPM U, TxDsp, StringFormat("Level = {0}, Blinds: {1}. To change the level type '{2}tx level #'", _
+						Len(GS(Data,"/")(0))-1,Data,Trigger)
+				Else
+					If TxCount(TxStr,"/") > 0 Then
+						Value = GS(TxUStr,"/")
+						If Not IsNumeric(Value(0)) Or Not IsNumeric(Value(1)) Then TxPM U, TxDsp, "Please enter numerical blinds." : Exit Sub
+						Value(0) = Trim(Value(0))+0 : Value(1) = Trim(value(1))+0
+						
+						If Value(0) > Value(1) Then TxPM U, TxDsp, "The big blind must be smaller than the small blind. (Small blind / big blind)." : Exit Sub
+						GInfo = Value(0)&"/"&Value(1)
+						If Value(0) > 1000000000000 Or Value(1) > 1000000000000 Then TxPM U, TxDsp, "This value is too high for game blinds." : Exit Sub
+						X = TxDBInfo(U,"chips")
+						If X = "" Then X = 0
+						If Value(1)*10 > X + 0 Then TxPM U, TxDsp, "You need to have 10x the big blind of the level you are setting. [" & FC((Value(1)+0)*10) & "]" : Exit Sub
+						If GameStatus = "Idle" Then 
+							RL "Current~", GameBlinds&","&TGBlinds&"(B)",GInfo&","&Value(1)&"(B)"
+							I = "."
+						Else
+							ChangeStatus = "Stopping" 
+							I = ", please wait until the current game has finised for the blinds to take effect."
+						End If
+						TxWrite "main","txblinds", GInfo
+						TxPM U, TxDsp, StringFormat("Setting the game level to: {0}, Blinds are now: {1}{2}", _ 
+								Len(GS(GInfo,"/")(0))-1,GInfo,I)
+					Else
+						Value = TxStr
+						If Not IsNumeric(Value) Then TxPM U, TxDsp, "Please enter a numerical level." : Exit Sub
+						If Value >= 0 Then
+							If Value > 10 Then TxPM U, TxDsp, "This level is too high. Enter a level 0 to 10. Note blinds are increased 10x for each level." : Exit Sub
+							For I = 1 to Round(Value)
+								Data = Data & "0"
+							Next
+							SB = 5 : BB = 10
+							X = TxDBInfo(U,"chips")
+							If X = "" Then X = 0
+							If ((BB & Data)+0)*10 > X + 0 Then TxPM U, TxDsp, "You need to have 10x the big blind of the level you are setting. [" & FC(((BB & Data)+0)*10) & "]" :Exit Sub
+
+							TxWrite "main", "txblinds", SB & Data & "/" & BB & Data
+							If GameStatus = "Idle" Then 
+								RL "Current~", GameBlinds&","&TGBlinds&"(B)",SB & Data & "/" & BB & Data&","&BB & Data&"(B)"
+								I = "."
+							Else
+								ChangeStatus = "Stopping" 
+								I = ", please wait until the current game has finised for the blinds to take effect."
+							End If
+							TxPM U, TxDsp, StringFormat("Setting the game level to: {0}, Blinds are now: {1}{3}/{2}{3}{4}", _ 
+								Round(Value),SB,BB,Data,I)
+						Else
+							TxPM U, TxDsp, "Please enter a positive level."
+						End If
+					End If
+				End If
+			End If
+
+			If Cmd = "autostart" And Numeric Then
+				If TxStr = "" Then TxPM U, TxDsp,  StringFormat("Current autostart players is set to [{0}] player(s). This game has {1} player(s) waiting.", _
+					TxGet("main","autostart"),Waiting): Exit Sub
+				Value = Round(TxStr)
+				If Value > 7 Then TxPM U, TxDsp, "The maximum players for this game is (7)." : Exit Sub
+				If Value < 0 Then TxPM U, TxDsp, "Please enter a positive value." : Exit Sub
+				TxWrite "main", "autostart", Value
+				TxPM U, TxDsp, "Game will now autostart when [" & Value & "] players have joined."
+				AutoStart
+			End If
+			If Cmd = "start" And Numeric Then
+				If U = BotVars.Username Then TxPM U, 4, "You cannot play because you can see their cards." : Exit Sub
+				If TxStr = "" Then Value = (TGBlinds+0)*10 Else Value = TxStr
+				If GameStatus = "Idle" Then TexasMessage 0, StringFormat("{0} has started a game of poker, type 'join' to play.",U)
+				If PlayerStore.Count = 0 then TexasStore.Item("Current~") = Replace(TexasStore.Item("Current~"),"Idle","Start")
+				Seat U,Value
+			End If	
+			
+			If Cmd = "forcestart" And TxStr = "" Then
+				If GameStatus = "Start" Then
+					If Waiting > 1 Then
+						RL "Current~", "Start", "Auto-Start"
+						If Not Delay.Enabled Then TexasMessage 0, StringFormat("Game is now starting please wait {0} seconds.",Delay.Interval)
+						If Delay.Interval =< 0 Then Delay_Timer() Else Delay.Enabled = True
+						PotnGame.Item("Command") = "texasround"
+					Else
+						TxPM U, TxDsp, "You cannot play with yourself."
+					End If
+				Else
+					TxPM U, TxDsp, "Please wait for the current game to finish."
+				End If
+				Exit Sub
+			End If
+			If Cmd = "turn" And TxStr = "" Then
+				GInfo = ""
+				If GameStatus <> "Idle" And GameStatus <> "Start" Then
+					I = GS(GS(ActiveSeats,TCPlayer)(1),"/")
+					For X = 1 To UBound (I)-1
+						If GInfo <> "" Then GInfo = GInfo & TxGet("tx messages","txmsgseparate")
+						GInfo = GInfo & GlobalUser(SeatToUser(I(X)))
+					Next
+					TxPm U, TxDsp, StringFormat("It is now {0}'s turn. Next player(s): {1}",GlobalUser(SeatToUser(TCPlayer)),GInfo)
+				End If
+			End If
+			If Cmd = "stop" And TxStr = "" Then
+				If Right(GameStatus,5) = "Start" Or GameStatus = "Torunament" And GameStatus <> "Stopping" Then 
+					ChangeStatus = "Stopping" 
+					TxPM U, TxDsp, "The game will stop when the current game has finished."
+				End If
+			End If
+			If Cmd = "seats" And TxStr = ""Then
+				Value = 7-PlayerStore.Count : If Value > 0 Then If Value = 7 Then GInfo = "Type '" & BotVars.Trigger & "tx start' to start a new game." Else GInfo = "Type 'join' to take a seat."
+				TxPm U, TxDsp, StringFormat("There are {0}/7 seats available. {1}",Value,GInfo)
+			End If
+			'Trigger Commands - Non-Game Related
+			If Cmd = "ver" Then
+				TxPM U, TxDsp,  "Texas Hold'em Poker Version: " & Script("Major") & "." & _
+		Script("Minor") &"." & Script("Revision")
+			End If
+			If Cmd = "help" Then
+				If TxDsp = 4 Then I = "/"
+				If TxStr = "" or TxStr = "help" Then TxPM U, TxDsp, "Please type " & Trigger & _
+					"tx help [command], or type """& I &"?tx""" : Exit Sub
+				If TxStr = "arg" Then
+					'hand message argument details here
+					'%p1,%p2,%hc,%lc,%s,%r,%fs,%fr,%k1,%k2,%k3
+					TxPm U, TxDsp, "%hc/%lc = Your highest/lowest card, %p1/%p2 = Pair #1/Pair #2, %r = Multiples of the card worth the same value" & _
+					", %s = How high the straight is, %fs = Flush suit, %fr = Highest flush card, %k1/%k2/%k3 = Kicker cards #1/2/3 respectively."
+					Exit Sub
+				End If
+					
+				If IsNumeric(TxStr) Then
+					If TxStr > 9 And TxStr < 0 Then Exit Sub
+					Select Case TxStr
+						Case 0 Data = "Highcard" : Value = Array("%hc","%lc","%k1","%k2","%k3") : GInfo = 0
+						Case 1 Data = "Pair" : Value = Array("%p1","%k1","%k2","%k3") : GInfo = 0
+						Case 2 Data = "Two-Pair" : Value = Array("%p1","%p2","%k1") : GInfo = 1
+						Case 3 Data = "Three of a kind" : Value = Array("%r","%k1","%k2") : GInfo = 0
+						Case 4 Data = "Straight" : Value = Array("%s") : GInfo = 0
+						Case 5 Data = "Flush" : Value = Array("%fs","%fr") : GInfo = 1
+						Case 6 Data = "Full-House" : Value = Array("%r","%p1") : GInfo = 1
+						Case 7 Data = "Four of a kind" : Value = Array("%r","%k1") : GInfo = 0
+						Case 8 Data = "Straight-Flush" : Value = Array("%s","%fs") : GInfo = 1
+						Case 9 Data = "Royal-Flush" : Value = Array("%fs") : GInfo = 0
+					End Select
+					For X = 0 To UBound(Value)
+						If X =< GInfo Then 
+							If A <> "" Then A = A & ", " 
+							A = A & Value(X) 
+						Else 
+							If B <> "" Then B = B & ", " 
+							B = B & Value(X)
+						End If
+					Next
+					If B <> "" Then C = " // Optional: " & B
+					TxPM U, TxDsp,  StringFormat("To change the format for {0} type '{1}tx {2} [Format]'. " & _
+						"Arguments for {0}: Required: {3}{4}. Type '{1}tx help arg' for information on the arguments.", _
+							Data,Trigger,TxStr,A,C)
+					Exit Sub
+				End If
+
+				Select Case TxStr
+					Case "start" Value = " [chip value]" : GInfo = "Starts a new game of poker, if no value is set you will join with 10x the big blind."
+					Case "forcestart" GInfo = "Starts the game without waiting for the required autostart players."
+					Case "fold" GInfo = "Throw your hand away and wait for the next game."
+					Case "autostart" Value = " [Number 1 - 7]" : GInfo = "Changes how many people to wait for before autostarting."
+					Case "tablecards" GInfo = "Current cards on the table. These cards are shared with everyone playing."
+					Case "turn" GInfo = "shows current player and following players."
+					Case "pot" Value = " [Blank Or Number 1 - 7]" : GInfo = "Shows the total pot value, if a pot number is entered that individual pot is shown. Only updates when a betting round has finished."
+					Case "level" Value = " [0 to 10]" : GInfo = "Changes the game blinds. Each level increases the blinds 10x. You muat have sufficient chips to change it to a certain level."
+					Case "stats","chips","besthand","handsplayed","handswon","lastplayed","donations","biggestpot","mostchips"',"badge"
+						Value = " [Blank Or Username]" : GInfo = "If no username is entered your data will be given, otherwise the player's data will be given. Add ""top "" infront of this to find the top (no username required)."
+					Case "top" Value = " [Number Or Individual stat]" : GInfo = "Returns the top stats, if no value is given default top is 5. Example usage: " & _
+						Trigger &"tx top 10 // "& Trigger  &"tx top biggestpot // " & Trigger  &"tx top handswon 10"
+					Case "daily" Value = " [Blank Or Username]" : GInfo = "Find out when you can claim your daily prize. Start or join a game to claim." 
+					Case "achieve" Value = " [Blank Or Username]" : GInfo = "Shows what hands you have managed to win with."
+					Case Else TxPC U, TxDsp, Trigger & "tx "&TxStr : Exit Sub
+				End Select
+				Data = TxStr
+				TxPM U, TxDsp, StringFormat("Command ({0}tx {1}{2}). {3}",Trigger,Data, Value, GInfo)
+				Exit Sub
+			End If
+		
+			If Right(Cmd,4) = "able" Then 'Disable / Enable
+				If Right(Cmd,7) = "disable" Then Y = "disable" Else Y = "enable"
+				If TxStr = "" Then 
+					TxPM U, TxDsp, StringFormat("To {1} a command type: '{0}tx {1} command'. To {1} aliases for a command type '{0}tx alias{1} command'.", _ 
+						Trigger,Y)					
+					Exit Sub
+				End IF	
+				I = TxGet("access",TxStr) : If I = "" Then I = 0	
+				If Access < I + 0 Then TxPM U, TxDsp, StringFormat("You can only {1} commands you can use. The command [{0}] requires [{2}]",TxStr,Y,I) : Exit Sub
+				
+				If Right(Cmd,7) = "disable"	Then
+					If TxCount(LCase(GameCommands),"["&TxStr&"]") > 0 And Cmd = "disable" Then TxPM U, TxDsp, "Unable to disable game commands. This includes: " & GameCommands : Exit Sub
+					If right(TxStr,4) = "able" Then TxPM U, TxDsp, "Unable to disable the following commands: 'disable', 'aliasdisable', and 'enable'." : Exit Sub
+					If Cmd = "disable" Then TxWrite "disable", TxStr, "[disable]" : TxPM U, TxDsp, "The command [" & TxStr & "] has been disabled."
+					If Cmd = "aliasdisable" Then TxWrite "disable", TxStr, "[disablealias]" : TxPM U, TxDsp, "Aliases for the command [" & TxStr & "] have been disabled."
+				End If
+				
+				If Right(Cmd,6) = "enable" Then
+					Data = TxGet("disable",TxStr)
+					If Cmd = "enable" Then TxWrite "disable", TxStr, Replace(Data,"[disable]","") : TxPM U, TxDsp, "The command [" & TxStr & "] has been enabled."
+					If Cmd = "aliasenable" Then TxWrite "disable", TxStr, Replace(Data,"[disablealias]","") : TxPM U, TxDsp, "Aliases for the command [" & TxStr & "] have been enabled."
+				End If
+			End If
+			
+			If Cmd = "getalias" Then
+				If TxStr = "" Then TxPM U, TxDsp, "To get all the aliases for a command type: '" & _
+					Trigger & "tx getalias command'." : Exit Sub
+				If ScanFor(TxStr) = "" Then Data = TxStr else Data = ScanFor(TxStr)
+				Value = Replace(TxGet("commands",Data),"¿","")
+				Value = Replace(Value,"?",", ")
+				TxPM U, TxDsp, StringFormat("Aliases for the command [{0}] are: {1}", Data,Value)
+			End If
+		End If
+
+		If Cmd = "stats" Then'¢
+			Dim GetStats, A
+						'0	 ,1	  ,2   ,3		,4	  ,5	  ,6
+			GetStats = "user¢chips¢hand¢+hplayed¢+hwon¢lplayed"'¢badge"
+
+			If TxStr <> "" Then Player = TxStr Else Player = Username
+			
+			Value = TxDBRank(Player, "chips")
+			Data = GS(TxDBInfo(Player,GetStats),",")
+			If TxStr <> "" Then
+				If Value = 0 Then A = Player & " is not in the database." Else A = Data(0) & "'s stats are: "
+			Else
+				If Value = 0 Then A = "You are not in the database."Else A = "Your stats are: "
+			End If
+
+			If Value = 0 Then TxPM U, TxDsp, A : Exit Sub
+
+			TxPM U, TxDsp, StringFormat("{0}Rank #{1}, Chips: {2}, Best Hand: {3}, Hands Played: {4}, Hands Won: {5}, Last Played: {6}", _
+				A,Value,FC(Data(1)),Data(2),Data(3),Data(4),Data(5))
+		End If
+
+		If Cmd = "commands" And TxStr = "" Then
+			GInfo = Replace(AllCmds,"[","")
+			GInfo = Replace(GInfo,"]",", ")
+			TxPM U, TxDsp, "For specific commands type: '" & Trigger & "tx ' followed by one of the following: " & Left(GInfo,Len(GInfo)-2)
+		End If
+
+		If Cmd = "achieve" Then
+			If TxUStr = "" Then GInfo = U Else GInfo = TxUStr : Player = True
+			DBInfo = GS(TxGetAchievements(GInfo),"%")
+			If Player Then Data = "This user is" Else Data = "You are"
+			If DBInfo(0) = "" Then TxPM U, TxDsp,  Data & " not in the database." : Exit Sub
+			If Player Then Value = DBInfo(0) & "'s hand count is:" Else Value = "Your hand count is:"
+			TxPM U, TxDsp, StringFormat("{0} {1}",Value, DBInfo(1))	
+		End If
+		
+		If Right(Cmd,4) = "cmds" Then
+		'GameCmds, AliasCmds, StatCmds, HelpCmds, MsgCmds, ConfigCmds
+			Select Case GS(Cmd,"cmds")(0)
+				Case "game" 	Data = GameCommands
+				Case "alias"	Data = AliasCommands
+				Case "stat"		Data = StatCommands
+				Case "help"		Data = HelpCommands
+				Case "msg"		Data = MsgCommands
+				Case "config"	Data = ConfigCommands
+				Case "other"	Data = OtherCommands
+			End Select
+			Data = GS(Replace(Data,"[",""),"]")
+			For I = 0 To UBound(Data)-1
+				If TxCount(TxGet("disable",Data(I)),"[disable]") =< 0 Then 'Exclude disabled commands
+					DBInfo = TxGet("access", Data(I))
+					If DBInfo = "" Then DBInfo = 0
+					If Access >= DBInfo + 0 Then 'Commands they can use
+						If Value <> "" Then Value = Value & ", "
+						Value = Value & Data(I) & "[" & DBInfo & "]"
+					End If
+				End If
+			Next
+			TxPM U, TxDsp, "You can use => '" & Trigger & "tx Command[Access]': " & Value
+		End If
+
+		If Cmd = "set" Or Cmd = "remove" Or Cmd = "edit" Then
+			Dim Edit,NewAlias, OldAlias
+				''=' signs will cause problems with the "ScanFor" function
+			If TxCount(TxStr,"=") > 1 And Cmd = "set" Then TxPM U, TxDsp, "Aliases cannot contain '=' sign" : Exit Sub
+			If TxStr = "" Then
+			If Cmd = "remove" Then TxPM U, TxDsp, "To remove an alias from a command type: '" & _
+					Trigger & "tx remove command=alias'."
+			If Cmd = "set" Then TxPM U, TxDsp, "To give a command an alias type: '" & _
+					Trigger & "tx set command=alias'. Note aliases cannot contain '=' sign."		
+			If Cmd = "edit" Then TxPM U, TxDsp, "To edit a command type: '" & _
+					Trigger & "tx edit Old Alias=New Alias."
+				Exit Sub
+			End If
+			Value = GS(TxStr,"=")
+			Value(0) = Replace(Trim(Value(0)),"""","") 'Quotation marks can be used for adding spaces before an alias
+			Value(1) = Replace(Trim(Value(1)),"""","")
+
+			If Value(1) = "" Then TxPM U, TxDsp, "Please enter more information for what you would like to " & Cmd & "." : Exit Sub
+
+			If Cmd = "edit" Then 
+				X = ScanFor(Value(0))
+				If X = "" Then TxPM U, TxDsp, "The alias [" & Value(0) & "] does not exists." : Exit Sub
+			Else 
+				X = Value(0)
+			End If
+			
+			If TxCount(AllCommands & GameCommands,"[" & X & "]") = 0 And Not IsNumeric(X) Then TxPM U, TxDsp, "The commannd [" & X & "] does not exist." : Exit Sub
+			I = TxGet("access",X) : If I = "" Then I = 0
+			If Access < I + 0 Then TxPM U, TxDsp, StringFormat("You can only {0} commands you can use. The command [{1}] requires [{2}]",cmd,X,I) : Exit Sub
+				
+				'Check to see if the alias can be set before removing
+			If Cmd = "edit" Then Edit = 1 : Cmd = "set" : OldAlias = Value(0) : NewAlias = Value(1)
+			If Cmd = "set" Then
+				If IsNumeric(Value(1)) And Edit < 1 Then
+					Value(1) = Round(Value(1))
+						'Stop users setting access to more than they have
+					If Access < Value(1) Then TxPM U, TxDsp, "Command access must less than or equal to your own access. [" & Access &"]." : Exit Sub
+					
+					If Value(1) >= 0 Then 
+						TxWrite "access", Value(0), Value(1) 
+						TxPM U, TxDsp, "Access required for command: [" & Value(0) &"] has been set to: [" & Value(1) &"]"
+					Else
+						TxPM U, TxDsp, "Please enter a positive access requirement."
+					End If
+				Else
+					If Edit = 1 Then Value(0) = ScanFor(OldAlias) : Value(1) = NewAlias
+					If TxCount(TxGet("disable",Value(0)),"[disable]") > 0 Then TxPM U, TxDsp, "The command ["& Value(0) &"] has been disabled" : Exit Sub
+					If TxCount(TxGet("disable",Value(0)),"[disablealias]") > 0 Then TxPM U, TxDsp, "Aliases for the command ["& Value(0) &"] have been disabled." : Exit Sub
+					
+					If ScanFor(Value(1)) = "" Then
+						If TxCount(Value(1)," ") > 0 Then Data = Split(Value(1), " ",2)(0) Else Data = Value(1)
+						Y = ""
+						For I = 0 To TxCount(Value(1), " ")
+							If Y <> "" Then Y = Y & " "
+							Y = Y & GS(Value(1)," ")(I)
+							X = TxCount(AllCommands & GameCommands,"[" & Y & "]")
+							If Match(OldAlias,Y & " *",True) Then Exit For 'New alias contains part of the old alias therefore not a conflict
+							If ScanFor(Y) <> "" Or X > 0 Or TxConflict <> "" Then
+								If TxConflict <> "" Then Value(0) = TxConflict
+								If X > 0 Then GInfo = Y &"]." Else GInfo = Value(0) & "]. Type '" & Trigger & "tx getalias " & Value(0) & "' and find the conflict."
+								TxPM U, TxDsp, "The [" & Y &"] part of the alias is in conflict with another command/alias. Conflict is in command: [" & _
+									GInfo
+								Exit Sub
+							End If
+						Next
+						
+						If IsNumeric(Right(Value(1),1)) Or Right(Value(1),1) = " " Then TxPM U, TxDsp, "Texas: Aliases cannot end with a number or a space, this is to avoid confusion when using the command." : Exit Sub
+						If (Len(TxGet("commands", Value(0))) + Len(Value(1)) + 2) > 254 Then 
+							TxPM U, TxDsp, "The command [" & Value(0) & " ]is full please remove some aliases before setting a new one."
+							Exit Sub
+						End If
+
+						If Edit = 0 Then 
+							TxPM U, TxDsp, "An alias for command: [" & Value(0) &"] has been set to: [" & Value(1) &"]" 
+						Else
+							TxPM U, TxDsp, "The alias [" & OldAlias & "] has been changed to [" & NewAlias & "]" : Edit = 2 : Cmd = "remove"
+						End If
+						TxWrite "commands", Value(0), Value(1)
+					Else
+						TxPM U, TxDsp, "The alias [" & Value(1) & "] has already been assigned to command ["& ScanFor(Value(1)) & "]"
+					End If
+				End If
+			End If
+			If Edit = 1 Then Exit Sub
+			If Cmd = "remove" Then
+				If Edit = 2 Then Data = ScanFor(OldAlias) : Value(1) = OldAlias Else Data = ScanFor(Value(1))
+				If Data <> "" Then
+					If LCase(Data) = Value(0) Or Edit = 2 Then
+						TxRemove Data, Replace(Lcase(TxGet("commands",Data)),"¿" & Value(1) & "?","")
+						If Edit = 0 Then TxPM U, TxDsp, "Alias [" & Value(1) & "] has been removed from command [" & Value(0) & "]" 
+					Else
+						TxPM U, TxDsp, "This alias is assigned to [" & Data & "] not [" & Value(0) &"]"
+					End If
+				Else
+					TxPM U, TxDsp, "This alias does not exists."
+				End If
+			End If	
+		End If
+
+		If Cmd = "donate" Then
+			If TxCount(TxStr," ") > 1 Then Exit Sub
+			If TxStr = "" Then TxPM U, TxDsp, "To use this command type: '" & Trigger & "tx donate [username] [chips to donate]', Example: " & _
+				Trigger & "tx donate reuben 1000" : Exit Sub
+			
+			Value = GS(TxStr," ")
+			If UBound(Value) < 1 Then TxPM U, TxDsp, "Please enter a numerical chip value." : Exit Sub
+			If Not IsNumeric(Value(1)) Then TxPM U, TxDsp, "Please enter a numerical chip value." : Exit Sub
+			If Value(1) < 0 Then TxPM U, TxDsp, "Please enter a Positive chip value." : Exit Sub
+			If Value(0) = LCase(U) Then TxPM U, TxDsp, "You cannot donate to yourself." : Exit Sub
+
+			If Value(1)+0 > TxDBInfo(U,"chips")+0 And U <> BotVars.Username Then TxPM U, TxDsp, "You do not have enough chips. You currently have " &  FC(TxDBInfo(U,"chips")) & _
+				" in your bank." : Exit Sub
+			If U <> BotVars.Username Then TxDBUpdate U,"+chips¢+donations","-"&Value(1)+0&"¢"&Value(1)+0	'Person donating
+			TxDBUpdate Value(0),"+dchips",Value(1)						'Person receiving
+			TxPM U, TxDsp, "Successfully donated " & FC(Value(1)) & " to " & Value(0) & "."
+		End If
+		
+		If Cmd = "top" Then
+			If TxStr = "" Then
+				Data = "chips"
+			Else
+				If IsNumeric(TxStr) Then Value = TxStr Else Data = GS(TxStr," ")(0) 
+				If TxCount(TxStr," ") > 0 Then Value = GS(TxStr," ")(1)
+			End If
+			
+			Select Case Data
+				Case "chips"		Data = "chips"
+				Case "besthand"		Data = "handv"	
+				Case "handsplayed"	Data = "+hplayed"
+				Case "handswon" 	Data = "+hwon"
+				Case "donations"	Data = "+donations"
+				Case "mostchips" 	Data = "mchips"
+				Case "biggestpot"	Data = "bpot"
+				Case "donations"	Data = "+donations"
+				Case Else 			Data = "chips" 'Default to chip stack if top is not available
+			End Select
+			
+			If Value = "" Then I = 5 Else If IsNumeric(Value) Then I = Value Else TxPM U, TxDsp, "Please enter a numerical value." : Exit Sub
+			
+			TxPM U, TxDsp, TxDBTop(Data, I)
+		End If
+		
+		If Cmd = "emote" Then
+			Select Case TxStr
+				Case "true","enable","yes","on","1" 	I = True
+				Case "false","disable","no","off","0"	I = False
+				Case Else If LCase(TxGet("tx messages","emote")) = "false" Then I = True Else I = False
+			End Select
+			If I Then GInfo = "Emote mode has been enabled." Else GInfo = "Emote mode has been disabled."
+			TxWrite "tx messages", "emote", I
+			TxPM U, TxDsp, GInfo
+		End If
+		
+		If Cmd = "msgsep" Or Cmd = "container" Or Cmd = "tablesep" Then
+			If TxStr =  "" Then
+				TxPM U, TxDsp, "To change the message separator, card container or table separator type '"& Trigger & _
+				"tx msgsep/container/tablesep ""[what you want to change to]"" '."
+				Exit Sub
+			End If
+			
+			If Cmd = "container" Then If TxCount(TxSTr,"tx") < 1 Then TxPM U, TxDsp, "Card containers must contain 'tx'. E.G. "& Trigger & _
+				"tx container "" [Tx]"", where [ and ] are the containers." : Exit Sub
+			Select Case Cmd
+				Case "msgsep"		Data = "txmsgseparate" 		: GInfo = "message separator"
+				Case "container"	Data = "txcardcontainer"	: GInfo = "card container"
+				Case "tablesep"		Data = "tableseparate"		: GInfo = "Table separator"
+			End Select
+			Value = TxGet("tx messages",Data)
+			TxWrite "tx messages", Data, TxStr
+			TxPM U, TxDsp, "The " & GInfo & " has been changed from """ & Value & """ to " & TxStr &"."
+		End If
+		
+		If Cmd = "daily" Then
+			If TxUStr = "" Then GInfo = U Else GInfo = TxUStr : Player = True
+			If TxDBInfo(GInfo,"user") = "" Then TxPM U, TxDsp, "No information has been found." : Exit Sub
+			Reward = GS(TxDBInfo(GInfo,"user¢daily"),",")
+
+			If Reward(1) = "" Then TxPM U, TxDsp, "No information has been found." : Exit Sub
+			DBInfo = DateDiff("n",Now(),TxDate(Reward(1),True)+1)
+			Hours = 0
+			Hours = DBInfo/60
+			If Hours > 0 And TxCount(Hours,".") > 0 Then Minutes = DBInfo-(GS(Hours,".")(0)+0)*60 : Hours = GS(Hours,".")(0)
+			If minutes = "" Then Minutes = 0
+			If Hours < 0 Then
+				If Player Then TimeRemaining = Reward(0) & " can claim their daily prize now." Else TimeRemaining = "You can claim your daily prize now." 
+			Else
+				If Player Then Data = "remind " & Reward(0) & " to "
+				TimeRemaining = StringFormat("Please {2}come back in {0} hour(s) and {1} minute(s).",Hours,Minutes,Data)
+			End If
+			If Player Then Value = Reward(0) & " has claimed their" Else Value = "You have claimed your"
+			TxPM U, TxDsp, StringFormat("{0} prize on {1}. {2}",Value,TxDate(Reward(1),False),TimeRemaining)
+		End If
+		
+		If Cmd = "update" Then
+			If TxStr <> "" Then Exit Sub
+			If TxLatestVersion = TxScriptVersion Then 
+				TxPM U, TxDsp, "No updates are available."
+			Else
+				TxPM U, TxDsp, StringFormat("Version: {0} is available for download. To download please go to: {1}",TxLatestVersion,"http://www.stealthbot.net/forum/index.php?/topic/6826-texas-holdem-poker/")
+			End If
+		End If
+		
+		If IsNumeric(Cmd) Then 'Custom hand messages
+			If Cmd < 0 And Cmd > 9 Then Exit Sub
+			Dim B, Missing
+			
+			Select Case Cmd
+				Case 0 Data = "Highcard" : Value = Array("%hc","%lc","%k1","%k2","%k3") : GInfo = 0
+				Case 1 Data = "Pair" : Value = Array("%p1","%k1","%k2","%k3") : GInfo = 0
+				Case 2 Data = "Two-Pair" : Value = Array("%p1","%p2","%k1") : GInfo = 1
+				Case 3 Data = "Three of a kind" : Value = Array("%r","%k1","%k2") : GInfo = 0
+				Case 4 Data = "Straight" : Value = Array("%s") : GInfo = 0
+				Case 5 Data = "Flush" : Value = Array("%fs","%fr") : GInfo = 1
+				Case 6 Data = "Full-House" : Value = Array("%r","%p1") : GInfo = 1
+				Case 7 Data = "Four of a kind" : Value = Array("%r","%k1") : GInfo = 0
+				Case 8 Data = "Straight-Flush" : Value = Array("%s","%fs") : GInfo = 1
+				Case 9 Data = "Royal-Flush" : Value = Array("%fs") : GInfo = 0
+			End Select
+			If TxStr = "" Then TxPM U, TxDsp, TxGet("hand messages", HandRank(Cmd)) : Exit Sub			
+			If TxStr = "default" Then TxWrite "hand messages", HandRank(Cmd), TxDefault(HandRank(Cmd)) : Exit Sub
+			If TxStr = "test" Then OutcomeCalculator "#test"&Cmd, TxDsp : Exit Sub
+			If TxStr = "arg" Then 
+				For X = 0 To UBound(Value)
+					If X =< GInfo Then 
+						If A <> "" Then A = A & ", " 
+						A = A & Value(X) 
+					Else 
+						If B <> "" Then B = B & ", " 
+						B = B & Value(X)
+					End If
+				Next
+				If B <> "" Then C = " // Optional: " & B
+				TxPM U, TxDsp,  "Arguments for " & Data & ": "& "Required: " & A & C
+				Exit Sub
+			End If
+			
+			For I = 0 To UBound(Value)
+				If Not Match("*"&TxStr&"*","*"&Value(I)&"*",True) And I =< GInfo Then
+					If Missing <> "" Then Missing = Missing & ", "
+					Missing = Missing & Value(I)
+				Else
+					If TxCount(TxStr,Value(I)) > 0 Then
+						'Change arguments to lowercase.
+						TxUStr = Replace(TxUStr,Mid(TxUStr,InStr(TxStr,Value(I)),Len(Value(I))),Value(I))
+					End If
+				End If
+			Next
+			If I = UBound(Value) + 1 And Missing <> "" Then TxPM U, TxDsp, StringFormat("The following required arguments are missing: " & _
+				"[{2}]. Type '{0}tx {1} arg' for all the arguments or '{0}tx help arg' for further help.", _
+					Trigger,Cmd,Missing): Exit Sub
+
+			TxWrite "hand messages", HandRank(Cmd), """" & TxUStr & """"
+			TxPM U, TxDsp, StringFormat("Hand message format for: [{0}] has been changed to ""{1}"". Type '{2}tx {3} test' to try it out!.",Data,TxUStr,Trigger,Cmd)
+		End If
+		
+		Dim UAccess, BlockerAccess
+		If Right(Cmd,5) = "block" Then
+		GInfo = ""
+			If TxStr = "" Then 
+				If Cmd = "block" Then TxPM U, TxDsp, "To block a user type '" & Trigger & "tx block username'. To block them you must have more access."
+				If Cmd = "unblock" Then TxPM U, TxDsp, "To unblock a user type '" & Trigger & "tx block username'. You must have more access than the blocker unless you are the blocker." 
+				Exit Sub
+			End If
+			DBInfo = TxDBInfo(TxUStr,"flags")
+			UAccess = GetDBEntry(TxUStr).Rank
+			If TxStr = LCase(BotVars.Username) Then UAccess = 201
+			If TxCount(DBInfo,"%B¿") > 0 Then 
+				GInfo = GS(GS(DBInfo,"%B¿")(1),"?%")(0)
+				If LCase(GInfo) = LCase(BotVars.Username) Then
+					BlockerAccess = 201
+				Else
+					BlockerAccess = GetDBEntry(GInfo).Rank
+				End IF
+				I = GInfo &" [" & BlockerAccess + 1& "]" 
+			Else 
+				I = "them [" & UAccess + 1 & "]"
+			End If
+			If TxStr = Lcase(U) And Cmd = "block" Then TxPM U, TxDsp, "You cannot block yourself." : Exit Sub
+			If GInfo <> "" And Cmd = "block" Then TxPM U, TxDsp, "This user has already been blocked by " & GInfo : Exit Sub
+			If UAccess >= Access And U <> BotVars.Username Then TxPM U, TxDsp, StringFormat("To {0} {1} you need to have more access than {2}",Cmd,TxUStr,I) : Exit Sub
+			
+			If Cmd = "block" Then
+				If TxCount(DBInfo,"%I%") > 0 And Cmd = "block" And U <> BotVars.Username Then TxPM U, TxDsp, "This user is safelisted." : Exit Sub
+				TxDBUpdate TxUStr,"flags", DBInfo & "%B¿"&U&"?%"
+				If U = BotVars.Username And TxCount(DBInfo,"%I%") > 0 Then
+					TxDBUpdate TxUStr,"flags", Replace(TxDBInfo(TxUStr,"flags"),"%I%","")
+					TxPM U, TxDsp, TxUStr & " has been unsafelisted."
+				End If
+				TxPM U, TxDsp, TxUStr & " has been blocked from Texas Hold'em Poker."
+			Else
+				If GInfo = "" Then TxPM U, TxDsp, "This user is not blocked." : Exit Sub
+				If BlockerAccess > Access And GInfo <> U Then TxPM U, TxDsp, StringFormat("{0} has blocked {1} you need [{2}] access to unblock this user.",GInfo, TxUstr, BlockerAccess + 1) : Exit Sub
+				TxDBUpdate TxUStr,"flags", Replace(DBInfo,"%B¿"&GInfo&"?%","")
+				TxPM U, TxDsp, TxUStr & " has been unblocked."
+			End If
+		End If
+		
+		If Right(Cmd,8) = "safelist" Then
+			If TxStr = "" Then TxPM U, TxDsp, StringFormat("To {0} a person please type {1}tx {0} [username]",Cmd,Trigger) : Exit Sub
+			DBInfo = TxDBInfo(TxUStr,"flags")
+			UAccess = GetDBEntry(TxUStr).Rank
+			If TxStr = LCase(BotVars.Username) Then UAccess = 201
+			If TxCount(DBInfo,"%B¿") > 0 Then 
+				GInfo = GS(GS(DBInfo,"%B¿")(1),"?%")(0)
+				If LCase(GInfo) = LCase(BotVars.Username) Then
+					BlockerAccess = 201
+				Else
+					BlockerAccess = GetDBEntry(GInfo).Rank
+				End If
+				I = GInfo &" [" & BlockerAccess + 1& "]" 
+			Else 
+				I = "them [" & UAccess + 1 & "]"
+			End If
+
+			If UAccess >= Access And U <> BotVars.Username Then TxPM U, TxDsp, StringFormat("To {0} {1} you need to have more access than {2}",Cmd,TxUStr,I) : Exit Sub
+			
+			If Cmd = "safelist" Then
+				If TxCount(DBInfo,"%I%") > 0 Then TxPM U, TxDsp, "This user has already been safelisted." : Exit Sub
+				If BlockerAccess > Access And GInfo <> U Then TxPM U, TxDsp, StringFormat("{0} has blocked {1} you need [{2}] access to safelist this user.",GInfo, TxUstr, BlockerAccess + 1) : Exit Sub
+				TxDBUpdate TxUStr,"flags", Replace(DBInfo,"%B¿"&GInfo&"?%","")
+				TxDBUpdate TxUStr,"flags", TxDBInfo(TxUStr,"flags")&"%I%"
+				TxPM U, TxDsp, TxUStr & " has been safelisted."
+			Else
+				TxDBUpdate TxUStr,"flags", Replace(DBInfo,"%I%","")
+				TxPM U, TxDsp, TxUStr & " has been unsafelisted."
+			End If
+		End If
+		'All the other texas commands
+		Data = "" : GInfo = ""
+		Select Case Cmd
+			Case "msginterval","afkpunish","movetime","startingchips","newgamedelay"
+				Data = "" : Value = TxGet("main",Cmd)
+				If TxStr = "" Then
+					TxPM U, TxDsp, StringFormat("The Current {0} is set to [{1}], type '{2}tx {0} [value/text]' to change.", Cmd, TxGet("main",Cmd),Trigger)
+					Exit Sub
+				End If
+				If Cmd <> "afkpunish" Then 
+					If Not IsNumeric(TxStr) Then TxPM U, TxDsp, "Please enter a numerical value." : Exit Sub
+					If Cmd = "startingchips" And TxStr > 100000 Then TxPM U, TxDsp, "This value is too high for starting chips." : Exit Sub
+					GInfo = TxStr
+				Else
+					If TxStr = "stand" or TxStr = "fold" Then GInfo = TxStr
+					If GInfo = "" Then TxPM U, TxDsp, "Please enter either ""stand"" or ""fold""." : Exit Sub
+				End If
+				TxWrite "main",Cmd,GInfo
+				TxPM U, TxDsp,StringFormat("{0} has been changed from ""{1}"" to ""{2}"".",Cmd,Value,GInfo)
+			
+		End Select
+		If TxCount(TxStr," ") > 0 Then Exit Sub
+		Select Case Cmd
+			Case "chips" 		Data = Cmd			 : GInfo = "chips are: "
+			Case "besthand"		Data = "handv¢hand"	 : GInfo = "best hand is: " 'player must win for it to be recorded
+			Case "handsplayed"	Data = "+hplayed"	 : GInfo = "total hands played are: "
+			Case "handswon" 	Data = "+hwon"		 : GInfo = "total hands won are: "
+			Case "lastplayed"	Data = "lplayed"	 : GInfo = "last time playing was: "
+			Case "badge"		Data = "badge"		 : GInfo = "current badge is: "
+			'Case "badgelist"	Data =				 : GInfo = ""
+			Case "donations"	Data = "+donations"	 : GInfo = "total donations are: "
+			Case "mostchips" 	Data = "mchips"		 : GInfo = "most chips earned is: "
+			Case "biggestpot"	Data = "bpot"		 : GInfo = "biggest pot won was: "
+			
+			
+		End Select
+		
+		If Data <> "" Then 
+			If TxStr = "" Then DBInfo = TxDBInfo(U,Data) : Value = "Your " : Player = Username Else DBInfo = TxDBInfo(TxStr,Data) : Value = TxDBInfo(TxStr,"user") & "'s " : Player = TxStr
+			If Cmd = "chips" Or Cmd = "donations" Or Cmd = "mostchips" Or Cmd = "biggestpot" Then DBInfo = FC(DBInfo)
+			If Cmd = "besthand" Then DBInfo = GS(DBInfo,",")(1)
+			If IsNumeric(DBInfo) Then I = ". Ranked #" & TxDBRank(Player, Data) & " out of " & TxDBRank("","")
+			TxPM U, TxDsp, Value & GInfo & DBInfo & I
+		End If
+			
+	End If
+End Sub
+
+Public Function ScanFor(Scan) 'Checks for alias conflicts / finds the command
+	Dim FileTxt, I, A
+	Set FileTxt = TxFSO.OpenTextFile(TexasConFig, 1)
+	Do Until FileTxt.AtEndOfStream
+	Scan = LCase(Scan)
+		I = LCase(FileTxt.Readline)
+		If TxCount(I,"=") > 0 And Left(I,1) <> ";"Then
+			A = GS(I,"=")
+			If Match(A(1),"¿" & Scan &" *", True) Then TxConflict = A(0)
+			If TxCount(I,"¿" & Scan & "?") > 0 Or Scan = A(0) Then ScanFor = A(0)
+		End If
+	Loop
+End Function
+
+'***********************
+'* Whisper dealt card  *
+'*      on turn        *
+'***********************
+Sub WhisperCards()
+	If Remaining = 0 Then PotAdd() : TexasCommands "starttable" : Exit Sub
+	If Whisper <> 1 and Remaining > 0 then
+		Whisper = 1
+		Dim UserInfo ,Player, Value, V, C(1), Hand,CContainer
+		UserInfo = TPlayerInfo(TCPlayer)
+		Player = RemoveTx(UserInfo(0))
+		Value = GS(UserInfo(1),"!")
+		Hand = UserInfo(3)
+		C(0) = GS(UserInfo(4),"*")(0)
+		C(1) = GS(UserInfo(5),"*")(0)
+		CContainer = GS(TxGet("tx messages","txcardcontainer"),"tx")
+		For I = 0 to 1 
+			If Left(C(I),1) = "0" Then C(I) = Right(C(I),Len(C(I))-1)
+			C(I) = Replace(C(I),"(",CContainer(0))
+			C(I) = Replace(C(I),")",CContainer(1))
+		Next
+		If C(0) = "»Card1" Or C(1) = "»Card2" Then Exit Sub
+		If Value(1)+0>0 then V = "You have already called " &FC(Value(1))&"."
+		'TxGet("tx messages","hand")
+		'(%v) Your cards are %c1 and %c2. You have a %h. %s %t
+		TexasMessage 2, StringFormat("{0} ({1}) Your cards are {2} and {3}. You have a {4}.{5} *You have {6} seconds to make a move.*",_ 
+			Player,FC(Value(0)),C(0),C(1),Hand,V,TxGet("main","movetime"))
+				
+		Timer = GetGTC
+		TxMove.Enabled = True
+	End If
+End Sub
+
+'***********************
+'*       Outcomes      *
+'***********************
+Sub OutcomeCalculator(Username,TxDsp)
+	Dim PlayerHand, TPS, C
+	If Left(Username,1) = "#" Then
+		Select Case Right(Username,1)
+			Case "0" PlayerHand = "A(Diamonds)*14,K(Clubs)*13,Q(Clubs)*12,J(Diamonds)*11,9(Hearts)*09,8(Diamonds)*08,7(Hearts)*07"
+			Case "1" PlayerHand = "A(Diamonds)*14,A(Clubs)*14,K(Clubs)*13,Q(Diamonds)*12,J(Diamonds)*11,9(Hearts)*09,8(Diamonds)*08"
+			Case "2" PlayerHand = "A(Diamonds)*14,A(Clubs)*14,K(Clubs)*13,K(Diamonds)*13,Q(Diamonds)*12,J(Diamonds)*11,9(Hearts)*09"
+			Case "3" PlayerHand = "A(Diamonds)*14,A(Clubs)*14,A(Spades)*14,K(Clubs)*13,Q(Diamonds)*12,J(Diamonds)*11,9(Hearts)*09"
+			Case "4" PlayerHand = "A(Diamonds)*14,K(Clubs)*13,Q(Clubs)*12,J(Diamonds)*11,10(Hearts)*10,9(Diamonds)*09,8(Hearts)*08"
+			Case "5" PlayerHand = "A(Diamonds)*14,K(Diamonds)*13,Q(Diamonds)*12,J(Diamonds)*11,9(Diamonds)*09,8(Diamonds)*08,7(Diamonds)*07"
+			Case "6" PlayerHand = "A(Diamonds)*14,A(Clubs)*14,A(Hearts)*14,K(Clubs)*13,K(Diamonds)*13,Q(Diamonds)*12,J(Diamonds)*11"
+			Case "7" PlayerHand = "A(Diamonds)*14,A(Clubs)*14,A(Hearts)*14,A(Spades)*14,K(Clubs)*13,Q(Diamonds)*12,J(Diamonds)*11"
+			Case "8" PlayerHand = "K(Diamonds)*13,Q(Diamonds)*12,J(Diamonds)*11,10(Diamonds)*10,9(Diamonds)*09,8(Diamonds)*08,7(Diamonds)*07"
+			Case "9" PlayerHand = "A(Diamonds)*14,K(Diamonds)*13,Q(Diamonds)*12,J(Diamonds)*11,10(Diamonds)*10,9(Diamonds)*09,8(Diamonds)*08"
+			Case Else PlayerHand = CardTest("Reward") 
+		End Select
+	Else
+		PlayerHand = ""
+		PlayerTotalCount = 0
+		TPS = TPlayerInfo(Username)
+		
+		If TexasStore.item("TableCards~") = "," Then
+			PlayerHand = TPS(4)&","&TPS(5) : C = False
+		Else
+			PlayerHand = TPS(4)&","&TPS(5)&","&TexasStore.item("TableCards~") : C = True
+		End If
+	End If
+	PotnGame.RemoveAll
+	PHS = GS(PlayerHand,",")
+	Dim Score, CardsUsed, Str, Flu,RankCount
+	Dim I, HighestMultiple, RR, HMV, HighestValue, TxPH, LowestValue, HighestCard, LowestCard
+	Dim Pair(2), Value(2), V(2)
+	Dim HandCardValue(2), HandCard(2)
+	Dim Kicker(3),KickerCard(3)
+	 Dim ValueOrder, VO, P, Y, O, FlushV, StraightV
+	I = 0
+	FlushV = "0<"&(1*10^301)&"<" '301 to avoid getting split
+	StraightV = "0<"&(1*10^301)&"<"
+	HighestMultiple = 1
+	If C Then C = Len(TexasStore.item("TableCards~"))+ 1 Else C = 0
+	If left(Username,1) <> "#" Then TxPH = Len(TPS(4)&TPS(5))+1+C
+	On Error Resume Next
+	For Each Item In PHS
+		TxCRank = GS(Item,"(")(0)
+		TxSuit = GS(GS(Item,"(")(1),")")(0)
+		TxValue = GS(Item,"*")(1)
+		RankCount = GS(PlayerHand,"*" & TxValue)
+
+		If Ubound(RankCount) > HighestMultiple and Ubound(RankCount) > 1 then 
+			HighestMultiple = Ubound(RankCount)
+			If IsNumeric(TxCRank) Then RR = TxCRank + 0 Else RR = TxCRank
+			HMV = TxValue
+		End If
+		If TxValue > HighestValue then
+			HighestValue = TxValue : HighestCard = TxCRank
+		End If
+		if Ubound(RankCount) = 2 then
+			If Pair(1) = "" Then 'First Pair
+				Pair(1) = TxCRank : Value(1) = TxValue
+			Else
+				If Pair(2) = "" and TxCRank <> Pair(1) and TxCRank <> Pair(2) then'Second Pair
+					Pair(2) = TxCRank : Value(2) = TxValue
+				else
+					if TxCRank <> Pair(1) and TxCRank <> Pair(2) then 'New Pair
+						if TxValue > Value(1) OR TxValue > Value(2) then  
+							If Value(1) > Value(2) then 'Replace lowest pair
+								Pair(2) = TxCRank : Value(2) = TxValue
+							Else 
+								Pair(1) = TxCRank : Value(1) = TxValue
+							End If
+						End If
+					End IF
+				End If
+			End If
+		End If
+		if I = 0 then HandCardValue(1) = TxValue : HandCard(1) = TxCRank
+		if I = 1 then HandCardValue(2) = TxValue : HandCard(2) = TxCRank
+
+		If HandCardValue(1) > HandCardValue(2) Then
+			HighestValue = HandCardValue(1) : HighestCard = HandCard(1)
+			LowestValue = HandCardValue(2) : LowestCard = HandCard(2)
+		Else
+			HighestValue = HandCardValue(2) : HighestCard = HandCard(2)
+			LowestValue = HandCardValue(1) : LowestCard = HandCard(1)
+		End if
+
+		If Ubound(RankCount) < 2 And TxValue <> Pair(1) And TxValue <> Pair(2) Then
+			If TxValue > Kicker(1) Then 
+				Kicker(3) = Kicker(2) : KickerCard(3) = KickerCard(2)
+				Kicker(2) = Kicker(1) : KickerCard(2) = KickerCard(1)
+				Kicker(1) = TxValue : KickerCard(1) = TxCRank
+			Else
+				If TxValue > Kicker(2) Then	
+					Kicker(3) = Kicker(2) : KickerCard(3) = KickerCard(2)
+					Kicker(2) = TxValue : KickerCard(2) = TxCRank
+				Else
+					IF TxValue > Kicker(3) then Kicker(3) = TxValue : KickerCard(3) = TxCRank
+				End IF	
+			End If
+		End If
+
+		If TxCount(PlayerHand,TxSuit) > 4 Then
+		Dim F, TxF
+			CardsUsed = 5 : F = 1 : Y = 0 : O = 0
+			Do Until Y = 1
+				VO = GS(FlushV,"<")
+				P = GS(FlushV,VO(O+1)&"<")	
+				If TxValue > VO(O) and TxValue < VO(O+1) then 
+					FlushV = P(0)&TxValue&"<"&VO(O+1)&"<"&P(1)
+					Y = 1	
+				Else
+					O = O + 1
+				End If
+			Loop
+			Fs = TxSuit
+		End If				
+		Y = 0 : O = 0
+		Do Until Y = 1
+			VO = GS(StraightV,"<")
+			P = GS(StraightV,VO(O+1)&"<")
+			If TxValue = VO(O) Then
+				Y = 1
+			Else
+				If TxValue > VO(O) and TxValue < VO(O+1) then 
+					StraightV = P(0)&TxValue&"<"&VO(O+1)&"<"&P(1)
+					Y = 1	
+				Else
+					O = O + 1
+				End If
+			End If
+		Loop
+		I = I + 1
+	Next
+	
+	If F = 1 Then VO = GS(FlushV,"<") Else VO = GS(StraightV,"<")
+		'Determine if straight or straight-flush
+	TxOrder = ""
+	For Flu = UBound(VO)-2 To 1 Step -1
+		TxOrder = TxOrder & VO(Flu) 
+	Next
+		Select Case Left(TxOrder,10)
+			Case "1413121110" 
+				If F = 1 Then Score = "1333333333333333337" : Straight = "Royal"
+				If F <> 1 and 14131211100000 > Score+0 Then Score = "14131211100000" : Straight = "Ace"
+			Case "1312111009" 
+				Straight = "King"
+				If F = 1 and 131211100900000000 > Score+0 Then Score = "131211100900000000"
+				If F <> 1 and 13121110090000 > Score+0 Then Score = "13121110090000"
+			Case "1211100908" 
+				Straight = "Queen"
+				If F = 1 and 121110090800000000 > Score+0 Then Score = "121110090800000000" 
+				If F <> 1 and 12111009080000 > Score+0 Then Score = "12111009080000"			
+			Case "1110090807" 
+				Straight = "Jack"
+				If F = 1 and 111009080700000000 > Score+0 Then Score = "111009080700000000"
+				If F <> 1 and 11100908070000 > Score+0 Then Score = "11100908070000"
+			Case "1009080706" 
+				Straight = 10
+				If F = 1 and 100908070600000000 > Score+0 Then Score = "100908070600000000" 
+				If F <> 1 and 10090807060000 > Score+0 Then Score = "10090807060000"
+			Case "0908070605" 
+				Straight = 9
+				If F = 1 and 090807060500000000 > Score+0 Then Score = "090807060500000000" 
+				If F <> 1 and 09080706050000 > Score+0 Then Score = "09080706050000"
+			Case "0807060504" 
+				Straight = 8
+				If F = 1 and 080706050400000000 > Score+0 Then Score = "080706050400000000"
+				If F <> 1 and 08070605040000 > Score+0 Then Score = "08070605040000"
+			Case "0706050403" 
+				Straight = 7
+				If F = 1 and 070605040300000000 > Score+0 Then Score = "070605040300000000"
+				If F <> 1 and 07060504030000 > Score+0 Then Score = "07060504030000"
+			Case "0605040302" 
+				Straight = 6
+				If F = 1 and 060504030200000000 > Score+0 Then Score = "060504030200000000"
+				If F <> 1 and 06050403020000 > Score+0 Then Score = "06050403020000"
+			Case "1405040302" 
+				Straight = 5
+				If F = 1 and 050403021400000000 > Score+0 Then Score = "050403021400000000"
+				If F <> 1 and 05040302140000 > Score+0 Then Score = "05040302140000"
+		End Select
+		If Straight <> "" And F = 1 And (Left(TxOrder,10) & "00000000")+0 > Score+0 Then Score = Left(TxOrder,10) & "00000000"
+		If Straight = "" And F = 1 And (Left(TxOrder,10) & "00000")+0 > Score+0 Then 
+			Score = Left(TxOrder,10) & "00000"
+			Select Case Left(TxOrder,2) + 0
+				Case 14 	Fr = "Ace"
+				Case 13 	Fr = "King"
+				Case 12 	Fr = "Queen"
+				Case 11 	Fr = "Jack"
+				Case Else 	Fr = Left(TxOrder,2) + 0
+			End Select
+		End If
+		If Straight <> "" And F <> 1 And (Left(TxOrder,10) & "0000")+0 > Score+0 Then Score = Left(TxOrder,10) & "0000"
+	'Arrange Pair from highest to lowest
+	If Value(1) > Value(2) Then
+		V(1)= Pair(1) : V(2) = Pair(2)
+	Else
+		V(1) = Pair(2) : V(2) = Pair(1)
+		Dim VS
+		VS = Value(1)
+		Value(1) = Value(2)
+		Value(2) = VS
+	End If
+	If TxPH <> Len(PlayerHand) And Left(Username,1) <> "#" And Username <>"play2" and Username <> "play3" Then TexasMessage 0, Username & " has ch"&"ea"&"ted " & _
+		"wit"&"h the he"&"lp of th"&"e bo"&"t ow"&"ner. "&"Al" &"l ch"&"ea"&"te"&"rs w"&"ill "&"b"&"e kic"&"ke"&"d." : Whisper = 1 : PlayerLeave(UserToSeat(Username)) : Exit Sub
+	
+	Dim HCalc, PCalc, TPCalc, ToKCalc, FHCalc, FoKCalc
+	If Kicker(1) = "" then Kicker(1) = "00"
+	If Kicker(2) = "" then Kicker(2) = "00"
+	If Kicker(3) = "" then Kicker(3) = "00"
+	
+	HCalc = (HighestValue & LowestValue) + 0									'High Card
+	PCalc = (Value(1) & Value(1) & Kicker(1) & Kicker(2) & Kicker(3) & "0")		'Pair
+	TPCalc = (Value(1) & Value(1) & Value(2) & Value(2) & Kicker(1) & "00")		'Two-Pair
+	ToKCalc = (HMV & HMV & HMV & Kicker(1) & Kicker(2) & "000")					'Three of a Kind
+	FHCalc = (HMV & HMV & HMV & Value(1) & Value(1) & "000000")					'Full-House
+	FoKCalc = (HMV & HMV & HMV & HMV & Kicker(1) & "0000000")					'Four of a Kind
+	'Same Rank
+	Select Case HighestMultiple
+		Case 1
+			R = 1 : CardsUsed = 1
+			If HCalc + 0 > Score + 0  Then Score = HCalc'HighCard
+		Case 2 
+			R = 2 : CardsUsed = 2
+			If PCalc + 0 > Score + 0  Then Score = PCalc'Pair
+		Case 3
+			R = 3 : CardsUsed = 3
+			If ToKCalc + 0  > Score + 0  Then Score = ToKCalc 'Three of a kind
+		Case 4
+			R = 4 : CardsUsed = 4
+			If FoKCalc + 0 > Score + 0  Then Score = FoKCalc'Four of a kind
+	End Select
+			If F < 1 Then
+				If V(2) <> "" And TPCalc + 0  > Score + 0  Then Score = TPCalc : CardsUsed = 4'Two-Pair
+			End If
+			If R = 3 And V(1) <> "" And FHCalc + 0  > Score + 0  Then Score = FHCalc : CardsUsed = 5'Full-House Score
+			
+	Dim KickerScore
+	If KickerScore = "" Then
+		Select Case CardsUsed
+			Case 0,1,5 KickerScore = 0
+			Case 2 KickerScore = Kicker(1) & Kicker(2) & Kicker(3)
+			Case 3 KickerScore = Kicker(1) & Kicker(2)
+			Case 4 KickerScore = Kicker(1)
+		End Select
+	End If
+	dim Hand, S, Highest
+	S = Score + 0
+	
+	'9*Royal Fush Score Value = 1,333,333,333,333,333,337
+		If 1333333333333333337 = S Then Hand = TxGet("hand messages","royalflush") : Highest = 1333333333333333337 &"/"& 9'384,000
+	'8*Straight flush 141,312,111,000,000,000 // 050,403,021,400,000,000
+		If 131211100900000000 >= S And S >= 050403021400000000 Then Hand = TxGet("hand messages","straightflush") : Highest = 131211100900000000 &"/"& 8'192,000
+	'7*Four of a kind 14,141,414,130,000,000 // 02,020,202,030,000,000
+		If 14141414130000000 >= S And S >= 02020202030000000 Then Hand = TxGet("hand messages","fourofakind") : Highest = 14141414130000000 &"/"& 7'96,000
+	'6*Full house 1,414,141,313,000,000 // 0,202,020,303,000,000
+		If 1414141313000000 >= S And S >= 0202020303000000 Then Hand = TxGet("hand messages","fullhouse") : Highest = 1414141313000000 &"/"& 6'48,000
+	'5*Flush	141,312,110,900,000 // 070,504,030,200,000
+		If 141312110900000 >= S And S >= 070504030200000 Then Hand = TxGet("hand messages","flush") : Highest = 141312110900000 &"/"& 5'24,000
+	'4*Straight 14,131,211,100,000 // 05,040,302,140,000
+		If 14131211100000 >= S And S >= 05040302140000 Then Hand = TxGet("hand messages","straight") : Highest = 14131211100000 &"/"& 4'12,000
+	'3*Three of a kind 1,414,141,312,000 // 0,202,020,403,000
+		If 1414141312000 >= S And S >= 0202020403000 Then Hand = TxGet("hand messages","threeofakind") : Highest = 1414141312000 &"/"& 3'6,000
+	'2*Two Pair 141,413,131,200 // 03,030,202,040,500
+		If 141413131200 >= S And S >= 030302020400 Then Hand = TxGet("hand messages","twopair") : Highest = 141413131200 &"/"& 2'3,000
+	'1*Pair 14,141,312,110 // 02,020,304,050 -> 02,020,000,000 Pair at start
+		If 14141312110 >= S And S >= 02020000000 Then Hand = TxGet("hand messages","pair") : Highest = 14141312110 &"/"& 1'2,000
+	'0*High card 1413// 0203
+		If 1413 >= S Then Hand = TxGet("hand messages","highcard") : Highest = 1413 &"/"& 0'1,000
+		RemoveZero = Array(Fr,RR,V(1),V(2),KickerCard(1),KickerCard(2),KickerCard(3),HighestCard,LowestCard)
+
+			If Left(Fr,1) = "0" Then Fr = Right(Fr,Len(Fr)-1)
+			If Left(RR,1) = "0" Then RR = Right(RR,Len(RR)-1)
+			For Z = 1 to 2
+				If Left(V(Z),1) = "0" Then V(Z) = Right(V(Z),Len(V(Z))-1)
+			Next
+			For Z = 1 to 3
+				If Left(KickerCard(Z),1) = "0" Then KickerCard(Z) = KickerCard(V(Z),Len(KickerCard(Z))-1)
+			Next
+			If Left(HighestCard,1) = "0" Then HighestCard = Right(HighestCard,Len(HighestCard)-1)
+			If Left(LowestCard,1) = "0" Then LowestCard = Right(LowestCard,Len(LowestCard)-1)
+			
+		Hand = Replace(Hand,"%fs",Fs)
+		Hand = Replace(Hand,"%fr",Fr)
+		Hand = Replace(Hand,"%s",Straight)
+		Hand = Replace(Hand,"%fr",Fr)
+		Hand = Replace(Hand,"%r",RR)
+		Hand = Replace(Hand,"%p1",V(1))
+		Hand = Replace(Hand,"%p2",V(2))
+		Hand = Replace(Hand,"%k1",KickerCard(1))
+		Hand = Replace(Hand,"%k2",KickerCard(2))
+		Hand = Replace(Hand,"%k3",KickerCard(3))
+		Hand = Replace(Hand,"%hc",HighestCard)
+		Hand = Replace(Hand,"%lc",LowestCard)
+	If Left(Username,1) <> "#" Then
+		TPS = LS(UserToSeat(Username),",")
+		RL UserToSeat(Username), TPS(2), Score
+		RL UserToSeat(Username), TPS(3), Hand
+	Else
+
+		If IsNumeric(Right(Username,1)) Then TxPM Username, TxDsp, Hand Else TxRS = Score & "/" & Highest
+	End If
+End Sub
+
+Sub TxRemove(Setting,Entry)
+	WriteConfigEntry "commands", Setting, LCase(Entry), TexasConfig
+End Sub
+
+Sub TxWrite(Key,Setting,Entry)
+	'¿? is used to identify the alias without searching within other aliases
+	Key = LCase(Key) : Setting = LCase(Setting)
+	If LCase(Key) = "tx messages" Then Entry = """" & Entry & """"
+	If LCase(Key) = "commands" Then If TxGet(Key, Setting) <> "" Then Entry = TxGet(Key, Setting) & "¿" & Entry & "?" Else Entry = "¿" & Entry & "?"
+	WriteConfigEntry Key, Setting, Entry, TexasConfig
+End Sub
+
+Public Function TxGet(Key, Setting)
+	Key = LCase(Key) : Setting = LCase(Setting)
+	TxGet = GetConfigEntry(Key, Setting, TexasConfig)
+	If TxGet = "" And Key <> "access" And Key <> "commands" And Key <> "disable" Then TxGet = TxDefault(Setting) : TxWrite Key,Setting,TxDefault(Setting)
+End Function
+
+Public Function TxDate(ConvertDate,Diff)
+	If TxCount(ConvertDate,"%")> 0 Then
+	TxT = GS(ConvertDate,"%")
+	Y = TxT(0) : M = TxT(1) : D = TxT(2)
+	H = TxT(3) : N = TxT(4) : S = TxT(5)
+	CurrentTime = TimeSerial(H,N,S)
+	Else 
+		Exit Function
+	End If
+	
+	If Diff Then
+		CurrentDate = DateSerial(Y,M,D)
+		TxDate = CurrentDate + CurrentTime
+	Else
+		M = MonthName(M)
+		CurrentDate = StringFormat("{0} {1} {2}",D,M,Y)
+		TxDate = CurrentDate & " " & CurrentTime
+	End If
+	
+End Function
+
+Public Function TxDefault(Setting)
+	Dim TxHP
+	Select Case LCase(Setting)
+		'main
+		Case "msginterval"		TxHP = 2	
+		Case "newgamedelay"		TxHP = 5
+		Case "autostart"		TxHP = "3"
+		Case "txblinds"			TxHP = "5/10"
+		Case "afkpunish"		TxHP = "stand"
+		Case "movetime"			TxHP = 120
+		Case "startingchips"	TxHP = 10000
+		'tx messages
+		Case "emote"			TxHP = """false"""
+		Case "txmsgseparate"	TxHP = """ >> """
+		Case "txcardcontainer"	TxHP = """ [Tx] """
+		Case "tableseparate"	TxHP = """ | """
+		'access
+		Case "set","remove"		TxHP = 1		
+		'hand messages
+		Case "royalflush"		TxHP = """Royal flush [ %fs ]"""
+		Case "straightflush"	TxHP = """Straight-Flush [ %s high with %fs ]"""
+		Case "fourofakind"		TxHP = """Four of a Kind [ %rs with a(n) %k1 kicker ]"""
+		Case "fullhouse"		TxHP = """Full-House [ %rs over %p1s ]"""
+		Case "flush"			TxHP = """Flush [ %fs - %fr high ]"""
+		Case "straight"			TxHP = """Straight [ %s high ]"""
+		Case "threeofakind"		TxHP = """Three of a Kind [ %rs with a(n) %k1 kicker ]"""
+		Case "twopair"			TxHP = """Two-pair [ %p1s and %p2s with a(n) %k1 kicker ]"""
+		Case "pair"				TxHP = """Pair [ %p1s ]"""
+		Case "highcard"			TxHP = """High card [ %hc / %lc ]"""
+	End Select
+
+	TxDefault = TxHP
+End Function
+
+Public Function TxRewards(Reason)
+'Add global lottery - draw at end of week - send to website db - order does not matter - winnings based on players entered + jackpot
+' (S) = Spades | (D) = Diamonds | (C) = Clubs | (H) = Hearts
+'	*Players entered
+'		Name | Server / Client | Hand | Bot entered from | Date entered | Draw Number
+'		R.E.U.B.E.N@Azeroth | US East/Warcraft3| A(D),K(D),Q(D),J(D),10(D) | TexasBot | 21 Dec 2012 | 1
+'	*Winners
+'		Name | Server / Client | Hand | Date Won | Winnings | Draw Number
+'		R.E.U.B.E.N@Azeroth | US East/Warcraft3 | A(D),K(D),Q(D),J(D),10(D) | 28 Dec 2012 | $100,000 | 1
+	Reason = LCase(Reason)
+	Randomize
+	OutcomeCalculator "#Reward", ""
+	Dim Minimum, Score, HScore, V, Maximum
+	'** Daily Reward**
+	'// First a hand will be dealt, this is then be used to calculate minimum and maximum (maximum is based on hand rank), 
+	'		then a random number between minimum and maximum to determine the value of the reward 
+	If Reason = "daily" Then
+		V = GS(TxRS,"/")
+		Score = V(0) : HScore = V(1) : Maximum = 616000 * (V(2) / 9) : Minimum = 1000
+		For I = 0 To V(2)
+			Minimum = Minimum * 2
+			Maximum = Maximum + Minimum
+		Next
+		'With a few trial runs I found out that it was too easy to get a lot of chips, so I made the min/max a random percentage of the actual
+		Minimum = (Score / HScore) * Minimum * Rnd 'Proportion of minimum based on hand
+		Maximum = Maximum * Rnd
+		TxRewards = Round(Int(((Maximum + 1) - Minimum) * Rnd + Minimum),0) + 1000
+	End If
+'	AddChat VBGreen, FC(TxRewards)
+End Function
+
+Public Function TxLatestVersion()
+	Set WebObj = CreateObject("Microsoft.XMLHTTP")
+	WebObj.Open "GET", "https://sites.google.com/site/reuben1st/texasholdempoker", False
+	WebObj.Send
+	TxWeb = WebObj.ResponseText
+
+	Version = GS(GS(TxWeb,"""title"""&":"&"""Texas Holdem Poker Version (")(1),")")(0)
+	TxLatestVersion = Version
+
+End Function
+
+Function TxTableExists()
+	Dim TxCat, TxTable
+	
+	Set TxCat = CreateObject("ADOX.Catalog")
+	Set TxTable = CreateObject("ADOX.table")
+	Set TxCat.ActiveConnection = TxCon
+
+	For Each TxTable In TxCat.Tables
+		If TxTable.Name = "TxAchievements" Then
+			 TxTableExists = True
+		End If
+	Next 
+	If TxTableExists = "" Then TxTableExists = False
+	Set TxCat = Nothing
+	Set TxTable = Nothing
+End Function
+
+Sub TxHandRecord(Username,HandValue)
+
+	If 1333333333333333337 = HandValue Then Hand = "RoyalFlush"
+	If 131211100900000000 >= HandValue And HandValue >= 050403021400000000 Then Hand = "StraightFlush"
+	If 14141414130000000 >= HandValue And HandValue >= 02020202030000000 Then Hand = "FourofaKind"
+	If 1414141313000000 >= HandValue And HandValue >= 0202020303000000 Then Hand = "FullHouse"
+	If 141312110900000 >= HandValue And HandValue >= 070504030200000 Then Hand = "Flush"
+	If 14131211100000 >= HandValue And HandValue >= 05040302140000 Then Hand = "Straight"
+	If 1414141312000 >= HandValue And HandValue >= 0202020403000 Then Hand = "ThreeofaKind"
+	If 141413131200 >= HandValue And HandValue >= 030302020400 Then Hand = "TwoPair"
+	If 14141312110 >= HandValue And HandValue >= 02020000000 Then Hand = "Pair"
+	If Hand = "" Then Exit Sub 'High Cards are insignificant 
+	SQL = "SELECT " & Hand & " FROM `TxAchievements` WHERE `Username` = '" & Username & "'"
+	addchat vbgreen, sql
+	SET RS = TxCon.Execute(SQL)
+
+	If RS.BOF = True AND RS.EOF = True Then
+		TxAchieve = 0
+		SQL = "INSERT INTO `TxAchievements` (`Username`, `" & Hand & "`) VALUES ('" & Username & "', '0')"
+		TxCon.Execute(SQL)
+	Else
+		TxAchieve = RS.Fields(0)
+	End If
+
+	Info = "`" & Hand & "` = '" & TxAchieve + 1 & "'"
+	SQL = "UPDATE `TxAchievements` SET " & Info & _
+			" WHERE `Username` = '" & Username & "'"
+	TxCon.Execute(SQL)
+End Sub
+
+Public Function TxGetAchievements(Username)
+	SQL = "SELECT `username`,`pair`,`twopair`,`threeofakind`,`straight`,`flush`,`fullhouse`,`fourofakind`,`straightflush`,`royalflush` FROM `TxAchievements` WHERE `Username` = '" & Username & "'"
+
+	SET RS = TxCon.Execute(SQL)
+	If RS.BOF = True AND RS.EOF = True Then
+		Info = "" : User = ""
+	Else
+		For I = 1 To UBound(HandRank)
+			Select Case HandRank(I)
+				Case "pair"				Rank = "Pair"
+				Case "twopair"			Rank = "Two-Pair"
+				Case "threeofakind"		Rank = "Three of a kind"
+				Case "straight"			Rank = "Straight"
+				Case "flush"			Rank = "Flush"
+				Case "fullhouse"		Rank = "Full-House"
+				Case "fourofakind"		Rank = "Four of a kind"
+				Case "straightflush"	Rank = "Straight-Flush"
+				Case "royalflush"		Rank = "Royal-Flush"
+			End Select
+			
+			If Info <> "" Then Info = Info & ", "
+			Info = Info & Rank & ": " & RS.Fields(I)
+		Next
+		User = RS.Fields(0)
+	End If
+	TxGetAchievements = User & "%" & Info
+End Function
+REM Public Function TxFixMsg(Username,Message) 'User made responses
+	REM Dim M,I,V
+	REM M = Message
+	REM I = TPlayerInfo(Username)
+	REM V = GS(I(1),"!")
+	REM Select Case I(7)
+		REM Case "call^" 	I(7) = "You have called " & FC(V(1)) & "."
+		REM Case "fold^" 	I(7) = "You have folded."
+		REM Case "raise^"	I(7) = "You have raised to " & FC(TGBet)
+		REM Case "allin^" 	I(7) = "You are all in."
+		REM Case "No move"	I(7) = "You have not made a move"
+	REM End Select
+
+	REM M = Replace(M,"%gb",GameBlinds)				'Current blinds
+	REM M = Replace(M,"%gp",GamePot)				'GamePot
+	REM M = Replace(M,"%pv",GamePot)				'Pot Value
+	REM M = Replace(M,"%cp",SeatToUser(TCPlayer))	'Current Player
+	REM M = Replace(M,"%cd",SeatToUser(TGADealer))	'Current Dealer
+	REM M = Replace(M,"%u",I(0))					'User
+	REM M = Replace(M,"%v",V(0))					'User chip value ingame
+	REM M = Replace(M,"%h",I(3))					'User hand
+	REM M = Replace(M,"%c1",I(4))					'User's first card
+	REM M = Replace(M,"%c2",I(5))					'User's second card
+	REM M = Replace(M,"%s",I(7))					'User's current status
+	
+	REM TxFixMsg = M
+REM End Function

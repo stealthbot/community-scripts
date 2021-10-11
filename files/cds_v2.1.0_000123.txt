@@ -1,0 +1,1660 @@
+Script("Name") = "cds"
+Script("Author") = "MrPunkKid"
+Script("Major") = 2
+Script("Minor") = 1
+Script("Revision") = 0
+Script("Description") = "Allows users to battle each other on battle.net turn-based style"
+
+'// Change Log
+'//
+'//  :: v2.0 - v2.1
+'//   ->  Revamped the entire script for the new SB 2.7
+
+'// Script Stuff
+Const script_author = "MrPunkKid"
+Const script_major = 2
+Const script_minor = 1
+Const script_revision = 0
+
+'// Player Statistic Variables
+Public p1                            '// Holds player 1 username
+Public p2                            '// Holds player 2 username
+Public p1hp, p1xhp                   '// Holds player 1 hit points
+Public p2hp, p2xhp                   '// Holds player 2 hit points
+Public p1mp, p1xmp                   '// Holds player 1 magic points
+Public p2mp, p2xmp                   '// Holds player 2 magic points
+Public p1lp, p1xlp                   '// Holds player 1 limit points
+Public p2lp, p2xlp                   '// Holds player 2 limit points
+
+'// Player Status Variables
+Public p1a, p1p, p1h, p1s, p1l, p1t  '// Holds player 1 status ailments
+Public p2a, p2p, p2h, p2s, p2l, p2t  '// Holds player 2 status ailments
+Public p1lt                          '// Holds true when player 1 can use limits
+Public p2lt                          '// Holds true when player 2 can use limits
+Public p1stop                        '// Holds true when player 1 has stop enabled
+Public p2stop                        '// Holds true when player 2 has stop enabled
+Public p1q, p1qt                     '// Holds quick variables for player 1
+Public p2q, p2qt                     '// Holds quick variables for player 2
+Public p1d                           '// Holds defense mode for player 1
+Public p2d                           '// Holds defense mode for player 2
+Public p1inv, p1invt                 '// Holds player 1 invincibility
+Public p2inv, p2invt                 '// Holds player 2 invincibility
+Public p1regen, p1rt                 '// Holds player 1 regen
+Public p2regen, p2rt                 '// Holds player 2 regen
+Public p1tt, p1at, p1lgt, p1ht       '// Holds player 1 attack type targets
+Public p2tt, p2at, p2lgt, p2ht       '// Holds player 2 attack type targets
+
+'// Battle variables
+Public dmg              '// Holds current damage algorithm
+Public GameStarted      '// Holds true when game initially starts
+Public GameStartedp1    '// Extra stuff
+Public GameStartedp2    '// Extra stuff
+Public cpt              '// Holds 1 for player 1s turn, Holds 2 for player 2s turn
+
+'// Randomizer
+Randomize
+
+'// Other
+Public cmd
+
+Sub ClearVariables()
+  p1 = vbNullString
+  p2 = vbNullString
+  p1lt = False
+  p2lt = False
+  dmg = 0
+  p1lp = 0
+  p2lp = 0
+  p1tt = False
+  p1at = False
+  p1lgt = False
+  p1ht = False
+  p2tt = False
+  p2at = False
+  p2lgt = False
+  p2ht = False
+  p1d = False
+  p2d = False
+  p1a = False
+  p2a = False
+  p1t = False
+  p2t = False
+  p1h = False
+  p2h = False
+  p1l = False
+  p2l = False
+  p1xlp = 100
+  p2xlp = 100
+  p1hp = 500
+  p1xhp = 500
+  p2hp = 500
+  p2xhp = 500
+  p1mp = 100
+  p1xmp = 100
+  p2mp = 100
+  p2xmp = 100
+  p1regen = False
+  p2regen = False
+  p1rt = 0
+  p2rt = 0
+  p1inv = False
+  p2inv = False
+  p1invt = 0
+  p2invt = 0
+  cpt = 1
+  p1stop = False
+  p2stop = False
+  GameStarted = False
+  GameStartedp1 = False
+  GameStartedp2 = False
+End Sub
+  
+Sub CreateCmds()
+  Set cmd = OpenCommand("pickplayer")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("pickplayer")
+    With cmd
+      .Description = "Assigns the current user to the first available player slot in the game."
+      .RequiredRank = 0
+      .SpecialNotes = "Any user can use this command as long as any slot is still available." & vbNewLine & _
+                      "Game will begin as soon as both player 1 and player 2 are assigned."
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("options")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("options")
+    With cmd
+      .Description = "Displays a list of various actions you can do during game."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players can issue this command during a game."
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("spells")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("spells")
+    With cmd
+      .Description = "Displays a list of spells that require magic points to cast."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players can issue this command during a game."
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("limits")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("limits")
+    With cmd
+      .Description = "Displays a list of special attacks that deal monsterous damage."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players who have 100% limit points can execute this command." & vbNewLine & _
+                      "Once a limit is executed, this command becomes unavailable until the next time LP reaches 100%."
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("usespell")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("usespell")
+    With cmd
+      .Description = "Cast a spell on your opponent."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players can issue this command during a game."
+      Set Parameter = .NewParameter("spell", False, "Word")
+      With Parameter
+        .Description = "usespell <spell> = Uses the specified spell on the opponent."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("stats")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("stats")
+    With cmd
+      .Description = "Retrieves the current players HP/MP/LP% and their current ailments."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players can issue this command during a game."
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("uselimit")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("uselimit")
+    With cmd
+      .Description = "Cast a limit on your opponent."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players who have 100% limit points can execute this command." & vbNewLine & _
+                      "Once a limit is executed, this command becomes unavailable until the next time LP reaches 100%."
+      Set Parameter = .NewParameter("limit", False, "Word")
+      With Parameter
+        .Description = "uselimit <limit> = Uses the specified limit on the opponent."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("charge")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("charge")
+    With cmd
+      .Description = "Attempts to recharge the current player's magic points."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players can issue this command during a game." & vbNewLine & _
+                      "Attempting means if the recharge fails, you lose all your MP."
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("forfeit")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("forfeit")
+    With cmd
+      .Description = "Tells the game to stop playing, whoever types this command... loses."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players can issue this command during a game."
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("attack")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("attack")
+    With cmd
+      .Description = "Issues a regular melee attack against the opponent."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players can issue this command during a game."
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("attacktype")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("attacktype")
+    With cmd
+      .Description = "Sets the body part for the current player to attack when using attack."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players can issue this command during a game."
+      Set Parameter = .NewParameter("head/leg/torso/arm", False, "Word")
+      With Parameter
+        .Description = "attacktype head = Targets the opponent's head on attacking which in turn causes silence at times." & vbNewLine & vbNewLine & _
+                       "attacktype leg = Targets the opponent's legs on attacking which in turn causes missed attacks." & vbNewLine & _
+                       "attacktype torso = Targets the opponent's torso on attacking which in turn causes opponent to sometimes lose HP when attacking." & vbNewLine & _
+                       "attacktype arm = Targets the opponent's arms on attacking which in turn causes opponent to deal decreased damage sometimes."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("defend")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("defend")
+    With cmd
+      .Description = "Allows the current player to parry the next melee attack from his/her opponent."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players can issue this command during a game."
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("spellinfo")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("spellinfo")
+    With cmd
+      .Description = "Displays details about a specific spell."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players can issue this command during a game."
+      Set Parameter = .NewParameter("spell", False, "Word")
+      With Parameter
+        .Description = "spellinfo <spell> = Display cost and details about a specific spell."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("limitinfo")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("limitinfo")
+    With cmd
+      .Description = "Displays details about a specific limit."
+      .RequiredRank = 0
+      .SpecialNotes = "Only current players who have 100% limit points can execute this command during a game."
+      Set Parameter = .NewParameter("limit", False, "Word")
+      With Parameter
+        .Description = "limitinfo <limit> = Display details about a specific limit."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("startgame")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("startgame")
+    With cmd
+      .Description = "Script-Related, do not use this command."
+      .RequiredRank = 200
+      .RequiredFlags = "SCRIPT"
+      .SpecialNotes = "Script-Related, do not use this command."
+      .Save
+    End With
+  End If
+
+  AddChat 16759296, "CDS Script:. Script is ready to use. ", 5731327, "Please view the commands in the Command Manager for descriptions, syntax, and command aliases."
+End Sub
+
+Sub Event_Load()
+  '// Lets clear all the variables here
+  Call ClearVariables()
+
+  '// Make the script commands if needed
+  AddChat 16759296, "CDS Script:. ", 10682112, "Checking commands and creating if neccessary ... This may take a few minutes; ignore the Script-Control pop-up."
+  Call CreateCmds()
+
+  Call CreateObj("LongTimer", "playersPicked")
+  Call CreateObj("LongTimer", "pickRandomPlayer")
+  Call CreateObj("LongTimer", "checkLP")
+  Call CreateObj("LongTimer", "checkHP")
+  Call CreateObj("LongTimer", "checkMP")
+  Call CreateObj("LongTimer", "checkp1body")
+  Call CreateObj("LongTimer", "checkp2body")
+
+  '// Load all the timers here to check for game stuff
+  Call LoadGameTimers()
+
+  AddChat 32896, "Channel Dueling Script Version " & script_major & "." & script_minor & "." & script_revision, 33023, " by ", 12615680, script_author
+End Sub
+
+Private Sub LoadGameTimers()
+  playersPicked.Enabled = True
+  playersPicked.Interval = 1
+End Sub
+
+Private Sub clearTimers()
+  playersPicked.Enabled = False
+  pickRandomPlayer.Enabled = False
+  checkLP.Enabled = False
+  checkHP.Enabled = False
+  checkMP.Enabled = False
+  checkp1body.Enabled = False
+  checkp2body.Enabled = False
+End Sub
+
+Private Sub playersPicked_Timer()
+  If p1 <> vbNullString And p2 <> vbNullString And GameStartedp1 = False Then
+    GameStartedp1 = True
+    pickRandomPlayer.Enabled = True
+    pickRandomPlayer.Interval = 1
+    checkLP.Enabled = True
+    checkLP.Interval = 1
+    checkHP.Enabled = True
+    checkHP.Interval = 1
+    checkMP.Enabled = True
+    checkMP.Interval = 1
+    checkp1body.Enabled = True
+    checkp1body.Interval = 1
+    checkp2body.Enabled = True
+    checkp2body.Interval = 1
+  End If
+End Sub
+
+Private Function getUser(Player)
+  Select Case Player
+    Case 1            :getUser = p1
+    Case 2            :getUser = p2
+  End Select
+End Function
+
+Private Sub pickRandomPlayer_Timer()
+  If GameStartedp2 = False Then
+    GameStartedp2 = True
+    chance = Int( ( 100 - 0 + 1 ) * Rnd + 0 )
+    If chance <= 50 Then
+      cpt = 1
+    Else
+      cpt = 2
+    End If
+    Call startGame("startGame", getUser(cpt))
+  End If
+End Sub
+
+Private Sub startGame(Command, User)
+  GameStarted = True
+  If User = 1 Then
+    Call Command.Respond(p1 & " has been picked to start the game.")
+  Else
+    Call Command.Respond(p2 & " has been picked to start the game.")
+  End If
+  '// Lets clear all the variables here
+  Call ClearVariables()
+  Call ClearStartTimers()
+End Sub
+
+Private Sub ClearStartTimers()
+  pickRandomPlayer.Enabled = False
+  playersPicked.Enabled = False
+End Sub
+
+Private Sub checkLP_Timer()
+  If p1lp >= p1xlp Then
+    p1lp = p1xlp
+  End If
+  If p2lp >= p2xlp Then
+    p2lp = p2xlp
+  End If
+  If p1lp = p1xlp Then
+    p1lt = True
+  Else
+    p1lt = False
+  End If
+  If p2lp = p2xlp Then
+    p2lt = True
+  Else
+    p2lt = False
+  End If
+End Sub
+
+Private Sub checkMP_Timer()
+  If p1mp > p1xmp Then
+    p1mp = p1xmp
+  End If
+  If p2mp > p2xmp Then
+    p2mp = p2xmp
+  End If
+End Sub
+
+Private Sub checkHP_Timer()
+  If p1hp < 0 Then
+    p1hp = 0
+  End If
+  If p1hp > p1xhp Then
+    p1hp = p1xhp
+  End If
+  If p2hp < 0 Then
+    p2hp = 0
+  End If
+  If p2hp > p2xhp Then
+    p2hp = p2xhp
+  End If
+End Sub
+
+Public Sub Event_Command(Command)
+  Select Case LCase(Command.Name)
+    Case "pickplayer"
+      Call pickplayerCmd(Command, Command.Username)
+    Case "options"
+      Call optionsCmd(Command, Command.Username)
+    Case "spells"
+      Call spellsCmd(Command, Command.Username)
+    Case "limits"
+      Call limitsCmd(Command, Command.Username)
+    Case "usespell"
+      Call usespellCmd(Command, Command.Username)
+      Call change_intVars(getPlayer(Command.Username))
+      Call changeTurn(getPlayer(Command.Username))
+    Case "uselimit"
+      Call uselimitCmd(Command, Command.Username)
+      Call change_intVars(getPlayer(Command.Username))
+      Call changeTurn(getPlayer(Command.Username))
+    Case "stats"
+      Call statsCmd(Command, Command.Username)
+    Case "forfeit"
+      Call forfeitCmd(Command, Command.Username)
+    Case "attack"
+      Call attackCmd(Command, Command.Username)
+      Call change_intVars(getPlayer(Command.Username))
+      Call changeTurn(getPlayer(Command.Username))
+    Case "attacktype"
+      Call attacktypeCmd(Command, Command.Username)
+    Case "defend"
+      Call defendCmd(Command, Command.Username)
+      Call change_intVars(getPlayer(Command.Username))
+      Call changeTurn(getPlayer(Command.Username))
+    Case "charge"
+      Call chargeCmd(Command, Command.Username)
+      Call change_intVars(getPlayer(Command.Username))
+      Call changeTurn(getPlayer(Command.Username))
+    Case "spellinfo"
+      Call spellinfoCmd(Command, Command.Username)
+    Case "limitinfo"
+      Call limitinfoCmd(Command, Command.Username)
+  End Select
+End Sub
+
+Private Sub change_intVars(Player)
+  If Player = 1 Then
+    Select Case p1inv
+      Case True               :p1invt = p1invt - 1
+    End Select
+    Select Case p1regen
+      Case True               :p1rt = p1rt - 1
+    End Select
+  ElseIf Player = 2 Then
+    Select Case p2inv
+      Case True               :p2invt = p2invt - 1
+    End Select
+    Select Case p2regen
+      Case True               :p2rt = p2rt - 1
+    End Select
+  Else
+    Exit Sub
+  End If
+  Select Case Player
+    Case 1                    :p1lp = p1lp + Int( ( 5 - 1 + 1 ) * Rnd + 1 )
+    Case 2                    :p2lp = p2lp + Int( ( 5 - 1 + 1 ) * Rnd + 1 )
+  End Select
+  If Player = 1 Then
+    If p1invt <= 0 Then
+      p1inv = False
+    End If
+  Else
+    If p2invt <= 0 Then
+      p2inv = False
+    End If
+  End If
+End Sub
+
+Private Function getPlayerAndTurns(User)
+  If LCase(User) <> LCase(p1) And LCase(User) <> LCase(p2) Then
+    getPlayerAndTurns = False
+    Exit Function
+  End If
+  If cpt <> getPlayer(User) Then
+    getPlayerAndTurns = False
+    Exit Function
+  End If
+  getPlayerAndTurns = True
+End Function
+
+Private Function getPlayerMP(User)
+  Select Case LCase(User)
+    Case LCase(p1)           :getPlayerMP = p1mp
+    Case LCase(p2)           :getPlayerMP = p2mp
+    Case Else                :getPlayerMP = -1
+  End Select
+End Function
+
+Private Function getPlayerLP(User)
+  Select Case LCase(User)
+    Case LCase(p1)           :getPlayerLP = p1lp
+    Case LCase(p2)           :getPlayerLP = p2lp
+    Case Else                :getPlayerLP = -1
+  End Select
+End Function
+
+Private Function getPlayer(User)
+  Select Case LCase(User)
+    Case LCase(p1)
+      getPlayer = 1
+    Case LCase(p2)
+      getPlayer = 2
+    Case Else
+      getPlayer = -1
+  End Select
+End Function
+
+Private Function getPoisonStatus(User)
+  player = getPlayer(User)
+  Select Case player
+    Case 1             :getPoisonStatus = p1p
+    Case 2             :getPoisonStatus = p2p
+    Case Else             :getPoisonStatus = -1
+  End Select
+End Function
+
+Private Function getArmStatus(User)
+  player = getPlayer(User)
+  Select Case player
+    Case 1             :getArmStatus = p1a
+    Case 2             :getArmStatus = p2a
+    Case Else             :getArmStatus = -1
+  End Select
+End Function
+
+Private Function getTorsoStatus(User)
+  player = getPlayer(User)
+  Select Case player
+    Case 1             :getTorsoStatus = p1t
+    Case 2             :getTorsoStatus = p2t
+    Case Else             :getTorsoStatus = -1
+  End Select
+End Function
+
+Private Function getSilenceStatus(User)
+  player = getPlayer(User)
+  Select Case player
+    Case 1             :getSilenceStatus = p1s
+    Case 2             :getSilenceStatus = p2s
+    Case Else             :getSilenceStatus = -1
+  End Select
+End Function
+
+Private Function getHeadStatus(User)
+  player = getPlayer(User)
+  Select Case player
+    Case 1             :getHeadStatus = p1h
+    Case 2             :getHeadStatus = p2h
+    Case Else             :getHeadStatus = -1
+  End Select
+End Function
+
+Private Function getLegStatus(User)
+  player = getPlayer(User)
+  Select Case player
+    Case 1             :getLegStatus = p1l
+    Case 2             :getLegStatus = p2l
+    Case Else             :getLegStatus = -1
+  End Select
+End Function
+
+Private Function getOpponent(User)
+  player = getPlayer(User)
+  Select Case player
+    Case 1                :getOpponent = 2
+    Case 2                :getOpponent = 1
+    Case Else                :getOpponent = -1
+  End Select
+End Function
+
+Private Function getPlayerHP(User)
+  player = getPlayer(User)
+  Select Case player
+    Case 1                :getPlayerHP = p1hp
+    Case 2                :getPlayerHP = p2hp
+    Case Else                :getPlayerHP = -1
+  End Select
+End Function
+
+Private Function getSpellCost(SpellName)
+  spellNames = Array("cure", "esuna", "fire", "blizzard", "lightning", "holy", "demi", "cura", "fira", "blizzara", "thundara", "curaga", "firaga", "blizzaga", "thundaga", "bio", "silence")
+  spellCosts = Array(15, 10, 10, 10, 10, 10, 30, 20, 15, 15, 15, 25, 20, 20, 20, 10, 25)
+  For i = 0 To UBound(spellNames)
+    If LCase(spellNames(i)) = LCase(SpellName) Then
+      getSpellCost = spellCosts(i)
+      Exit Function
+    End If
+  Next
+  getSpellCost = -1
+End Function
+  
+Private Function getSpellDmg(SpellName)
+  spellNames = Array("cure", "fire", "blizzard", "lightning", "holy", "cura", "fira", "blizzara", "thundara", "curaga", "firaga", "blizzaga", "thundaga")
+  spellMaxDmgs = Array(10, 15, 15, 15, 25, 30, 30, 30, 30, 45, 45, 45, 45)
+  For i = 0 To UBound(spellNames)
+    If LCase(spellNames(i)) = LCase(SpellName) Then
+      maxDmgApplied = spellMaxDmgs(i)
+      Exit For
+    End If
+  Next
+  spellMinDmgs = Array(5, 5, 5, 5, 10, 10, 10, 10, 10, 20, 20, 20, 20)
+  For i = 0 To UBound(spellNames)
+    If spellNames(i) = LCase(SpellName) Then
+      minDmgApplied = spellMinDmgs(i)
+      Exit For
+    End If
+  Next
+  
+  getSpellDmg = Int( ( maxDmgApplied - minDmgApplied + 1 ) * Rnd + minDmgApplied )
+End Function
+
+Private Function getSpellType(Spell)
+  spellNames = Array("cure", "esuna", "fire", "blizzard", "lightning", "holy", "demi", "cura", "fira", "blizzara", "thundara", "curaga", "firaga", "blizzaga", "thundaga", "bio", "silence")
+  spellTypes = Array("heal/deal", "status/esuna", "heal/deal", "heal/deal", "heal/deal", "heal/deal", "status/demi", "heal/deal", "heal/deal", "heal/deal", "heal/deal", "heal/deal", "heal/deal", "heal/deal", "heal/deal", "status/bio", "status/silence")
+  For i = 0 To UBound(spellNames)
+    If LCase(spellNames(i)) = LCase(Spell) Then
+      getSpellType = spellTypes(i)
+      Exit Function
+    End If
+  Next
+  getSpellType = -1
+End Function
+
+Private Function getLimitType(Limit)
+  limitNames = Array("omnislash", "stop", "regen", "invincible", "quick", "drain", "sap", "renew")
+  limitTypes = Array("damage", "status/stop", "status/regen", "status/invincible", "status/quick", "status/drain", "status/sap", "status/renew")
+  For i = 0 To UBound(limitNames)
+    If LCase(limitNames(i)) = LCase(Limit) Then
+      getLimitType = limitTypes(i)
+      Exit Function
+    End If
+  Next
+  getLimitType = -1
+End Function
+
+Private Function IsLimitValid(Limit)
+  limitNames = Array("omnislash", "stop", "regen", "invincible", "quick", "drain", "sap", "renew")
+  For i = 0 To UBound(limitNames)
+    If LCase(limit) = LCase(limitNames(i)) Then
+      IsLimitValid = True
+      Exit Function
+    End If
+  Next
+  IsLimitValid = False
+End Function
+
+Private Function IsCurable(Spell)
+  CurableSpells = Array("cure", "cura", "curaga")
+  For i = 0 To UBound(CurableSpells)
+    If LCase(Spell) = LCase(CurableSpells(i)) Then
+      IsCurable = True
+      Exit Function
+    End If
+  Next
+  IsCurable = False
+End Function
+
+Private Function HasAilments(Player)
+  Select Case Player
+    Case 1
+      PlayerAilments = Array(p1p, p1a, p1t, p1l, p1h, p1s, p1stop)
+      For i = 0 To UBound(PlayerAilments)
+        If PlayerAilments(i) = True Then
+          HasAilments = True
+          Exit Function
+        End If
+      Next
+      HasAilments = False
+    Case 2
+      PlayerAilments = Array(p2p, p2a, p2t, p2l, p2h, p2s, p2stop)
+      For i = 0 To UBound(PlayerAilments)
+        If PlayerAilments(i) = True Then
+          HasAilments = True
+          Exit Function
+        End If
+      Next
+      HasAilments = False
+  End Select
+End Function
+
+Private Function isValidAttackType(AttackType)
+  AttackTypes = Array("torso", "head", "arm", "leg")
+  For i = 0 To UBound(AttackTypes)
+    If LCase(AttackType) = AttackTypes(i) Then
+      isValidAttackType = True
+      Exit Function
+    End If
+  Next
+  isValidAttackType = False
+End Function
+
+Private Sub pickplayerCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      If getPlayer(User) = -1 Then 
+        If p1 = vbNullString Then
+          p1 = User
+          Call Command.Respond(User & " has been assigned to player 1.")
+        ElseIf p1 <> vbNullString And p2 = vbNullString Then
+          p2 = User
+          Call Command.Respond(User & " has been assigned to player 2.")
+        Else
+          Call Command.Respond("Sorry there is either a game going on right now, or there is no available player slots left.")
+          Call Command.Respond("Current players are: " & p1 & ", " & p2)
+        End If
+      End If
+    End If
+  End If
+End Sub
+
+Private Sub optionsCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      If Not getPlayerAndTurns(User) Then Exit Sub
+         '// Get command requirements. Use official names as they appear in the Command Manager; these names will not change unless users edit the XML, which is idiotic when they can just create an alias.
+         cmdNames = Array("pickplayer", "options", "spells", "limits", "usespell", "uselimit", "stats", "forfeit", "attack", "attacktype", "defend", "charge", "spellinfo", "limitinfo")
+         For i = 0 To UBound(cmdNames)
+            Set cmd = OpenCommand(cmdNames(i))
+            If cmd.RequiredRank <= GetDBEntry(user).Rank OR user = BotVars.Username Then
+              text = text & cmdNames(i) & ", "
+            End If
+         Next    
+         If text <> vbNullString Then
+            Call Command.Respond("These are your current battle options: " & Left(text, Len(text) -2))         
+         Else
+            Call Command.Respond("There are currently no battle options.")
+         End If
+    End If
+  End If
+End Sub
+
+Private Function getSpellMinDmg(Spell)
+  SpellNames = Array("cure", "fire", "blizzard", "lightning", "holy", "cura", "fira", "blizzara", "thundara", "curaga", "firaga", "blizzaga", "thundaga")
+  SpellMinDmgs = Array(5, 5, 5, 5, 10, 10, 10, 10, 10, 20, 20, 20, 20)
+  For i = 0 To UBound(SpellNames)
+    If LCase(Spell) = LCase(SpellNames(i)) Then
+      getSpellMinDmg = SpellMinDmgs(i)
+      Exit Function
+    End If
+  Next
+  getSpellMinDmg = "N/A"
+End Function
+
+Private Function getSpellMaxDmg(Spell)
+  SpellNames = Array("cure", "fire", "blizzard", "lightning", "holy", "cura", "fira", "blizzara", "thundara", "curaga", "firaga", "blizzaga", "thundaga")
+  SpellMaxDmgs = Array(10, 15, 15, 15, 25, 30, 30, 30, 30, 45, 45, 45, 45)
+  For i = 0 To UBound(SpellNames)
+    If LCase(Spell) = LCase(SpellNames(i)) Then
+      getSpellMaxDmg = SpellMaxDmgs(i)
+      Exit Function
+    End If
+  Next
+  getSpellMaxDmg = "N/A"
+End Function
+ 
+Private Sub spellinfoCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      If Len(Command.Args) > 0 Then
+        spellName = Command.Args
+        cost = getSpellCost(SpellName)
+        If cost = -1 Then
+          Call Command.Respond("That spell does not exist. Type " & BotVars.Trigger & "spells to retrieve a list of spells.")
+          Exit Sub
+        End If
+        details = getSpellDetails(spellName)
+        minDmg = getSpellMinDmg(spellName)
+        maxDmg = getSpellMaxDmg(spellName)
+        If Not IsNumeric(minDmg) Then
+          Call Command.Respond("Name: " & spellName & "|Cost: " & cost & "|Damage: None|Details: " & details)
+        Else
+          iDmg = minDmg & "-" & maxDmg
+          Call Command.Respond("Name: " & spellName & "|Cost: " & cost & "|Damage: " & iDmg & "|Details: " & details)
+        End If
+      End If
+    End If
+  End If
+End Sub
+
+Private Sub limitinfoCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      If Len(Command.Args) > 0 Then
+        limitName = Command.Args
+        If Not isLimitValid(limitName) Then Exit Sub
+          details = getLimitDetails(limitName)
+          minDmg = getLimitMinDmg(limitName)
+          maxDmg = getLimitMaxDmg(limitName)
+          If Not IsNumeric(minDmg) Then
+            Call Command.Respond("Name: " & limitName & "|Damage: None|Details: " & details)
+          Else
+            iDmg = minDmg & "-" & maxDmg
+            Call Command.Respond("Name: " & limitName & "|Damage: " & iDmg & "|Details: " & details)
+          End If
+      End If
+    End If
+  End If
+End Sub
+
+Private Function getLimitMinDmg(Limit)
+  limitNames = Array("omnislash")
+  limitMinDmgs = Array(10)
+  For i = 0 To UBound(limitNames)
+    If LCase(Limit) = LCase(limitNames(i)) Then
+      getLimitMinDmg = limitMinDmgs(i)
+      Exit Function
+    End If
+  Next
+  getLimitMinDmg = "N/A"
+End Function
+
+Private Function getLimitMaxDmg(Limit)
+  limitNames = Array("omnislash")
+  limitMaxDmgs = Array(20)
+  For i = 0 To UBound(limitNames)
+    If LCase(Limit) = LCase(limitNames(i)) Then
+      getLimitMaxDmg = limitMaxDmgs(i)
+      Exit Function
+    End If
+  Next
+  getLimitMaxDmg = "N/A"
+End Function
+
+Private Function getLimitDetails(Limit)
+  limitNames = Array("omnislash", "stop", "regen", "invincible", "quick", "drain", "sap", "renew")
+  limitDetails = Array("Attack your opponent 3 consecutive times", "Use stop on your opponent", "Gradually increase your HP over time", "Make yourself invincible", "Allows you to make two moves", "Steal HP from your opponent", "Steal MP from your opponent", "Restore HP/MP and cure all ailments")
+  For i = 0 To UBound(limitNames)
+    If LCase(Limit) = LCase(limitNames(i)) Then
+      getLimitDetails = limitDetails(i)
+      Exit Function
+    End If
+  Next
+  getLimitDetails = "N/A"
+End Function
+
+Private Function getSpellDetails(Spell)
+  spellNames = Array("cure", "esuna", "fire", "blizzard", "lightning", "holy", "demi", "cura", "fira", "blizzara", "thundara", "curaga", "firaga", "blizzaga", "thundaga", "bio", "silence")
+  spellDetails = Array("Restores some HP", "Cures all status ailments", "Cast fire on your opponent", "Cast blizzard on your opponent", "Cast lightning on your opponent", "Cast holy on your opponent", "Takes a quarter of your opponent's HP away", "Restores HP", "Cast fira on your opponent", "Cast blizzara on your opponent", "Cast thundara on your opponent", "Restores more HP", "Cast firaga on your opponent", "Cast blizzaga on your opponent", "Cast thundaga on your opponent", "Poison your opponent", "Freeze your opponents spells")
+  For i = 0 To UBound(spellNames)
+    If LCase(Spell) = LCase(spellNames(i)) Then
+      getSpellDetails = spellDetails(i)
+      Exit Function
+    End If
+  Next
+  getSpellDetails = "N/A"
+End Function
+
+Private Function getSpellCost(Spell)
+  spellNames = Array("cure", "esuna", "fire", "blizzard", "lightning", "holy", "demi", "cura", "fira", "blizzara", "thundara", "curaga", "firaga", "blizzaga", "thundaga", "bio", "silence")
+  spellCosts = Array(15, 10, 10, 10, 10, 10, 15, 20, 15, 15, 15, 25, 20, 20, 20, 10, 25)
+  For i = 0 To UBound(spellNames)
+    If LCase(Spell) = LCase(spellNames(i)) Then
+      getSpellCost = spellCosts(i)
+      Exit Function
+    End If
+  Next
+  getSpellCost = -1
+End Function
+
+Private Sub spellsCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      If Not getPlayerAndTurns(User) Then Exit Sub
+        '// Get all spells listed
+        spellNames = Array("cure", "esuna", "fire", "blizzard", "lightning", "holy", "demi", "cura", "fira", "blizzara", "thundara", "curaga", "firaga", "blizzaga", "thundaga", "bio", "silence")
+        spellCosts = Array(15, 10, 10, 10, 10, 10, 15, 20, 15, 15, 15, 25, 20, 20, 20, 10, 25)
+        For i = 0 To UBound(spellNames)
+          If getPlayerMP(User) >= spellCosts(i) Then
+            text = text & spellNames(i) & ", "
+          End If
+        Next
+        If text <> vbNullString Then
+          Call Command.Respond("These are your current spells that you can use: " & Left(text, Len(text) -2))
+        Else
+          Call Command.Respond("You do not have enough MP to use any spells.")
+        End If
+    End If
+  End If
+End Sub
+
+Private Sub limitsCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      If Not getPlayerAndTurns(User) Then Exit Sub
+        If Not getPlayerLP(User) = 100 Then Exit Sub
+          '// Get all limits listed
+          limitNames = Array("omnislash", "stop", "regen", "invincible", "quick", "drain", "sap", "renew")
+          For i = 0 To UBound(limitNames)
+            text = text & limitNames(i) & ", "
+          Next
+          Call Command.Respond("These are you current limits: " & Left(text, Len(text) -2))
+    End If
+  End If
+End Sub
+
+Private Sub clearStatus(Player)
+  Select Case Player
+    Case 1
+        p1p = False
+        p1a = False
+        p1t = False
+        p1l = False
+        p1h = False
+        p1s = False
+        p1stop = False
+    Case 2
+        p2p = False
+        p2a = False
+        p2t = False
+        p2l = False
+        p2h = False
+        p2s = False
+        p2stop = False
+    Case Else
+        Exit Sub
+  End Select
+End Sub
+
+Private Sub changeTurn(User)
+  If User = 1 Then
+    If p2stop = True Then
+      cpt = 1
+      p2stop = False
+      Exit Sub
+    End If
+  Else
+    If p1stop = True Then
+      cpt = 2
+      p1stop = False
+      Exit Sub
+    End If
+  End If
+  Select Case User
+    Case 1:             cpt = 2
+    Case 2:             cpt = 1
+  End Select
+End Sub
+
+Private Function isSilenced(Player)
+  Select Case player
+    Case 1
+      If p1s Then isSilenced = True Else isSilenced = False
+    Case 2
+      If p2s Then isSilenced = True Else isSilenced = False
+  End Select
+End Function
+
+Private Sub usespellCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      If Not getPlayerAndTurns(User) Then Exit Sub
+        If Len(Command.Args) > 0 Then
+          spellName = Command.Args
+          player = getPlayer(User)
+          If IsSilenced(player) Then
+            Call Command.Respond("Sorry, but you cannot use magic at this time.")
+            Exit Sub
+          End If
+          If getLegStatus(User) Then
+            
+            chance = Int( ( 100 - 1 + 1 ) * Rnd + 0 )
+            If change <= 50 Then
+              Call Command.Respond("Sorry, but you missed with your spell.")
+              Exit Sub
+            End If
+          End If
+          If getHeadStatus(User) Then
+            
+            chance = Int( ( 100 - 1 + 1 ) * Rnd + 1 )
+            If chance <= 50 Then
+              Call Command.Respond("Sorry, but due to head damage, you messed up the spell.")
+              Exit Sub
+            End If
+          End If
+          cost = getSpellCost(SpellName)
+          If cost = -1 Then
+            Call Command.Respond("That spell does not exist. Type " & BotVars.Trigger & "spells to retrieve a list of spells.")
+            Exit Sub
+          End If
+          If getPlayerMP(User) < cost Then
+            Call Command.Respond("You do not have enough MP to cast that spell.")
+            Exit Sub
+          End If
+          If getSpellType(spellName) = "heal/deal" Then
+            dmg = getSpellDmg(spellName)
+            If getArmStatus(User) Then
+              
+              dmg = dmg - Int( ( 5 - 1 + 1 ) * Rnd + 1 )
+            End If
+            If IsCurable(SpellName) Then
+              Select Case player
+                Case 1:              p1hp = p1hp + dmg:p1mp = p1mp - cost:Call Command.Respond(p1 & " has cured himself.")
+                Case 2:              p2hp = p2hp + dmg:p2mp = p2mp - cost:Call Command.Respond(p2 & " has cured himself.")
+                Case Else:           Call Command.Respond("You are not a player.")
+              End Select
+            Else
+              opponent = getOpponent(User)
+              Select Case opponent
+                Case 1:              p1hp = p1hp - dmg:p2mp = p2mp - cost:Call Command.Respond(p2 & " has dealt " & dmg & " points of damage to " & p1 & ".")
+                Case 2:              p2hp = p2hp - dmg:p1mp = p1mp - cost:Call Command.Respond(p1 & " has dealt " & dmg & " points of damage to " & p2 & ".")
+                Case Else:           Call Command.Respond("You have no opponents.")
+              End Select
+            End If
+          ElseIf getSpellType(spellName) = "status/esuna" Then
+            player = getPlayer(User)
+            If Not HasAilments(player) Then
+              Call Command.Respond("You have no status ailments.")
+              Exit Sub
+            End If
+            clearStatus player
+            Select Case player
+              Case 1:                p1mp = p1mp - cost:Call Command.Respond(p1 & "'s status ailments have been removed.")
+              Case 2:                p2mp = p2mp - cost:Call Command.Respond(p2 & "'s status ailments have been removed.")
+              Case Else:             Call Command.Respond("You are not a player.")
+            End Select
+          ElseIf getSpellType(spellName) = "status/demi" Then
+            player = getPlayer(User)
+            dmg = .25
+            opponent = getOpponent(User)
+            Select Case opponent
+              Case 1:                p1hp = p1hp * dmg:p2mp = p2mp - cost:Call Command.Respond(p2 & " split " & p1 & "'s HP by 1/4")
+              Case 2:                p2hp = p2hp * dmg:p1mp = p1mp - cost:Call Command.Respond(p1 & " split " & p2 & "'s HP by 1/4")
+              Case Else:             Call Command.Respond("You have no opponents.")
+            End Select
+          ElseIf getSpellType(spellName) = "status/silence" Then
+            player = getPlayer(User)
+            opponent = getOpponent(User)
+            If IsSilenced(opponent) Then
+              Call Command.Respond("Your opponent has already been silenced")
+              Exit Sub
+            End If
+            Select Case opponent
+              Case 1                :p1s = True:p2mp = p2mp - cost:Call Command.Respond(p2 & " has silenced " & p1 & "'s magic.")
+              Case 2                :p2s = True:p1mp = p1mp - cost:Call Command.Respond(p1 & " has silenced " & p2 & "'s magic.")
+              Case Else                :Call Command.Respond("You have no opponents.")
+            End Select
+          ElseIf getSpellType(spellName) = "status/bio" Then
+            player = getPlayer(User)
+            opponent = getOpponent(User)
+            If Not IsPoisoned(opponent) Then
+              Call Command.Respond("Your opponent has already been poisoned.")
+              Exit Sub
+            End If
+            Select Case opponent
+              Case 1                :p1p = True:p2mp = p2mp - cost:Call Command.Respond(p2 & " has poisoned " & p1 & ".")
+              Case 2                :p2p = True:p1mp = p1mp - cost:Call Command.Respond(p1 & " has poisoned " & p2 & ".")
+              Case Else                :Call Command.Respond("You have no opponents.")
+            End Select
+          End If
+      End If
+    End If
+  End If
+End Sub
+
+Private Function HasRegen(player)
+  Select Case player
+    Case 1
+      If p1regen = True Then
+        HasRegen = True
+      Else
+        HasRegen = False
+      End If
+    Case 2
+      If p2regen = True Then
+        HasRegen = True
+      Else
+        HasRegen = False
+      End If
+  End Select
+End Function
+
+Private Function HasHeadDamage(player)
+  Select Case player
+    Case 1
+      If p1h = True Then
+        HasHeadDamage = True
+      Else
+        HasHeadDamage = False
+      End If
+    Case 2
+      If p2h = True Then
+        HasHeadDamage = True
+      Else
+        HasHeadDamage = False
+      End If
+  End Select
+End Function
+
+Private Function isPoisoned(player)
+  Select Case player
+    Case 1
+      If p1p = True Then
+        isPoisoned = True
+      Else
+        isPoisoned = False
+      End If
+    Case 2
+      If p2p = True Then
+        isPoisoned = True
+      Else
+        isPoisoned = False
+      End If
+  End Select
+End Function
+
+Private Function HasTorsoDamage(player)
+  Select Case player
+    Case 1
+      If p1t = True Then
+        HasTorsoDamage = True
+      Else
+        HasTorsoDamage = False
+      End If
+    Case 2
+      If p2t = True Then
+        HasTorsoDamage = True
+      Else
+        HasTorsoDamage = False
+      End If
+  End Select
+End Function
+
+Private Function HasArmDamage(player)
+  Select Case player
+    Case 1
+      If p1a = True Then
+        HasArmDamage = True
+      Else
+        HasArmDamage = False
+      End If
+    Case 2
+      If p2a = True Then
+        HasArmDamage = True
+      Else
+        HasArmDamage = False
+      End If
+  End Select
+End Function
+
+Private Function HasLegDamage(player)
+  Select Case player
+    Case 1
+      If p1l = True Then
+        HasLegDamage = True
+      Else
+        HasLegDamage = False
+      End If
+    Case 2
+      If p2l = True Then
+        HasLegDamage = True
+      Else
+        HasLegDamage = False
+      End If
+  End Select
+End Function
+
+Private Function getStatus(User)
+  curStatus = vbNullString
+  player = getPlayer(User)
+  Select Case player
+    Case 1
+      If p1p Then
+        curStatus = curStatus & "Poison" & ", "
+      End If
+      If p1a Then
+        curStatus = curStatus & "Arm Damage" & ", "
+      End If
+      If p1h Then
+        curStatus = curStatus & "Head Damage" & ", "
+      End If
+      If p1s Then
+        curStatus = curStatus & "Silence" & ", "
+      End If
+      If p1l Then
+        curStatus = curStatus & "Leg Damage" & ", "
+      End If
+      If p1t Then
+        curStatus = curStatus & "Torso Damage" & ", "
+      End If
+    Case 2
+      If p2p Then
+        curStatus = curStatus & "Poison" & ", "
+      End If
+      If p2a Then
+        curStatus = curStatus & "Arm Damage" & ", "
+      End If
+      If p2h Then
+        curStatus = curStatus & "Head Damage" & ", "
+      End If
+      If p2s Then
+        curStatus = curStatus & "Silence" & ", "
+      End If
+      If p2l Then
+        curStatus = curStatus & "Leg Damage" & ", "
+      End If
+      If p2t Then
+        curStatus = curStatus & "Torso Damage" & ", "
+      End If
+      getStatus = curStatus
+  End Select
+End Function
+
+Private Sub addStatus(player)
+  If HasRegen(player) Then
+    Select Case player
+      Case 1                  :p1hp = p1hp + 5
+      Case 2                  :p2hp = p2hp + 5
+    End Select
+  End If
+  If IsPoisoned(player) Then
+    
+    Select Case player
+      Case 1                  :p1hp = p1hp - Int( ( 5 - 1 + 1 ) * Rnd + 1 )
+      Case 2                  :p2hp = p2hp - Int( ( 5 - 1 + 1 ) * Rnd + 1 )
+    End Select
+  End If
+  If HasTorsoDamage(player) Then
+    
+    Select Case player
+      Case 1                  :p1hp = p1hp - Int( ( 5 - 1 + 1 ) * Rnd + 1 )
+      Case 2                  :p2hp = p2hp - Int( ( 5 - 1 + 1 ) * Rnd + 1 )
+    End Select
+  End If
+End Sub
+
+Private Function isInvincible(Player)
+  Select Case player
+    Case 1
+      If p1inv Then isInvincible = True Else isInvincible = False
+    Case 2
+      If p2inv Then isInvincible = True Else isInvincible = False
+  End Select
+End Function
+
+Private Sub uselimitCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      If Not getPlayerAndTurns(User) Then Exit Sub
+        If Len(Command.Args) > 0 Then
+          limitName = Command.Args
+          If Not getPlayerLP(User) = 100 Then Exit Sub
+            If Not IsLimitValid(limitName) Then
+              Call Command.Respond("That is not a valid limit, type " & BotVars.Trigger & "limits to see a list of limits.")
+              Exit Sub
+            Else
+              limitType = getLimitType(limitName)
+              player = getPlayer(User)
+              If limitType = "damage" Then
+                maxDmgApplied = getLimitMaxDmg(limitName)
+                minDmgApplied = getLimitMinDmg(limitName)
+                opponent = getOpponent(User)
+                TotalDmg = 0
+                For i = 0 To 3
+                  
+                  dmg = Int( ( maxDmgApplied - minDmgApplied + 1 ) * Rnd + minDmgApplied )
+                  If opponent = 1 Then
+                    p1hp = p1hp - dmg
+                    TotalDmg = TotalDmg + dmg
+                  Else
+                    p2hp = p2hp - dmg
+                    TotalDmg = TotalDmg + dmg
+                  End If
+                Next
+                Select Case opponent
+                  Case 1                 :p2lp = 0:Call Command.Respond(p2 & " uses omnislash on " & p1 & " for a total of " & TotalDmg & " points of damage.")
+                  Case 2                 :p1lp = 0:Call Command.Respond(p1 & " uses omnislash on " & p2 & " for a total of " & TotalDmg & " points of damage.")
+                End Select
+              ElseIf limitType = "status/stop" Then
+                opponent = getOpponent(User)
+                If IsInvincible(opponent) Then
+                  Call Command.Respond("Sorry, but your opponent is invincible.")
+                  Exit Sub
+                End If
+                Select Case opponent
+                  Case 1                 :p2lp = 0:p1stop = True:Call Command.Respond(p2 & " uses stop on " & p1 & " causing him to lose his turn.")
+                  Case 2                 :p1lp = 0:p2stop = True:Call Command.Respond(p1 & " uses stop on " & p2 & " causing him to lose his turn.")
+                End Select
+              ElseIf limitType = "status/regen" Then
+                Select Case player
+                  Case 1                 :p1lp = 0:p1regen = True:p1rt = 4:Call Command.Respond(p1 & " uses regen on himself.")
+                  Case 2                 :p2lp = 0:p2regen = True:p2rt = 4:Call Command.Respond(p2 & " uses regen on himself.")
+                End Select
+              ElseIf limitType = "status/invincible" Then
+                Select Case player
+                  Case 1                 :p1lp = 0:p1inv = True:p1invt = 4:Call Command.Respond(p1 & " becomes invincible for 3 turns.")
+                  Case 2                 :p2lp = 0:p2inv = True:p2invt = 4:Call Command.Respond(p2 & " becomes invincible for 3 turns.")
+                End Select
+              ElseIf limitType = "status/quick" Then
+                Select Case player
+                  Case 1                 :p1lp = 0:p1q = True:p1qt = 4:Call Command.Respond(p1 & " has used quick.")
+                  Case 2                 :p2lp = 0:p2q = True:p2qt = 4:Call Command.Respond(p2 & " has used quick.")
+                End Select
+              ElseIf limitType = "status/drain" Then
+                maxDmgApplied = 20
+                minDmgApplied = 10
+                
+                dmg = Int( ( maxDmgApplied - minDmgApplied + 1 ) * Rnd + minDmgApplied )
+                Select Case player
+                  Case 1                 :p1lp = 0:p1hp = p1hp + dmg:p2hp = p2hp - dmg:Call Command.Respond(p1 & " has stolen " & dmg & " HP from " & p2)
+                  Case 2                 :p2lp = 0:p2hp = p2hp + dmg:p1hp = p1hp - dmg:Call Command.Respond(p2 & " has stolen " & dmg & " HP from " & p1)
+                End Select
+              ElseIf limitType = "status/sap" Then
+                maxDmgApplied = 35
+                minDmgApplied = 10
+                
+                Select Case player
+                  Case 1                 :enemymp = getPlayerMP(p2)
+                  Case 2                 :enemymp = getPlayerMP(p1)
+                End Select
+                dmg = Int( ( maxDmgApplied - minDmgApplied + 1 ) * Rnd + minDmgApplied )
+                If dmg > enemymp Then
+                  dmg = enemymp
+                End If
+                Select Case player
+                  Case 1                 :p1lp = 0:p1mp = p1mp + dmg:p2mp = p2mp - dmg:Call Command.Respond(p1 & " has stolen " & dmg & " MP from " & p2)
+                  Case 2                 :p2lp = 0:p2mp = p2mp + dmg:p1mp = p1mp - dmg:Call Command.Respond(p2 & " has stolen " & dmg & " MP from " & p1)
+                End Select
+              ElseIf limitType = "status/renew" Then
+                Select Case player
+                  Case 1                 :p1lp = 0:Call clearStatus(player):p1hp = p1xhp:p1mp = p1xmp:Call Command.Respond(p1 & " has renewed himself.")
+                  Case 2                 :p2lp = 0:Call clearStatus(player):p2hp = p2xhp:p2mp = p2xmp:Call Command.Respond(p2 & " has renewed himself.")
+                End Select
+              End If
+          End If
+        End If
+    End If
+  End If
+End Sub
+
+Private Sub statsCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      If getPlayer(User) = -1 Then Exit Sub
+        player = getPlayer(User)
+        curHP = getPlayerHP(User)
+        curMP = getPlayerMP(User)
+        curLP = getPlayerLP(User)
+        Call Command.Respond(User & " | HP: " & curHP & " | MP: " & curMP & " | LP: " & curLP & "%")
+        If HasAilments(player) = True Then
+          statusA = getStatus(User)
+          Call Command.Respond("You currently have " & Left(statusA, Len(statusA) -2))
+        End If
+    End If
+  End If
+End Sub
+
+Private Sub forfeitCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      player = getPlayer(User)
+      If player = -1 Then Exit Sub
+        Select Case player
+          Case 1             :Call Command.Respond(p1 & " has forfeited the game. " & p2 & " wins."):Call ClearVariables():Call clearTimers():Call Event_Load()
+          Case 2             :Call Command.Respond(p2 & " has forfeited the game. " & p2 & " wins."):Call ClearVariables():Call clearTimers():Call Event_Load()
+        End Select
+    End If
+  End If
+End Sub
+
+Private Sub checkp1body_Timer()
+  If p1tt = True Then
+    p1ht = False
+    p1lgt = False
+    p1at = False
+    p1tt = True
+  ElseIf p1ht = True Then
+    p1tt = False
+    p1lgt = False
+    p1at = False
+    p1ht = True
+  ElseIf p1lgt = True Then
+    p1at = False
+    p1ht = False
+    p1tt = False
+    p1lgt = True
+  ElseIf p1at = True Then
+    p1ht = False
+    p1tt = False
+    p1lgt = False
+    p1at = True
+  End If
+End Sub
+
+Private Sub checkp2body_Timer()
+  If p2tt = True Then
+    p2ht = False
+    p2lgt = False
+    p2at = False
+    p2tt = True
+  ElseIf p2ht = True Then
+    p2tt = False
+    p2lgt = False
+    p2at = False
+    p2ht = True
+  ElseIf p2lgt = True Then
+    p2at = False
+    p2ht = False
+    p2tt = False
+    p2lgt = True
+  ElseIf p2at = True Then
+    p2ht = False
+    p2tt = False
+    p2lgt = False
+    p2at = True
+  End If
+End Sub  
+
+Private Sub attacktypeCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      player = getPlayer(User)
+      If player = -1 Then Exit Sub
+        If Len(Command.Args) > 0 Then
+          aType = Command.Args
+          If Not isValidAttackType(aType) Then Exit Sub
+            Select Case LCase(aType)
+              Case "torso"
+                Select Case player
+                  Case 1           :p2tt = True:Call Command.Respond(p1 & " has targeted " & p2 & "'s torso.")
+                  Case 2           :p1tt = True:Call Command.Respond(p2 & " has targeted " & p1 & "'s torso.")
+                End Select
+              Case "head"
+                Select Case player
+                  Case 1           :p2ht = True:Call Command.Respond(p1 & " has targeted " & p2 & "'s head.")
+                  Case 2           :p1ht = True:Call Command.Respond(p2 & " has targeted " & p1 & "'s head.")
+                End Select
+              Case "leg"
+                Select Case player
+                  Case 1           :p2lgt = True:Call Command.Respond(p1 & " has targeted " & p2 & "'s legs.")
+                  Case 2           :p1lgt = True:Call Command.Respond(p2 & " has targeted " & p1 & "'s legs.")
+                End Select
+              Case "arm"
+                Select Case player
+                  Case 1           :p2at = True:Call Command.Respond(p1 & " has targeted " & p2 & "'s arms.")
+                  Case 2           :p1at = True:Call Command.Respond(p2 & " has targeted " & p1 & "'s arms.")
+                End Select
+              Case "none"
+                Select Case player
+                  Case 1           :p2tt = False:p2ht = False:p2lgt = False:p2at = False:Call Command.Respond(p1 & " is now targeting no specific area on " & p2)
+                  Case 2           :p1tt = False:p1ht = False:p1lgt = False:p1at = False:Call Command.Respond(p2 & " is now targeting no specific area on " & p1)
+                End Select
+            End Select
+        End If
+    End If
+  End If
+End Sub
+
+Private Function getAttackType(Player)
+  Select Case player
+    Case 1             :AttackTypes = Array(p2tt, p2ht, p2lgt, p2at)
+    Case 2             :AttackTypes = Array(p1tt, p1ht, p1lgt, p1at)
+  End Select
+  For i = 0 To UBound(AttackTypes)
+    If AttackTypes(i) = True And i = 0 Then
+      getAttackType = "torso"
+      Exit Function
+    ElseIf AttackTypes(i) = True And i = 1 Then
+      getAttackType = "head"
+      Exit Function
+    ElseIf AttackTypes(i) = True And i = 2 Then
+      getAttackType = "leg"
+      Exit Function
+    ElseIf AttackTypes(i) = True And i = 3 Then
+      getAttackType = "arm"
+      Exit Function
+    End If
+  Next
+  getAttackType = "none"
+End Function
+
+Private Sub attackCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enought access
+    If Command.HasAccess Then
+      If Not getPlayerAndTurns(User) Then Exit Sub
+        player = getPlayer(User)
+        aType = getAttackType(player)
+        maxDmgApplied = 30
+        minDmgApplied = 10
+        dmg = Int( ( maxDmgApplied - minDmgApplied + 1 ) * Rnd + minDmgApplied )
+        If getLegStatus(User) Then
+          
+          chance = Int( ( 100 - 1 + 1 ) * Rnd + 0 )
+          If change <= 50 Then
+            Call Command.Respond("Sorry, but due to your legs being weak, you slipped and fell swinging your weapon.")
+            Exit Sub
+          End If
+        End If
+        If getHeadStatus(User) Then
+          
+          chance = Int( ( 100 - 1 + 1 ) * Rnd + 1 )
+          If chance <= 50 Then
+            Call Command.Respond("Sorry, but due to head injuries, you forgot where your target was.")
+            Exit Sub
+          End If
+        End If
+        If getArmStatus(User) Then
+          
+          dmg = dmg - Int( ( 5 - 1 + 1 ) * Rnd + 1 )
+          If dmg < 0 Then
+            dmg = 0
+          End If
+        End If
+        Select Case player
+          Case 1
+            If p2d = True Then
+              
+              dmg = dmg - Int( ( 5 - 1 + 1 ) * Rnd + 1 )
+              If dmg < 0 Then
+                dmg = 0
+              End If
+            End If
+          Case 2
+            If p1d = True Then
+              
+              dmg = dmg - Int( ( 5 - 1 + 1 ) * Rnd + 1 )
+              If dmg < 0 Then
+                dmg = 0
+              End If
+            End If
+        End Select
+        If player = 1 Then
+          Select Case aType
+            Case "torso"              :p2t = True:p2hp = p2hp - dmg:Call Command.Respond(p1 & " attacked " & p2 & "'s torso for " & dmg & " HP.")
+            Case "head"               :p2h = True:p2hp = p2hp - dmg:Call Command.Respond(p1 & " attacked " & p2 & "'s head for " & dmg & " HP.")
+            Case "leg"                :p2l = True:p2hp = p2hp - dmg:Call Command.Respond(p1 & " attacked " & p2 & "'s legs for " & dmg & " HP.")
+            Case "arm"                :p2a = True:p2hp = p2hp - dmg:Call Command.Respond(p1 & " attacked " & p2 & "'s arms for " & dmg & " HP.")
+            Case "none"               :p2hp = p2hp - dmg:Call Command.Respond(p1 & " attacked " & p2 & " for " & dmg & " HP.")
+          End Select
+        ElseIf player = 2 Then
+          Select Case aType
+            Case "torso"              :p1t = True:p1hp = p1hp - dmg:Call Command.Respond(p2 & " attacked " & p1 & "'s torso for " & dmg & " HP.")
+            Case "head"               :p1h = True:p1hp = p1hp - dmg:Call Command.Respond(p2 & " attacked " & p1 & "'s head for " & dmg & " HP.")
+            Case "leg"                :p1l = True:p1hp = p1hp - dmg:Call Command.Respond(p2 & " attacked " & p1 & "'s legs for " & dmg & " HP.")
+            Case "arm"                :p1a = True:p1hp = p1hp - dmg:Call Command.Respond(p2 & " attacked " & p1 & "'s arms for " & dmg & " HP.")
+            Case "none"               :p1hp = p1hp - dmg:Call Command.Respond(p2 & " attacked " & p1 & " for " & dmg & " HP.")
+          End Select
+        End If
+    End If
+  End If
+End Sub
+
+Private Sub defendCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      If Not getPlayerAndTurns(User) Then Exit Sub
+        player = getPlayer(User)
+        Select Case player
+          Case 1                  :p1d = True:Call Command.Respond(p1 & " has raised his guard.")
+          Case 2                  :p2d = True:Call Command.Respond(p2 & " has raised his guard.")
+        End Select
+    End If
+  End If
+End Sub
+
+Private Sub clearMP(Player)
+  Select Case player
+    Case 1                       :p1mp = 0
+    Case 2                       :p2mp = 0
+  End Select
+End Sub
+
+Private Sub raiseMP(Player, Amount)
+  Select Case player
+    Case 1                       :p1mp = p1mp + Amount
+    Case 2                       :p2mp = p2mp + Amount
+  End Select
+End Sub
+
+Private Sub chargeCmd(Command, User)
+  '// If proper syntax
+  If Command.IsValid Then
+    '// Has enough access
+    If Command.HasAccess Then
+      If Not getPlayerAndTurns(User) Then Exit Sub
+        player = getPlayer(User)
+        
+        chance = Int( ( 100 - 1 + 1 ) * Rnd + 1 )
+        If chance <= 50 Then
+          clearMP player
+          Call Command.Respond("Sorry, but you failed to recharge your MP, MP is now 0.")
+          Exit Sub
+        End If
+        
+        dmg = Int( ( 100 - 10 + 1 ) * Rnd + 10 )
+        raiseMP player, dmg
+        Select Case player
+          Case 1                      :Call Command.Respond(p1 & " has increased his MP by " & dmg)
+          Case 2                      :Call Command.Respond(p2 & " has increased his MP by " & dmg)
+        End Select
+    End If
+  End If
+End Sub

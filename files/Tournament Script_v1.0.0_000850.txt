@@ -1,0 +1,450 @@
+Option Explicit
+
+Script("Name")         = "Tournament Script"
+Script("Author")      = "RosieSuckedMe"
+Script("Major")       = 1
+Script("Minor")       = 0
+Script("Revision")    = 0
+Script("Description") = "Signs users in for player vs player tournaments"
+
+'// Changelog:
+'//// v1.00 -> v1.01:
+'//   Added command "signed" and command "reset"
+'//
+'//// v1.01 -> v1.02:
+'//   Added a sign limit
+'//
+'//// v1.02 -> v1.03:
+'//   Added the commands "check <user>" and "checkme"
+'//   Fixed an error with using double variables
+'//
+'//// v1.03 -> v1.04:
+'//
+'//   Added the command "confirm"
+'//   "confirm" adds the signed users into teams
+'//   This script now only(!) supports 1v1 tournaments with 16 players
+'//
+'//// v1.04 -> v2.00
+'//
+'//   Rewrote the entire script with some new commands and some old removed
+'//   The script is now named Tournament Script instead of Sign Up
+'//   Added a new tournament starting system
+'//   Added a timeout on tournaments. Default is 5 days
+'//   Signed users will also be 'mailed' who they is facing for 1st round
+
+Private signRunning    '// Boolean to check if a tournament is up
+Private maxSlots       '// Variable to hold the sign limit
+Private slotsLeft      '// Variable which holds the number of unused slots
+Private tourHost       '// Variable to hold the tournament creater
+Private CreationDate   '// Variable to hold the tournament starting day
+Private msgPrefix      '// Variable which holds the message prefix (emote or not)
+
+Private FSO            '// FileSystemObject
+Private signList       '// Dictionary to hold signed users
+Private ForbiddenList  '// Dictionary which holds the forbidden users
+Private mailSystem     '// Dictionary to hold mailed users
+
+
+'// Bot events
+
+Sub Event_Load()
+     Set FSO = CreateObject("Scripting.FileSystemObject")
+     Set signList = CreateObject("Scripting.Dictionary")
+     Set ForbiddenList = CreateObject("Scripting.Dictionary")
+     Set mailSystem = CreateObject("Scripting.Dictionary")
+     signList.CompareMode = 1
+     ForbiddenList.CompareMode = 1
+     mailSystem.CompareMode = 1
+
+     Call CreateCommands()
+     Call CreateSettings()
+
+     Call CreateObj("LongTimer", "ActivityCheck")
+     With ActivityCheck
+          .Enabled = False
+          .Interval = Setting("abort_time") * 60 * 30
+     End With
+     
+     If IsTrue("emote_all") Then
+          msgPrefix = "/emote • "
+     Else
+          msgPrefix = "• "
+     End If
+     
+     AddChat &HFFCC33, Script("Name") & " - by " & Script("Author") & ". Version: v" & Script("Major") & "." & Script("Minor") & Script("Revision")
+End Sub
+
+Sub Event_Command(Command)
+     With Command
+          If .IsValid And .HasAccess Then
+               Select Case LCase(.Name)
+                    Case "start"    : Call Start_cmd(.Username, .Argument("number"))
+                    Case "signup"   : Call SignUp_cmd(.Username)
+                    Case "abort"    : Call Abort_cmd(.Username)
+                    Case "shuffle"  : Call Shuffle_cmd(.Username)
+                    Case "removeme" : Call RemoveMe_cmd(.Username)
+                    Case "signed"   : Call Signed_cmd(.Username)
+                    Case "forbid"   : Call Forbid_cmd(.Username, .Argument("user"))
+                    Case "unforbid" : Call UnForbid_cmd(.Username, .Argument("user"))
+               End Select
+          End If
+     End With
+End Sub
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+     If mailSystem.Exists(Username) Then
+          AddQ StringFormat("/whisper {0} • {1}", Username, mailSystem.Item(Username))
+          mailSystem.Remove Username
+     End If
+End Sub
+
+
+'// Command subs
+
+Private Sub Start_cmd(Name, PayLoad)
+     If signRunning Then Exit Sub
+
+     If Len(PayLoad) = 0 Then
+          PayLoad = 16
+     End If
+     
+     If PayLoad >= 66 Then
+          AddQ StringFormat("{0}The number {1} must be below 66. Setting it to 16 by default!", msgPrefix, PayLoad)
+          PayLoad = 16
+     ElseIf PayLoad <= 2 Then
+          AddQ StringFormat("{0}The number {1} must be above 2. Setting it to 16 by default!", msgPrefix, PayLoad)
+          PayLoad = 16
+     End If
+     
+     If Not IsInteger(PayLoad) Then
+          AddQ StringFormat("{0}The number {1} must be an integer. Setting it to 16 by default!", msgPrefix, PayLoad)
+          PayLoad = 16
+     End If
+
+     signRunning = True
+     maxSlots = PayLoad
+     tourHost = Name
+     CreationDate = Now
+     ActivityCheck.Enabled = True
+     AddQ StringFormat("{0}A tournament is about to start! Host: {1} | Max players: {2}; Type {3}signup to enter, {3}removeme to leave, {3}abort to abort it!", msgPrefix, tourHost, maxSlots, BotVars.Trigger)
+End Sub
+
+Private Sub SignUp_cmd(Name)
+     If Not signRunning Then Exit Sub
+
+     If Not signList.Exists(Name) Then
+          If Not ForbiddenList.Exists(Name) Then
+               If Not signList.Count = maxSlots Then
+                    signList.Add Name, " "
+                    slotsLeft = maxSlots - signList.Count
+                    If Not slotsLeft = 0 Then
+                         AddQ StringFormat("{0}{1} signed! {+{2}}", msgPrefix, Name, slotsLeft)
+                    Else
+                         AddQ StringFormat("{0}{1} signed! {2} may now {3}shuffle the players!", msgPrefix, Name, tourHost, BotVars.Trigger)
+                    End If
+               End If
+          End If
+     End If
+End Sub
+
+Private Sub Shuffle_cmd(Name)
+     If Not signRunning Then Exit Sub
+     If Not LCase(Name) = LCase(tourHost) Then Exit Sub
+     
+     If slotsLeft = 0 Then
+          AddQ StringFormat("{0}{1} has confirmed the tournament and players will be shuffled!", msgPrefix, Name)
+          Call CreateTournament()
+     Else
+          AddQ StringFormat("{0}Not enough players have signed! {+{1}}", msgPrefix, slotsLeft)
+     End If
+End Sub
+
+Private Sub RemoveMe_cmd(Name)
+     If Not signRunning Then Exit Sub
+
+     If signList.Exists(Name) Then
+          signList.Remove Name
+          slotsLeft = maxSlots - signList.Count
+          AddQ StringFormat("{0}{1} was signed out! {+{2}}", msgPrefix, Name, slotsLeft)
+     End If
+End Sub
+
+Private Sub Abort_cmd(Name)
+     If Not signRunning Then Exit Sub
+     If Not LCase(Name) = LCase(tourHost) Then Exit Sub
+     
+     Call TourAbort(Name)
+End Sub
+
+Private Sub Signed_cmd(Name)
+     If signRunning Then
+          If signList.Count = 0 Then
+               AddQ StringFormat("{0}There are no signed users!", msgPrefix)
+          Else
+               AddQ StringFormat("{0}Signed users: {{1}/{2}} {3}", msgPrefix, signList.Count, maxSlots, SignedList)
+          End If
+     End If
+End Sub
+
+Private Sub Forbid_cmd(Name, PayLoad)
+     Dim line
+
+     If Not signRunning Then Exit Sub
+     If Not LCase(Name) = LCase(tourHost) Then Exit Sub
+     If LCase(PayLoad) = LCase(tourHost) Then Exit Sub
+     
+     If Not ForbiddenList.Exists(PayLoad) Then
+          If Not ForbiddenList.Count >= 6 Then
+               line = StringFormat("{0} has been forbidden from the tournament!", PayLoad)
+               If signList.Exists(PayLoad) Then
+                    signList.Remove PayLoad
+                    slotsLeft = maxSlots - signList.Count
+                    line = line & StringFormat(" {+{0}}", slotsLeft)
+               End If
+               
+               ForbiddenList.Add PayLoad, " "
+               AddQ StringFormat("{0}{1}", msgPrefix, line)
+          Else
+               AddQ StringFormat("{0}You may only forbid a maximum of 5 users per tournament!", msgPrefix)
+          End If
+     End If
+End Sub
+
+Private Sub UnForbid_cmd(Name, PayLoad)
+     If Not signRunning Then Exit Sub
+     If Not LCase(Name) = LCase(tourHost) Then Exit Sub
+     If LCase(PayLoad) = LCase(tourHost) Then Exit Sub
+     
+     If ForbiddenList.Exists(PayLoad) Then
+          ForbiddenList.Remove PayLoad
+          AddQ StringFormat("{0}{1} has been allowed in the tournament!", msgPrefix, PayLoad)
+     End If
+End Sub
+
+
+'// Functions
+
+Private Function IsInteger(Number)
+     Select Case Right(Number, 1)
+          Case "0", "2", "4", "6", "8"
+               IsInteger = True
+          Case Else
+               IsInteger = False
+     End Select
+     
+     If Number = 3 Then
+          IsInteger = True
+     End If
+End Function
+
+Private Function SignedList()
+     Dim String, Key
+
+     For Each Key In signList.Keys
+          If String = vbNullString Then
+               String = Key
+          Else
+               String = String & ", " & Key
+          End If
+     Next
+     
+     SignedList = String
+End Function
+
+Private Function Setting(Entry)
+     Setting = GetSettingsEntry(Entry)
+End Function
+
+Private Function IsTrue(Entry)
+     Select Case LCase(Setting(Entry))
+          Case "y", "yes", "true", "1"
+               IsTrue = True
+          Case Else
+               IsTrue = False
+	End Select
+End Function
+
+
+'// Timers
+
+Sub ActivityCheck_Timer()
+     If Abs(DateDiff("d", CreationDate, Now) = Setting("abort_time")) Then
+          Call TourAbort(BotVars.Username)
+     End If
+End Sub
+
+
+'// Miscellaneous subs
+
+Private Sub TourAbort(Name)
+     If signList.Count >= 1 Then signList.RemoveAll
+     If ForbiddenList.Count >= 1 Then ForbiddenList.RemoveAll
+     signRunning = False
+     tourHost = vbNullString
+     maxSlots = 0
+     slotsLeft = 0
+     CreationDate = vbNullString
+     ActivityCheck.Enabled = False
+
+     If LCase(Name) = LCase(BotVars.Username) Then
+          AddQ StringFormat("{0}The tournament has been aborted due to inactivity!", msgPrefix)
+     Else
+          AddQ StringFormat("{0}{1} has aborted the tournament!", msgPrefix, Name)
+     End If
+End Sub
+
+Private Sub CreateTournament()
+     Dim Key, tourPlayers
+     Dim I, line
+     
+     For Each Key In signList.Keys
+          If tourPlayers = vbNullString Then
+               tourPlayers = Key
+          Else
+               tourPlayers = tourPlayers & "|" & Key
+          End If
+     Next
+     
+     tourPlayers = Split(tourPlayers, "|")
+     For I = 0 To UBound(tourPlayers)
+          If line = vbNullString Then
+               line = "#" & I + 1 & ": " & tourPlayers(I)
+          Else
+               line = line & " | #" & I + 1 & ": " & tourPlayers(I)
+          End If
+     Next
+
+     If signList.Count >= 1 Then signList.RemoveAll
+     If ForbiddenList.Count >= 1 Then ForbiddenList.RemoveAll
+     signRunning = False
+     tourHost = vbNullString
+     maxSlots = 0
+     slotsLeft = 0
+     CreationDate = vbNullString
+     ActivityCheck.Enabled = False
+
+     AddQ StringFormat("{0}{1}", msgPrefix, line)
+     
+     For I = 0 To UBound(tourPlayers)
+          If I < UBound(tourPlayers) Then
+               mailSystem.Add tourPlayers(I), "Round #1: You will be facing " & tourPlayers(I + 1)
+          Else
+               mailSystem.Add tourPlayers(I), "Round #1: You will be facing " & tourPlayers(0)
+          End If
+     Next
+End Sub
+
+Private Sub CreateSettings()
+     Dim response
+     
+     If Setting("emote_all") = vbNullString Then
+          response = MsgBox("Emote all messages", vbYesNo, Script("Name") & " by " & Script("Author"))
+          If response = vbYes Then
+               response = "Y"
+          Else
+               response = "N"
+          End If
+
+          WriteSettingsEntry "emote_all", response
+          Set response = Nothing
+          
+          WriteSettingsEntry "abort_time", InputBox("Time, in days, before a tournament will auto-abort", Script("Name") & " by " & Script("Author"), "5")
+     End If
+End Sub
+
+Private Sub CreateCommands()
+     Dim Command, Parameter, cmd
+     
+     For Each cmd In SSC.GetCommands("Internal Bot Commands")
+          With SSC.Opencommand(CStr(cmd), "Internal Bot Commands")
+               If CStr(cmd) = "shuffle" Then
+                    If .IsEnabled = True Then
+                         .IsEnabled = False
+                         .Save
+                    End If
+                    
+                    Exit For
+               End If
+          End With
+     Next
+
+     If OpenCommand("start") Is Nothing Then
+          With CreateCommand("start")
+               .Description = "Starts a one versus one tournament" 
+               .RequiredRank = 20
+               Set Parameter = .NewParameter("number", True, "Word")
+               Parameter.Description = "Number of maximum players"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+
+     If OpenCommand("signup") Is Nothing Then
+          With CreateCommand("signup")
+               .Description = "Signs the user for the tournament" 
+               .RequiredRank = 0
+               .Aliases.Add "sign"
+               .Save
+          End With
+     End If
+
+     If OpenCommand("removeme") Is Nothing Then
+          With CreateCommand("removeme")
+               .Description = "Removes the signed user from the tournament" 
+               .RequiredRank = 0
+               .Aliases.Add "out"
+               .Save
+          End With
+     End If
+
+     If OpenCommand("abort") Is Nothing Then
+          With CreateCommand("abort")
+               .Description = "Aborts the current tournament" 
+               .RequiredRank = 20
+               .Save
+          End With
+     End If
+
+     If OpenCommand("signed") Is Nothing Then
+          With CreateCommand("signed")
+               .Description = "Displays signed users" 
+               .RequiredRank = 0
+               .Aliases.Add "listusers"
+               .Save
+          End With
+     End If
+
+     If OpenCommand("forbid") Is Nothing Then
+          With CreateCommand("forbid")
+               .Description = "Forbids a user from signing to the tournament" 
+               .RequiredRank = 20
+               Set Parameter = .NewParameter("user", False, "Word")
+               Parameter.Description = "User to forbid"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+
+     If OpenCommand("unforbid") Is Nothing Then
+          With CreateCommand("unforbid")
+               .Description = "Removes a user from the forbidden list" 
+               .RequiredRank = 20
+               Set Parameter = .NewParameter("user", False, "Word")
+               Parameter.Description = "User to remove from the forbidden list"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+
+     If OpenCommand("shuffle") Is Nothing Then
+          With CreateCommand("shuffle")
+               .Description = "Adds the signed users into teams" 
+               .RequiredRank = 20
+               .Aliases.Add "confirm"
+               .Save
+          End With
+     End If
+
+     Set Command = Nothing
+     Set Parameter = Nothing
+End Sub

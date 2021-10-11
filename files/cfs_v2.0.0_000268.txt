@@ -1,0 +1,398 @@
+Script("Name") = "cfs"
+Script("Author") = "MrPunkKid"
+Script("Major") = 2
+Script("Minor") = 0
+Script("Revision") = 0
+Script("Description") = "Adds a message board to your channel."
+
+Private cfsFSO
+Private cfsConn
+Private cfsDatabasePath
+
+Sub Event_Load()
+  cmdsCreated = 0
+  cmdsLoaded = 0
+  AddChat 16759296, "CFS Script:. ", 10682112, "Checking commands and creating if necessary ... This may take a few minutes; ignore the Script-Control pop-up."
+  Call CreateCmds()
+  AddChat 16759296, "CFS Script:. Script is ready to use. ", 5731327, "Please view the commands in the Command Manager for descriptions, syntax, and command aliases."
+  Set cfsFSO = CreateObject("Scripting.FileSystemObject")
+  cfsDatabasePath = BotPath() & "forumData.mdb"
+  If Not cfsFSO.FileExists(cfsDatabasePath) Then
+    Call create_database()       '// Create the database
+  Else
+    Call connect_db()            '// Connect to database
+  End If
+End Sub
+
+Private Sub create_database()
+  '// Create the database
+  Set Catalog = CreateObject("ADOX.Catalog")
+  Catalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & cfsDatabasePath
+  '// Connect to database
+  Call connect_db()
+  '// Create tables
+  cfsConn.Execute("CREATE TABLE `posts` (`ID` COUNTER, `date` DATE NULL, `username` varchar(30) NOT NULL, `subject` varchar(200) NOT NULL, `body` varchar(200) NOT NULL)")
+  cfsConn.Execute("CREATE TABLE `inbox` (`ID` COUNTER, `date` DATE NULL, `inbox_username` varchar(30) NOT NULL, `sent_by` varchar(30) NOT NULL, `subject` varchar(200) NOT NULL, `body` varchar(200) NOT NULL, `deliver_status` varchar(30) NOT NULL)")
+End Sub
+
+Private Sub connect_db()
+  '// Create database connection
+  Set cfsConn = CreateObject("ADODB.connection")
+  dsn = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & cfsDatabasePath
+  cfsConn.ConnectionString = dsn
+  cfsConn.Open
+End Sub
+
+Public Sub Event_Command(Command)
+  Select Case LCase(Command.Name)
+    Case "posts":              Call postsCmd(Command, Command.Username)
+    Case "addpost":            Call addpostCmd(Command, Command.Username)
+    Case "delpost":            Call delpostCmd(Command, Command.Username)
+    Case "sendpm":             Call sendpmCmd(Command, Command.Username)
+    Case "readpm":             Call readpmCmd(Command, Command.Username)
+    Case "messages":           Call inboxCmd(Command, Command.Username)
+    Case "sentbox":            Call sentboxCmd(Command, Command.Username)
+    Case "clearinbox":         Call clearinboxCmd(Command, Command.Username)
+  End Select
+End Sub
+
+Private Function getDeliverStatus(Status)
+  Select Case LCase(Status)
+    Case "true":               getDeliverStatus = "has been delivered successfully."
+    Case "false":              getDeliverStatus = "is currently waiting to be recieved."
+  End Select
+End Function
+
+Private Sub sentboxCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      cmd = Command.Args
+      If Len(cmd) > 0 Then
+        Set rs = cfsConn.Execute("SELECT COUNT(*) FROM `inbox` WHERE `inbox_username`='" & cmd & "' AND `sent_by`='" & User & "'")
+      Else
+        Set rs = cfsConn.Execute("SELECT COUNT(*) FROM `inbox` WHERE `sent_by`='" & User & "'")
+      End If
+      If rs.Fields(0) = 0 Then
+        If Len(cmd) > 0 Then
+          Call Command.Respond("No private messages were found that were sent to: " & cmd)
+        Else
+          Call Command.Respond("You have not sent any private messages.")
+        End If
+      End If
+      If Not (rs.BOF or rs.EOF) Then
+        If Len(cmd) > 0 Then
+          Set rs = cfsConn.Execute("SELECT * FROM `inbox` WHERE `inbox_username`='" & cmd & "' AND `sent_by`='" & User & "'")
+        Else
+          Set rs = cfsConn.Execute("SELECT * FROM `inbox` WHERE `sent_by`='" & User & "'")
+        End If
+        Do Until rs.EOF
+          Call Command.Respond("There was a PM (" & rs.Fields(4) & ") that was posted on " & rs.Fields(1) & " that was sent to: " & rs.Fields(2) & " and " & getDeliverStatus(rs.Fields(6)))
+          rs.MoveNext
+        Loop
+      End If
+    End If
+  End If
+End Sub
+
+Private Sub postsCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      cmd = Command.Args
+      If Len(cmd) > 0 Then
+        Set rs = cfsConn.Execute("SELECT COUNT(*) FROM `posts` WHERE `username`='" & cmd & "'")
+      Else
+        Set rs = cfsConn.Execute("SELECT COUNT(*) FROM `posts`")
+      End If
+      If rs.Fields(0) = 0 Then
+        If Len(cmd) > 0 Then
+          Call Command.Respond("No posts were found from " & cmd & ".")
+        Else
+          Call Command.Respond("No posts were found.")
+        End If
+      End If
+      If Not (rs.BOF or rs.EOF) Then
+        If Len(cmd) > 0 Then
+          Set rs = cfsConn.Execute("SELECT * FROM `posts` WHERE `username`='" & cmd & "'")
+        Else
+          Set rs = cfsConn.Execute("SELECT * FROM `posts`")
+        End If
+        Do Until rs.EOF
+          Command.Respond "Posted by " & rs.Fields(2) & " on " & rs.Fields(1) & ": " & rs.Fields(3) & "|" & rs.Fields(4)
+          rs.MoveNext
+        Loop
+      Else
+        Call Command.Respond("No posts were found.")
+      End If
+    End If
+  End If
+End Sub
+
+Private Sub addpostCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      If InStr(Command.Args, "|") <= 0 Then
+        Call Command.Respond("Invalid Usage: Must provide subject and message.")
+        Exit Sub
+      End If
+      cmd = Split(Command.Args, "|")
+      If UBound(cmd) <= 0 Then
+        Exit Sub
+      End If
+      If Len(cmd(1)) = 0 Then
+        Call Command.Respond("You must provide a message with your post.")
+        Exit Sub
+      End If
+      If Len(cmd(0)) = 0 Then
+        Call Command.Respond("You must provide a subject and message with your post.")
+        Exit Sub
+      End If
+      cfsConn.Execute("INSERT INTO `posts` (`date`,`username`,`subject`,`body`) " & _
+                      "VALUES ('" & Now & "', '" & User & "', '" & cmd(0) & "', '" & cmd(1) & "')")
+      Call Command.Respond("Added post successfully.")
+    End If
+  End If
+End Sub
+
+Private Sub delpostCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      cmd = Command.Args
+      If Len(cmd) <= 0 Then
+        Exit Sub
+      End If
+      Set rs = cfsConn.Execute("SELECT COUNT(*) FROM `posts` WHERE `subject`='" & cmd & "'")
+      If rs.Fields(0) = 0 Then
+        Call Command.Respond("That post does not exist.")
+        Exit Sub
+      End If
+      cfsConn.Execute("DELETE FROM `posts` WHERE `subject`='" & cmd & "'")
+      Call Command.Respond("Deleted post successfully.")
+    End If
+  End If
+End Sub
+
+Private Sub sendpmCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      cmd = Split(Command.Args, "|")
+      If UBound(cmd) <= 1 Then
+        Exit Sub
+      End If
+      If LCase(cmd(0)) = LCase(User) Then
+        Call Command.Respond("You cannot send yourself a private message")
+        Exit Sub
+      End If
+      cfsConn.Execute("INSERT INTO `inbox` (`date`,`inbox_username`,`sent_by`,`subject`,`body`,`deliver_status`) " & _
+                      "VALUES ('" & Now & "', '" & cmd(0) & "', '" & User & "', '" & cmd(1) & "', '" & cmd(2) & "', 'False')")
+      Call Command.Respond("Sent private message to " & cmd(0))
+    End If
+  End If
+End Sub
+
+Private Sub clearinboxCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      Set rs = cfsConn.Execute("SELECT COUNT(*) FROM `inbox` WHERE `inbox_username`='" & User & "'")
+      If rs.Fields(0) = 0 Then
+        Call Command.Respond("Sorry but there is no messages in your inbox to delete.")
+        Exit Sub
+      End If
+      cfsConn.Execute("DELETE FROM `inbox` WHERE `inbox_username`='" & User & "'")
+      Call Command.Respond("Cleared inbox successfully.")
+    End If
+  End If
+End Sub
+
+Private Sub readpmCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      cmd = Command.Args
+      If IsNumeric(cmd) Then
+        cmd = CInt(cmd)
+      End If
+      If Len(cmd) = 0 Then
+        Exit Sub
+      End If
+      If IsNumeric(cmd) Then
+        Set rs = cfsConn.Execute("SELECT COUNT(*) FROM `inbox` WHERE `inbox_username`='" & User & "' AND `deliver_status`='False' AND `ID`="&cmd)
+      Else
+        Set rs = cfsConn.Execute("SELECT COUNT(*) FROM `inbox` WHERE `inbox_username`='" & User & "' AND `subject`='" & cmd & "' AND `deliver_status`='False'")
+      End If
+      If rs.Fields(0) = 0 Then
+        Call Command.Respond("That message does not exist.")
+        Exit Sub
+      End If
+      If Not (rs.BOF or rs.EOF) Then
+        If IsNumeric(cmd) Then
+          Set rs = cfsConn.Execute("SELECT * FROM `inbox` WHERE `inbox_username`='" & User & "' AND `deliver_status`='False' AND `ID`="&cmd)
+        Else
+          Set rs = cfsConn.Execute("SELECT * FROM `inbox` WHERE `inbox_username`='" & User & "' AND `subject`='" & cmd & "' AND `deliver_status`='False'")
+        End If
+        Call Command.Respond("PM From " & rs.Fields(3) & " on " & rs.Fields(1) & ": " & rs.Fields(4) & "|" & rs.Fields(5))
+        cfsConn.Execute("UPDATE `inbox` SET `deliver_status`='True' WHERE `inbox_username`='" & User & "' AND `subject`='" & rs.Fields(4) & "'")
+      Else
+        Call Command.Respond("That message does not exist.")
+      End If
+    End If
+  End If
+End Sub
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+  Set rs = cfsConn.Execute("SELECT COUNT(*) FROM `inbox` WHERE `inbox_username`='" & Username & "' AND `deliver_status`='False'")
+  If rs.Fields(0) = 0 Then
+    Exit Sub
+  End If
+  AddQ "/w " & Username & " You have " & rs.Fields(0) & " " & getWord(rs.Fields(0), "message/messages") & " sitting in your inbox. Type '" & BotVars.Trigger & "messages' to retrieve " & getWord(rs.Fields(0), "it/them") & "."
+End Sub
+
+Private Function getWord(Number, Word)
+  If Number = 1 Then
+    Select Case Word
+      Case "message/messages":             getWord = "message"
+      Case "it/them":                      getWord = "it"
+    End Select
+  Else
+    Select Case Word
+      Case "message/messages":             getWord = "messages"
+      Case "it/them":                      getWord = "them"
+    End Select
+  End If
+End Function
+
+Private Function get2ndWord(Number)
+  If Number = 1 Then
+    get2ndWord = "this message"
+  Else
+    get2ndWord = "these messages"
+  End If
+End Function
+
+Private Sub inboxCmd(Command, User)
+  If Command.IsValid Then
+    If Command.HasAccess Then
+      messageQueue = 0
+      Set rs = cfsConn.Execute("SELECT COUNT(*) FROM `inbox` WHERE `inbox_username`='" & User & "' AND `deliver_status`='False'")
+      If rs.Fields(0) = 0 Then
+        Call Command.Respond("You have no messages.")
+        Exit Sub
+      End If
+      If Not (rs.BOF or rs.EOF) Then
+        Set rs = cfsConn.Execute("SELECT * FROM `inbox` WHERE `inbox_username`='" & User & "' AND `deliver_status`='False'")
+        Do Until rs.EOF
+          messageQueue = messageQueue + 1
+          Call Command.Respond("#" & messageQueue & ": " & rs.Fields(4) & " | ID: " & rs.Fields(0))
+          rs.MoveNext
+        Loop
+        Call Command.Respond("To view " & get2ndWord(messageQueue) & ", type '" & BotVars.Trigger & "readpm <subject/id>' to read " & getWord(messageQueue, "it/them") & ".")
+      Else
+        Call Command.Respond("You have no messages.")
+      End If
+    End If
+  End If
+End Sub
+
+Private Sub CreateCmds()
+  Set cmd = OpenCommand("clearinbox")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("clearinbox")
+    With cmd
+      .Description = "Clears all messages in your inbox."
+      .RequiredRank = 20
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("posts")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("posts")
+    With cmd
+      .Description = "Retrieves a list of topics that have been posted on the forums."
+      .RequiredRank = 20
+      Set Parameter = .NewParameter("author", True, "Word")
+      With Parameter
+        .Description = "(Optional) Filters out posts by author"
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("addpost")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("addpost")
+    With cmd
+      .Description = "Adds a topic to the forums."
+      .RequiredRank = 20
+      Set Parameter = .NewParameter("text", False, "Word")
+      With Parameter
+        .Description = "addpost <subject>|<text> = Adds a new topic to the forums."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("delpost")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("delpost")
+    With cmd
+      .Description = "Deletes a topic from the forums."
+      .RequiredRank = 20
+      Set Parameter = .NewParameter("text", False, "Word")
+      With Parameter
+        .Description = "delpost <subject> = Deletes a topic from the forums."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("sendpm")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("sendpm")
+    With cmd
+      .Description = "Sends a private message to another user."
+      .RequiredRank = 20
+      Set Parameter = .NewParameter("text", False, "Word")
+      With Parameter
+        .Description = "sendpm <username>|<subject>|<text> = Sends a private a message to the specified user."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("messages")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("messages")
+    With cmd
+      .Description = "Retrieves a list of private messages sent to you."
+      .RequiredRank = 20
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("readpm")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("readpm")
+    With cmd
+      .Description = "Read a private message sent to you from another user."
+      .RequiredRank = 20
+      Set Parameter = .NewParameter("text", False, "Word")
+      With Parameter
+        .Description = "readpm <subject> = Reads a private message with the specified subject"
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+  Set cmd = OpenCommand("sentbox")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("sentbox")
+    With cmd
+      .Description = "Retrieves a list of all sent private messages and if they have been read or not."
+      .RequiredRank = 20
+      Set Parameter = .NewParameter("recipient", True, "Word")
+      With Parameter
+        .Description = "sentbox [recipient] = Retrieves a list of all private messages sent to that specific user. This is optional."
+      End With
+      .Parameters.Add Parameter
+      .Save
+    End With
+  End If
+End Sub
+    

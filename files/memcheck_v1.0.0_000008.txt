@@ -1,0 +1,114 @@
+Option Explicit
+
+'***************************
+'// SCRIPT INFO
+
+Script("Name") = "memcheck"
+Script("Author") = "AwaKening"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 0
+
+'Commands:
+' botmemory, checkmem, memcheck, botusage
+
+'***************************
+'// SETTINGS
+'   (Only section that should be changed)
+
+' Username, Access, or Flag required to run command
+Private Const Access = 90
+
+' Processes that you want listed
+' Just type enough of the name to distinguish it. Seperate by a comma
+Private Const Programs = "stealthbot, ghost"
+
+'***************************
+'// GLOBALS
+
+Private progArr
+
+'***************************
+'// BOT EVENTS
+
+Sub Event_Load()
+	progArr = Split(Programs, ", ")
+End Sub
+
+Sub Event_PressedEnter(Text)
+	If Left(Text,1) = "/" Then
+		ProcessText BotVars.Username, BotVars.Trigger& Mid(Text,2), 4
+	End If
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+	ProcessText Username, Message, 1
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+	ProcessText Username, Message, 3
+End Sub
+
+'***************************
+'// SUBS / FUNCTIONS
+
+Private Sub ProcessText(ByVal Username, ByVal Text, Origin)
+	If Left(Text, Len(BotVars.Trigger)) <> BotVars.Trigger then Exit Sub
+
+	Select Case Mid(LCase(Text), Len(BotVars.Trigger)+1)
+		Case "memcheck", "checkmem", "botmemory", "botusage": '// Continue
+		Case Else: Exit Sub
+	End Select
+
+	If NOT userHasAccess(Username, Access) Then Exit Sub
+
+	Dim objService, colProcess, Process, display, i
+
+	Set objService = GetObject("winmgmts:{impersonationLevel=impersonate}!" _
+	& "//./Root/Cimv2") 
+
+	Set colProcess  = objService.ExecQuery("Select * from Win32_Process")
+
+	For Each Process in colProcess
+		For i=0 to Ubound(progArr)
+			If InStr(1, Process.Name, progArr(i), 1)>0 Then
+				'// SplitQueue fails if I DSP each loop
+				display = display & Process.Name & " | " & _
+				Round(Process.WorkingSetSize/1024/1000, 1) & "mb|||"
+			End If
+		Next
+	Next
+
+	display = Replace(display, ".exe", "")
+	display = Split(display, "|||")
+
+	For i=0 to UBound(display)-1: Dsp Origin, display(i), Username, vbCyan: Next
+
+	Set objService = Nothing
+	Set colProcess = Nothing
+End Sub
+
+Private Function userHasAccess(User, required)
+	userHasAccess = False
+
+	If User = BotVars.Username Then
+		VetoThisMessage
+		userHasAccess = True
+	Else
+		Dim A, F
+		GetStdDBEntry User, A, F
+		If IsNumeric(required) Then
+			If A >= cInt(required) Then
+				userHasAccess = True
+			End If
+		ElseIf LCase(required)=LCase(User) Then
+			userHasAccess = True
+		ElseIf InStr(1, F, required, 1)>0 Then
+			userHasAccess = True
+		ElseIf InStr(required, ", ")>0 Then
+			If InStr(1, required, User&", ", 1)>0 OR InStr(1, required, ", "&User, 1)>0 Then
+				userHasAccess = True
+			End If
+		End If
+	End If
+End Function

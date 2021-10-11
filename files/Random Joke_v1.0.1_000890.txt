@@ -1,0 +1,122 @@
+Option Explicit
+
+Script("Name")           = "Random Joke"
+Script("Author")         = "HarryGSn"
+Script("Major")          = "1"
+Script("Minor")          = "0"
+Script("Revision")       = "1"
+Script("Description")    = "Generates a Random Joke"
+
+Private LastCommand
+Private iniPath
+Private msgPrefix
+
+Sub Event_Load()
+	iniPath = BotPath & "RandomJokes.ini"
+	
+	AddChat RGB(255, 100, 0), "[RJ] • Random Jokes Loaded!"
+	
+	LastCommand = Now	
+	Call CreateCommands()
+	
+End Sub
+
+
+Sub Event_Command(Command)
+    With Command
+
+			If Not DateDiff("s", LastCommand, Now) >= 5 Then Exit Sub
+			LastCommand = Now
+							
+			Select Case LCase(.Name)
+			Case "ymj"
+				.Respond StringFormat("{0}", joke_Cmd("ymj"))
+			Case "cnj"
+				.Respond StringFormat("{0}", joke_Cmd("cnj"))			
+			End Select			
+	End With
+End Sub
+
+Private Function joke_cmd(Joke_Kind)
+	joke_cmd = StringFormat("{0} {1}" , msgPrefix , Generate_Response(Joke_Kind))
+End Function
+
+Public Function Generate_Response(Joke_Kind)
+
+	If Joke_Kind = "ymj" Then
+		Select Case generate_random(2, 1)
+			Case 1
+				Generate_Response = "Yo Mama So Ungly!"
+			Case 2
+				Generate_Response = "Yo Mama So dum she threw a rock at the floor and missed.!"
+			End Select
+	ElseIf Joke_Kind = "cnj" Then
+		Select Case Generate_Random(2, 1)
+			Case 1
+				 Generate_Response = "Chuck Norris has a fist under his chin..."
+			Case 2
+				 Generate_Response = "Chuck Norris counted to infinity - twice."
+		End Select
+	  End If
+End Function
+
+Public Function Generate_Random(max, min)
+         Generate_Random = Int(((max + 1) - (min)) * Rnd + (min))
+End Function
+
+Private Function BoolSetting(Entry)
+	Select Case UCase(Setting(Entry))
+		Case "Y", "YES", "TRUE", "T", "1"
+			BoolSetting = True
+		Case Else
+			BoolSetting = False
+	End Select
+End Function
+
+Private Function Setting(Entry)
+     Setting = GetConfigEntry("Settings", Entry, iniPath)
+End Function
+
+Private Sub CreateCommands()
+     Dim response
+	 
+ 	  If OpenCommand("ymj") Is Nothing Then
+	  With CreateCommand("ymj")
+		   .Description = "0" 
+		   .RequiredRank = 80		   
+		   .Save
+	  End With
+	  End If	
+	  
+ 	  If OpenCommand("cnj") Is Nothing Then
+	  With CreateCommand("cnj")
+		   .Description = "0" 
+		   .RequiredRank = 80		   
+		   .Save
+	  End With
+	  End If		  
+	  
+	  '////////////'
+	  '// Settings/'
+	  '////////////'
+	  
+	  
+     If Setting("emote_on") = vbNullString Then
+          response = MsgBox("Emote all messages?", vbYesNo, Script("Name") & " by " & Script("Author"))
+          If response = vbYes Then
+               response = "Y"
+          Else
+               response = "N"
+          End If
+
+          WriteConfigEntry "Settings", "emote_on", response, iniPath
+     End If
+ 
+     If BoolSetting("emote_on") Then
+          msgPrefix = "/emote • "
+     Else
+          msgPrefix = ""
+     End If
+
+     Randomize() 
+End Sub

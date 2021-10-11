@@ -1,0 +1,458 @@
+Script("Name") = "Identifier Script"
+Script("Abbreviation") = "IDS"
+Script("Author") = "Sierra.Komodo"
+Script("Major") = 2
+Script("Minor") = 0
+Script("Revision") = 1
+Script("Description") = "Provides an improvement to StealthBot's channel protection and safelist system."
+
+'//       -=-=-=-=-=-=-=-=-=-=-=-=-
+'//       | SCRIPT  DOCUMENTATION |
+'//       -=-=-=-=-=-=-=-=-=-=-=-=-
+'// =-(Change Log)-=
+'//   2.00 R1
+'//     Fixed a command creation error for idsCheck.
+'//     Fixed an error that occured when writing settings for the first time.
+'//     Changed 'Shell' to read 'IDS'. This was left over from the template.
+'//     Fixed idsCheck command so that it gives a response if a requested user does not exist in either database.
+'//     Fixed an error with idsRemove where it would fail to execute.
+'//     Fixed an error on user join where it the script would think a user was in the database when he wasn't, and think he wasn't when he was.
+'//     Fixed an error on user join where the script would fail to kick/ban a user, and would fail to add a user to the database.
+'//     Changed default idsByRank values to 'Flag' and 'S'. The script, by default, will not ban safelisted users.
+'//     Reminded self to always test scripts before releasing them to the public.
+'//
+'//   2.00 R0
+'//     Script rewritten using new, cleaner formatting.
+'//     Added variables to ban and kick messages.
+'//     Added automatic identification by access and flag.
+'//     Added idsCheck command.
+'//     Updated connection string.
+'//
+'//   1.02 R0
+'//     Reduced script length by editing lines.
+'//     Added an option to be notified via whisper or /f m when an unidentified user
+'//       joins the channel.
+'//     Fixed a bug where the script would only give one word from a given reason when
+'//       identifying a user.
+'//
+'//   1.01 R0
+'//     Fixed a bug where the bot would produce an error if a reason was not given.
+'//     Fixed an error where idsRemove would not detect a user in the database
+'//
+'//
+'// =-(Known Bugs)-=
+'//     There will be a few seconds delay upon a user joining the channel before
+'//        he is kicked/banned. There is a method to fix this using loops, but I
+'//        personally don't know the method.
+'//
+'//
+'// =-(To-Do List)-=
+'//     Add clan tags, WC3 clan ranks, and CRS ranks to the automatic identification list.
+
+'//       -=-=-=-=-=-=-=-=-=-=-
+'//       | GLOBAL  VARIABLES |
+'//       -=-=-=-=-=-=-=-=-=-=-
+
+Private Version     '// Holds the scripts current version in one line.
+Private SName       '// Holds the scripts message name
+Private MC1         '// Holds the primary text color code
+Private MC2         '// Holds the secondary text color code
+Private ME1         '// Holds the primary error color code
+Private ME2         '// Holds the secondary error color code
+
+Private idsFSO     '// File System Object
+Public idsConn     '// Holds the connection to the database
+Public idsDBPath   '// Holds the path to the database
+
+
+Sub Event_Load()                              
+
+  Version = Script("Major") & "." & Script("Minor") & " R" & Script("Revision")
+  SName = "IDS"
+  MC1 = 10012100
+  MC2 = 10012010
+  ME1 = 255
+  ME2 = 4210816
+  
+  Call ConsoleMessage("normal", Script("Author") & "'s " & Script("Name") & " Version " & Version & " Loaded.")
+
+  Call writeSettings()
+  
+  idsDBPath = GetSettingsEntry("sidsPath") & GetSettingsEntry("idsFileName") & ".mdb"
+  Set idsFSO = CreateObject("Scripting.FileSystemObject")
+  If Not idsFSO.FileExists(idsDBPath) Then
+    ids_create_database()
+   Else
+    ids_connect()
+  End If
+  
+  Set rs = idsConn.Execute("SELECT COUNT(*) FROM `users`")
+  If rs.Fields(0) = 0 Then
+    idsConn.Execute("INSERT INTO `users` (`name`, `comment`, `identifier_name`) " & _
+    "Values ('" & BotVars.Username & "', 'Bot Console', '" & BotVars.Username & "')")
+    
+    AddChat MC1, SName & ": ", MC2, "Bot Console added as the first identified user."
+  End If
+
+  Call CreateCmds()
+  
+End Sub
+
+
+Sub writeSettings()
+
+  If GetSettingsEntry("Version") = Version Then Exit Sub
+  If GetSettingsEntry("Version") = vbNullString Then
+    WriteSettingsEntry "=-(Version)-",vbNullString
+    WriteSettingsEntry "'// Don't edit this line - It tells the script if its a new version or not, and will produce an error if modified.", vbNullString
+    WriteSettingsEntry "Version", Version
+    WriteSettingsEntry "=-(Database Path)-", vbNullString
+    WriteSettingsEntry "'// BEFORE YOU EDIT THE DESTINATION PATH AND FILE NAME - This will completely RESET your database, UNLESS you move the existing file to the new path, and rename it to the new file name. The bot will have to be closed before performing this change.", vbNullString
+    WriteSettingsEntry "'// Modify the line below to reflect wanted destination path for database information. Give only folders.", vbNullString
+    WriteSettingsEntry "idsPath", BotPath()
+    WriteSettingsEntry "'// Modify the line below to set database file name. Do not use symbols, spaces, or extensions.", vbNullString
+    WriteSettingsEntry "idsFileName", "idsDatabase"
+    WriteSettingsEntry "=-(General Settings)-", vbNullString
+    WriteSettingsEntry "'// Details on IDS settings can be found on the forum, or in an additional readme file that can be downloaded with the script.", vbNullString
+    WriteSettingsEntry "idsChances", "1"
+    WriteSettingsEntry "idsKickMsg", "You need to be identified by a registered user before entering this channel. (&c out of &t chances used)"
+    WriteSettingsEntry "idsBanMsg", "You need to be identified by a registered user before entering this channel. (&c our of &t chances used)"
+    WriteSettingsEntry "idsAlert_On", "False"
+    WriteSettingsEntry "idsAlert_Msg", "/w Sierra.Komodo"
+    WriteSettingsEntry "idsByRank_Mode", "Flag"
+    WriteSettingsEntry "idsByRank", "S"
+    
+    Call CleanINI()
+    Exit Sub
+  End If
+  If GetSettingsEntry("Version") = "2.0 R0" Then
+    WriteSettingsEntry "Version", Version
+    Call ConsoleMessage("normal", "Script updated to version " & Version & ".")
+    Exit Sub
+  End If
+  If GetSettingsEntry("Version") <> Version Then
+    Call ConsoleMessage("error", "SK0001 - The version line in settings.ini does not match any valid ids script version.")
+    Call ConsoleMessage("errorc", "As the current version is the first IDS script version to use the new scheme for settings.ini, please remove the Identifier Script section from your settings.ini file.")
+    Call ConsoleMessage("errorc", "Please go to the IDS thread for more information.")
+    Call ConsoleMessage("errorc", "http://www.stealthbot.net/forum/index.php?/topic/3395-identifier-script/page__gopid__22734&")
+    Exit Sub
+  End If
+
+End Sub
+
+
+Sub ids_create_database()
+
+  Set Catalog = CreateObject("ADOX.Catalog")
+  Catalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & idsDBPath
+  
+  ids_connect()
+  
+  idsConn.Execute("CREATE TABLE `users` (`name` varchar(30) NOT NULL, `comment` Text, `identifier_name` varchar(30) NOT NULL)")
+  idsConn.Execute("CREATE TABLE `unidentified` (`name` varchar(30) NOT NULL, `chances` Integer NOT NULL)")
+
+End Sub
+
+
+Sub ids_connect()
+
+  Set idsConn = CreateObject("ADODB.connection")
+  idsConn.Provider = "Microsoft.Jet.OLEDB.4.0"
+  idsConn.Open "Data Source=" & idsDBPath
+  
+End Sub
+
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+
+  If LCase(GetDBEntry(Username).Flags) = "b" Then Exit Sub
+  If LCase(Banned) = "true" Then Exit Sub
+
+  getRankMode = LCase(GetSettingsEntry("idsByRank_Mode"))
+  getRank = GetSettingsEntry("idsByRank")
+  If getRankMode <> "off" Then
+    Select Case getRankMode
+      Case "access"
+        If CInt(GetDBEntry(Username).Rank) => CInt(getRank) Then
+          Command BotVars.Username, "/idsAdd " & Username & " Auto Identify By Rank ('" & GetDBEntry(Username).Rank & "=>" & getRank & "')", True
+          Exit Sub
+        End If
+      Case "flag"
+        If LCase(GetDBEntry(Username).Flags) = LCase(getRank) Then
+          Command BotVars.Username, "/idsAdd " & Username & " Auto Identify By Flag ('" & GetDBEntry(Username).Flags & "')"
+          Exit Sub
+        End If
+      Case Else
+        Call ConsoleMessage("Error", "SK0002 - Settings Entry 'idsByRank_Mode' is an invalid value.")
+        Call ConsoleMessage("Errorc", "Adjust this line to match the available values given in the readme file.")
+    End Select
+  End If
+  
+  Set rs = idsConn.Execute("SELECT COUNT(*) FROM `users` WHERE `name`='" & Username & "'")
+  If rs.Fields(0) <> 0 Then Exit Sub
+  
+  setName = Username
+  setChances = 1
+  Set rs = idsConn.Execute("SELECT COUNT(*) FROM `unidentified` WHERE `name`='" & Username & "'")
+  If rs.Fields(0) <> 0 Then
+    Set rs = idsConn.Execute("SELECT * FROM `unidentified` WHERE `name`='" & Username & "'")
+    setChances = CInt(rs.Fields(1)) + 1
+    idsConn.Execute("UPDATE `unidentified` WHERE `name`='" & Username & "' SET `chances`='" & setChances & "'")
+   Else
+    idsConn.Execute("INSERT INTO `unidentified` (`name`, `chances`) " & _
+    "VALUES ('" & Username & "'," & setChances & ")")
+  End If
+  
+  getKickMsg = GetSettingsEntry("idsKickMsg")
+  getBanMsg = GetSettingsEntry("idsBanMsg")
+  
+  getKickMsg = Replace(getKickMsg, "%0", Username)
+  getKickMsg = Replace(getKickMsg, "%c", myChannel)
+  getKickMsg = Replace(getKickMsg, "%a", GetDBEntry(Username).Rank)
+  getKickMsg = Replace(getKickMsg, "%f", GetDBEntry(Username).Flags)
+  getKickMsg = Replace(getKickMsg, "&c", setChances)
+  getKickMsg = Replace(getKickMsg, "&k", GetSettingsEntry("idsChances"))
+  getBanMsg = Replace(getBanMsg, "%0", Username)
+  getBanMsg = Replace(getBanMsg, "%c", myChannel)
+  getBanMsg = Replace(getBanMsg, "%a", GetDBEntry(Username).Rank)
+  getBanMsg = Replace(getBanMsg, "%f", GetDBEntry(Username).Flags)
+  getBanMsg = Replace(getBanMsg, "&c", setChances)
+  getBanMsg = Replace(getBanMsg, "&k", GetSettingsEntry("idsChances"))
+  
+  If CInt(setChances) => CInt(GetSettingsEntry("idsChances")) Then
+    Command BotVars.Username, "/ban " & setName & " " & getBanMsg, True
+    If GetSettingsEntry("idsAlert_On") = True Then AddQ GetSettingsEntry("idsAlert_Msg") & " " & Username & " has attempted to join the channel and has been banned by IDS."
+    Call ConsoleMessage("Normal", Username & " banned. (" & setChances & "/" & GetSettingsEntry("idsChances") & " chances)")
+  End If
+  If CInt(setChances) < CInt(GetSettingsEntry("idsChances")) Then
+    Command BotVars.Username, "/kick " & setName & " " & getKckMsg, True
+    If GetSettingsEntry("idsAlert_On") = True Then AddQ GetSettingsEntry("idsAlert_Msg") & " " & Username & " has attempted to join the channel and has been kicked by IDS."
+    Call ConsoleMessage("Normal", Username & " kicked. (" & setChances & "/" & GetSettingsEntry("idsChances") & " chances)")
+  End If
+
+End Sub
+
+
+Public Sub Event_Command(Command)
+
+  If Command.IsLocal Then Command.Username = BotVars.Username
+  
+  Select Case LCase(Command.name)
+    Case "idsremove":           Call idsRemoveCmd(Command, Command.Username)
+    Case "idsadd":              Call idsAddCmd(Command, Command.Username)
+    Case "idscheck":            Call idsCheckCmd(Command, Command.Username)
+  End Select
+
+End Sub
+
+
+Private Sub idsRemoveCmd(cmd, user)
+
+  If Not cmd.IsValid Then Exit Sub
+  If Not cmd.HasAccess Then Exit Sub
+  
+  If UBound(Split(cmd.Args)) < 0 Then cmdRespond = "Please specify a username to remove from the identified database."
+  If UBound(Split(cmd.Args)) => 0 Then
+    cmdArr = Split(cmd.Args)(0)
+    
+    Set rs = idsConn.Execute("SELECT COUNT(*) FROM `users` WHERE `name`='" & cmdArr & "'")
+    If rs.Fields(0) = 0 Then cmdRespond = "The specified user ('" & cmdArr & "') does not exist in the identified database."
+    If rs.Fields(0) <> 0 Then
+      idsConn.Execute("DELETE FROM `users` WHERE `name`='" & cmdArr & "'")
+      cmdRespond = "'" & cmdArr & "' has been removed from the identified database."
+    End If
+  End If
+  
+  If user = BotVars.Username Then
+    Call ConsoleMessage("normal", cmdRespond)
+   Else
+    cmd.Respond = cmdRespond
+  End If
+
+End Sub
+
+
+Private Sub idsAddCmd(cmd, user)
+
+  If Not cmd.IsValid Then Exit Sub
+  If Not cmd.HasAccess Then Exit Sub
+  
+  If UBound(Split(cmd.Args)) < 0 Then cmdRespond = "Please specify a username to add to the identified database."
+  If UBound(Split(cmd.Args)) => 0 Then
+    addName = Split(cmd.Args)(0)
+    addComment = "N/A"
+    If UBound(Split(cmd.Args)) > 0 Then addComment = Split(cmd.Args, " ", 2)(1)
+    
+    Set rs = idsConn.Execute("SELECT COUNT(*) FROM `users` WHERE `name`='" & addName & "'")
+    If rs.FieldS(0) <> 0 Then cmdRespond = "The specified user ('" & addName & "') already exists in the identified database."
+    If rs.Fields(0) = 0 Then
+      idsConn.Execute("INSERT INTO `users` (`name`, `comment`, `identifier_name`) " & _
+      "VALUES ('" & addName & "','" & addComment & "','" & user & "')")
+      cmdRespond = "'" & addName & "' added to the identified database. ('" & addComment & "')"
+    End If
+  End If
+  
+  If user = BotVars.Username Then
+    Call ConsoleMessage("normal", cmdRespond)
+   Else
+    cmd.Respond = cmdRespond
+  End If
+
+End Sub
+
+
+Private Sub idsCheckCmd(cmd, user)
+
+  If Not cmd.IsValid Then Exit Sub
+  If Not cmd.HasAccess Then Exit Sub
+  
+  If UBound(Split(cmd.Args)) < 0 Then cmdRespond = "Please specify a username to check."
+  If UBound(Split(cmd.Args)) => 0 Then
+    cmdRespond = vbNullString
+    cmdRespond2 = vbNullString
+    checkName = Split(cmd.Args)(0)
+    
+    Set rs = idsConn.Execute("SELECT COUNT(*) FROM `users` WHERE `name`='" & checkName & "'")
+    If rs.Fields(0) <> 0 Then
+      Set rs = idsConn.Execute("SELECT * FROM `users` WHERE `name`='" & checkName & "'")
+      getName = rs.Fields(0)
+      getComment = rs.Fields(1)
+      getIdentifier = rs.Fields(2)
+      cmdRespond = "'" & getName & "' is identified by '" & getIdentifier & "' ('" & getComment & "')"
+    End If
+    
+    Set rs = idsConn.Execute("SELECT COUNT(*) FROM `unidentified` WHERE `name`='" & checkName & "'")
+    If rs.Fields(0) = 0 Then
+      getName = checkName
+      getChances = 0
+      If cmdRespond = vbNullString Then
+        cmdRespond = "'" & getName & "' is unidentified ('" & getChances & "/" & GetSettingsEntry("idsChances") & " chances')"
+      End If
+    End If
+    If rs.Fields(0) <> 0 Then
+      Set rs = idsConn.Execute("SELECT * FROM `unidentified` WHERE `name`='" & checkName & "'")
+      getName = rs.Fields(0)
+      getChances = rs.Fields(1)
+      If cmdRespond = vbNullString Then
+        cmdRespond = "'" & getName & "' is unidentified ('" & getChances & "/" & GetSettingsEntry("idsChances") & " chances')"
+       Else
+        cmdRespond2 = "'" & getName & "' is unidentified ('" & getChances & "/" & GetSettingsEntry("idsChances") & " chances')"
+      End If
+    End If
+  End If
+  
+  If user = BotVars.Username Then
+    Call ConsoleMessage("normal", cmdRespond)
+   Else
+    cmd.Respond = cmdRespond
+  End If
+
+End Sub
+
+
+Private Sub CreateCmds
+  
+  Set cmd = OpenCommand("idsRemove")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("idsRemove")
+    With cmd
+      .Description = "Removes users from the identified database." & vbNewLine & vbNewLine & _
+      "Syntax: " & BotVars.Trigger & "idsremove (Username:Word)" & vbNewLine & _
+      "Example: " & BotVars.Trigger & "idsremove " & BotVars.Username
+      .RequiredRank = "-1"
+      
+      .Save
+    End With
+  End If
+  
+  Set cmd = OpenCommand("idsAdd")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("idsAdd")
+    With cmd
+      .Description = "Adds users to the identified database." & vbNewLine & vbNewLine & _
+      "Syntax: " & BotVars.Trigger & "idsadd (Username:Word) [Comment:String]" & vbNewLine & _
+      "Example: " & BotVars.Trigger & "idsadd " & BotVars.Username & " Bot Console"
+      .RequiredRank = "-1"
+      
+      .Save
+    End With
+  End If
+  
+  Set cmd = OpenCommand("idsCheck")
+  If cmd Is Nothing Then
+    Set cmd = CreateCommand("idsCheck")
+    With cmd
+      .Description = "Checks for a username in the identified/unidentified databases." & vbNewLine & vbNewLine & _
+      "Syntax: " & BotVars.Trigger & "idscheck (Username:Word)" & vbNewLine & _
+      "Example: " & BotVars.Trigger & "idscheck " & BotVars.Username
+      .RequiredRank = "-1"
+      
+      .Save
+    End With
+  End If
+
+End Sub
+
+
+Private Sub ConsoleMessage(MsgType, Message)
+
+  If LCase(MsgType) = "normal" Then
+    AddChat MC1, SName & ": ", MC2, Message
+  End If
+  If LCase(MsgType) = "normalc" Then
+    AddChat MC2, Message
+  End If
+  If LCase(MsgType) = "error" Then
+    AddChat ME1, "ERROR - " & SName & ": ", ME2, Message
+  End If
+  If LCase(MsgType) = "errorc" Then
+    AddChat ME2, Message
+  End If
+
+End Sub
+
+
+Private Sub CleanINI
+
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 1, True)
+      data = Split(File.ReadAll, vbNewLine)
+   File.Close
+
+
+   tMatch = False
+   For i = 0 To UBound(data) -1
+      If tMatch Then
+         If Left(data(i), 3) = "'//" Then
+            line = line & Split(data(i), "=")(0) & vbNewLine
+         ElseIf InStr(data(i), "[") > 0 AND InStr(data(i), "]") > 0 Then
+            tMatch = False
+            line = line & data(i) & vbNewLine
+         Else
+            line = line & data(i) & vbNewLine
+         End If
+      Else
+         If data(i) = "[crs]" Then
+            tMatch = True
+            line = line & data(i) & vbNewLine
+         Else
+            line = line & data(i) & vbNewLine
+         End If
+      End If
+   Next
+
+   fso.DeleteFile(BotPath & "scripts\scripts.ini")
+   temp = Split(line, vbNewLine)
+   For i = 0 To Ubound(temp) -1
+      Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 8, True)
+         File.WriteLine temp(i)
+      File.Close
+   Next
+End Sub
+
+
+Sub Event_Close()
+
+  AddChat MC1, SName & ": ", MC2, "Script closed."
+
+End Sub

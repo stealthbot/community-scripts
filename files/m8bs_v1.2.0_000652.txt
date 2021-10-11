@@ -1,0 +1,131 @@
+Script("Name") = "m8bs"
+Script("Major") = 1
+Script("Minor") = 2
+Script("Author") = "Jack, converted by: The-Black-Ninja"
+Script("Description") = "Let 8-ball decide your fate by asking yes or no answers!"
+
+'// Variables allowed in response messages, found in (by default) \scripts\Magic8ball Answers.txt
+'// %u = Username of person asking the question
+'// %p = Ping of person asking the question
+'// %msg = Username's original question
+
+Private qPath
+
+Sub Event_Load()
+
+   qPath = BotPath & "Magic8ball Answers.txt"
+
+   Call CreateCmds()
+   Randomize
+End Sub
+
+
+Sub Event_Command(cmd)
+
+   If LCase(cmd.Name) = "ask8ball" Then
+      If NOT (cmd.HasAccess AND cmd.IsValid) Then Exit Sub
+
+      DisplayMsg = GetResponse
+      DisplayMsg = Replace(DisplayMsg, "%u", cmd.Username)
+      DisplayMsg = Replace(DisplayMsg, "%p", Channel.GetUser(cmd.Username).Ping)
+      DisplayMsg = Replace(DisplayMsg, "%msg", cmd.Argument("question"))
+
+      AddQ "/me looks into his Magic 8 Ball: " & DisplayMsg
+   End If
+End Sub
+
+
+Private Function GetResponse
+
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If NOT fso.FileExists(qPath) Then Call CreateCmds()
+   Set File = fso.OpenTextFile(qPath, 1, True)
+
+   respArray = Split(File.ReadAll, vbCrLf)
+   File.Close
+
+   x = 0
+   Do
+      x = x+1
+      If x = 200 Then
+         GetResponse = "Error. Please try again."
+         Exit Function
+      End If
+
+      RanNum = Int((((Ubound(respArray)-1) + 1) - LBound(respArray)) * Rnd + LBound(respArray))
+
+      GetResponse = respArray(RanNum)
+      If LenB(GetResponse) > 0 Then
+         Set File = Nothing
+         Set fso = Nothing
+         Exit Function
+      End If
+   Loop
+End Function
+
+
+Private Sub CreateCmds()
+
+   Set cmd = OpenCommand("ask8ball")
+   If cmd Is Nothing Then
+      Set cmd = CreateCommand("ask8ball")
+      With cmd
+         .Description = "Command needed to ask your question."
+         .RequiredRank = 200
+         Set Parameter = .NewParameter("question", False, "String")
+         .Parameters.Add Parameter
+         .Save
+      End With
+   End If
+
+   Set Parameter = Nothing
+   Set cmd = Nothing
+   Set fso = CreateObject("Scripting.FileSystemObject")
+
+   If NOT fso.FileExists(qPath) Then
+      Set File = fso.OpenTextFile(qPath, 8, True)
+      With File
+         .Writeline "As I see It, Yes"
+         .Writeline "It is certain"
+         .Writeline "It is decidedly so"
+         .Writeline "Most likely"
+         .Writeline "Outlook good"
+         .Writeline "Signs point to Yes"
+         .Writeline "Without a doubt"
+         .Writeline "YES"
+         .Writeline "Yes, definitely"
+         .Writeline "You may rely on it"
+         .Writeline "Ask again later"
+         .Writeline "Better not tell you now"
+         .Writeline "Cannot predict now"
+         .Writeline "Concentrate and ask again"
+         .Writeline "Don't count on it"
+         .Writeline "My reply is No"
+         .Writeline "My sources say No"
+         .Writeline "Outlook not so good"
+         .Writeline "Reply Hazy, Try again"
+         .Writeline "Very doubtful"
+         .Writeline "Not only no, but HELL No!"
+         .Writeline "Not only yes, but HELL Yes!"
+         .Writeline "You will regret it!"
+         .Writeline "Signs point to No"
+         .Writeline "Outlook is disturbing"
+         .Writeline "%u shut up, go take your %p questions somewhere else."
+         .Writeline "Not only yes, but HELL YES"
+         .Writeline "Not only no, but HELL NO"
+         .Writeline "I'll kill you."
+         .Writeline "Okay."
+         .Writeline "Sure."
+         .Writeline "Probably."
+         .Writeline "You're a girl, you ask too many fucking questions."
+         .Writeline "Uh-huh."
+         .Writeline "Yup."
+         .Writeline "Could you repeat the question?"
+      End With
+
+      File.Close
+      Set File = Nothing
+   End If
+
+   Set fso = Nothing
+End Sub

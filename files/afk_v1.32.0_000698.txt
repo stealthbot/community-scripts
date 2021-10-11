@@ -1,0 +1,588 @@
+Script("Name") = "afk"
+Script("Author") = "Swent. Upgraded to script form by The-Black-Ninja"
+Script("Major") = 1
+Script("Minor") = 32
+Script("Revision") = 0
+Script("Description") = "Sets users who do not talk in XX minutes as AFK."
+
+
+'// Change Log
+'//
+'// v1.2 to v1.3
+'//   --> Added how many minutes the user has been AFK. Thanks Neco
+'// v1.2
+'//   --> Users are not allowed to alter nicknames for other users except themselves. The bot console is allowed to alter anyone's nickname.
+'//   --> Fixed issue with the timer sub.
+'//   --> Now removes users from AFK when they leave the channel
+'//   --> Fixed issue with setting uses as AFK within the timer. - Thanks DateTheBat
+
+
+
+Private afkUsers   '// Users who are AFK
+Private afkTalked  '// AFK users who talk
+Private afkNicks   '// Holds user's nicknames
+
+
+Sub Event_Load()
+
+   If GetSettingsEntry("idle_time") = vbNullString Then
+      WriteSettingsEntry "'// Idle time, in minutes, at which users will marked as AFK.", vbNullString
+      WriteSettingsEntry "idle_time", 10
+      WriteSettingsEntry "'// These usernames will not be marked as AFK if they go idle. Separate multiple names with *; User1*user2*user3*etc", vbNullString
+      WriteSettingsEntry "'// If you do not wish to have anyone exempt, leave the line as user1 or something random. Do not leave this line blank.", vbNullString
+      WriteSettingsEntry "exempt_users", "user1"
+      WriteSettingsEntry "'// If True, talking 3 times within 10 seconds will remove user's AFK status.", vbNullString
+      WriteSettingsEntry "talk_rem_afk", True
+      WriteSettingsEntry "'// Access required to recieve an auto-response after typing an afk user's nickname in the channel.", vbNullString
+      WriteSettingsEntry "mention_resp_access", 0
+
+      Call CleanINI()
+
+      AddChat 16759296, "AFK Script:. ", 10682112, "Creating commands ... This may take a few minutes; ignore the Script-Control pop-up."
+      Call CreateCmds()
+   End If
+
+   Set afkUsers = CreateObject("Scripting.Dictionary")
+   '// Set the object to ignore letter case
+   afkUsers.CompareMode = 1
+
+   Set afkTalked = CreateObject("Scripting.Dictionary")
+   afkTalked.CompareMode = 1
+
+   Set afkNicks = CreateObject("Scripting.Dictionary")
+   afkNicks.CompareMode = 1
+
+   Call RestoreNicknames()
+
+   Call CreateObj("LongTimer", "afkTimer")
+   afkTimer.Interval = 20
+   afkTimer.Enabled = True
+End Sub
+
+
+Sub Event_Close()  '// Writes nicknames in the dictionary to a file when bot closes
+
+   '// If there are no users with nicknames, exit
+   If Ubound(afkNicks.Keys) < 0 Then Exit Sub
+
+   '// Write nicknames to a file so we don't lose them
+   users = afkNicks.Keys
+   items = afkNicks.Items
+
+   For i = 0 To Ubound(users)
+      WriteConfigEntry "users", users(i), items(i), BotPath & "scripts\afk_nicks.ini"
+   Next
+End Sub
+
+
+Sub Event_Userleaves(Username, Flags)
+
+   If afkUsers.Exists(Username) Then afkUsers.Remove Username
+End Sub
+
+
+Sub Event_Usertalk(Username, Flags, Message, Ping)
+
+  '// Check if someone's using a nickname for someone who's AFK
+  '// If the user mentioning the nickname has enough access to retrieve a response...
+   If GetDBEntry(Username).Rank >= Int(GetSettingsEntry("mention_resp_access")) Then
+      '// If there are nicknames available
+      If Ubound(afkNicks.Keys) => 0 Then
+         users = afkNicks.Keys
+         items = afkNicks.Items
+
+         tMatch = False
+         For i = 0 To Ubound(users)
+           '// Split up their nicknames
+            itemArr = Split(items(i), "|")
+            For Each nick In itemArr
+              '// If the nickname is in the message
+               If nick <> vbNullString Then
+                  If InStr(LCase(Text), LCase(nick)) Then
+                    '// If the user is AFK
+                     If afkUsers.Exists(users(i)) Then
+                        reason = afkUsers.Item(users(i))(0)
+                        If reason <> "True" Then
+                           AddQ users(i) & " is currently AFK: " & reason & "."
+                           tMatch = True
+                        Else
+                           AddQ users(i) & " is currently AFK."
+                           tMatch = True
+                        End If
+                        Exit For
+                     End If
+                  End If
+               End If
+            Next
+            If tMatch Then Exit For
+         Next
+      End If
+   End If
+
+  '// If the system is enabled...
+   If GetSettingsEntry("talk_rem_afk") Then
+     '// Find out if they're talking while AFK
+      If afkUsers.Exists(Username) Then
+        '// If this is the first time talking while AFK...
+         If NOT afkTalked.Exists(Username) Then
+           '// Add a counter plus the time they talked to the dictionary
+            afkTalked.Item(Username) = Array(1, Now)
+         Else
+            Select Case afkTalked.Item(Username)(0)
+               Case 1
+                 '// If the time they talked is less than 10 seconds to that of the original time they were put into the dictionary, add +1 to the counter
+                  If DateDiff("s", afkTalked.Item(Username)(1), Now) < 10 Then
+                     afkTalked.Item(Username) = Array(afkTalked.Item(Username)(0)+1, afkTalked.Item(Username)(1))
+                  Else
+                    '// Remove them from the dictionary
+                     afkTalked.Remove Username
+                  End If
+               Case 2
+                 '// 3 times talked; if it's still less than 10 seconds, remove them from AFK status
+                  If DateDiff("s", afkTalked.Item(Username)(1), Now) < 10 Then
+                     afkUsers.Remove Username
+                     afkTalked.Remove Username
+                     AddQ "/w " & Username & " You have been removed from AFK status: talking 3 times within 10 seconds."
+                  Else
+                     afkTalked.Remove Username
+                  End If
+            End Select
+         End If
+      End If
+   End If
+End Sub
+
+
+Public Sub Event_Command(Command)
+
+   Select Case LCase(Command.Name)
+      Case "afk":         Call afkCmd(Command, Command.Username)
+      Case "noafk":       Call noafkCmd(Command, Command.Username)
+      Case "afklist":     Call afklistCmd(Command)
+      Case "afknick":     Call afknickCmd(Command, Command.Username)
+      Case "afklistnick": Call afklistnickCmd(Command)
+   End Select
+End Sub
+
+
+Private Sub afkCmd(Command, Username)  '// AFK command
+
+  '// If proper syntax
+   If Command.IsValid Then
+     '// Has enough access
+      If Command.HasAccess Then
+        '// Get command arguments
+         If Len(Command.Args) > 0 Then
+            reason = Command.Args
+           '// Check if reason is longer than 30 characters
+            If Len(reason) > 30 Then
+              '// Since all the command responses will be whispered back to the user, detect if the bot would be whispering itself or not and addchat it so
+               If Username = BotVars.Username Then
+                  AddChat 16759296, "AFK Script:. ", 10682112, "Reason must be less than 30 characters in length."
+               Else
+                  AddQ "/w " & Username & " Reason must be less than 30 characters in length."
+               End If
+               Exit Sub
+            End If
+         End If
+
+        '// If they aren't AFK
+         If NOT afkUsers.Exists(Username) Then
+           '// If they have a reason
+            If reason <> vbNullString Then
+               afkUsers.Item(Username) = Array(reason, Now)
+               If Username = BotVars.Username Then
+                  AddChat 16759296, "AFK Script:. ", 10682112, "The bot console is now set as AFK with the reason: " & reason & "."
+               Else
+                  AddQ "/w " & Username & " You are now set as AFK with the reason: " & reason & "."
+               End If
+            Else
+               afkUsers.Item(Username) = Array(True, Now)
+               If Username = BotVars.Username Then
+                  AddChat 16759296, "AFK Script:. ", 10682112, "The bot console is now set as AFK."
+               Else
+                  AddQ "/w " & Username & " You are now set as AFK."
+               End If
+            End If
+         Else
+           '// They are AFK
+            reason = afkUsers.Item(Username)(0)
+            If Username = BotVars.Username Then
+               If reason <> True Then
+                  AddChat 16759296, "AFK Script:. ", 10682112, "The bot console is still set as AFK with reason: " & reason
+               Else
+                  AddChat 16759296, "AFK Script:. ", 10682112, "The bot console is still set as AFK with no reason set."
+               End If
+            Else
+               If reason <> True Then
+                  AddQ "/w " & Username & " You are still set as AFK with reason: " & reason
+               Else
+                  AddQ "/w " & Username & " You are still set as AFK with no reason set."
+               End If
+            End If
+         End If
+      End If
+   End If
+End Sub
+
+
+Private Sub noafkCmd(Command, Username)  '// noafk command
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If afkUsers.Exists(Username) Then
+            afkUsers.Remove Username
+            If Username = BotVars.Username Then
+               AddChat 16759296, "AFK Script:. ", 10682112, "The bot console is no longer set as AFK."
+            Else
+               AddQ "/w " & Username & " You are no longer set as AFK."
+            End If
+         Else
+            If Username = BotVars.Username Then
+               AddChat 16759296, "AFK Script:. ", 10682112, "The bot console was not previously set as AFK."
+            Else
+               AddQ "/w " & Username & " You are not previously set as AFK."
+            End If
+         End If
+      End If
+   End If
+End Sub
+
+
+Private Sub afklistCmd(Command)  '// afklist command
+
+   If (LenB(Command.Args)=0) Then
+      x = UBound(afkUsers.Keys)
+      If x < 0 Then
+         Command.Respond "There are 0 users AFK."
+      Else
+         users = afkUsers.Keys
+         items = afkUsers.Items
+         For i = 0 To UBound(users)
+            text = text & users(i) & "(" & DateDiff("n", items(i)(1), Now) & " mins), "
+         Next
+         If x+1 = 1 Then
+            Command.Respond "There is " & x+1 & " user AFK: " & Left(text, Len(text)-2)
+         Else
+            Command.Respond "There are " & x+1 & " users AFK: " & Left(text, Len(text)-2)
+         End If
+      End If
+      Exit Sub
+   End If
+         
+   If Command.HasAccess Then        
+      Select Case Split(Lcase(Command.Args))(0)
+         Case "name"
+           '// An empty dictionary is -1, meaning the first entry is 0, so we have to bump it by one to make it display correctly to other people
+            x = UBound(afkUsers.Keys)
+            If x < 0 Then
+               Command.Respond "There are 0 users AFK."
+            Else
+               users = afkUsers.Keys
+               items = afkUsers.Items
+               For i = 0 To UBound(users)
+                  text = text & users(i) & "(" & DateDiff("n", items(i)(1), Now) & " mins), "
+               Next
+               If x+1 = 1 Then
+                  Command.Respond "There is " & x+1 & " user AFK: " & Left(text, Len(text)-2)
+               Else
+                  Command.Respond "There are " & x+1 & " users AFK: " & Left(text, Len(text)-2)
+               End If
+            End If
+         Case "reason"
+            x = UBound(afkUsers.Keys)
+            If x < 0 Then
+               Command.Respond "There are 0 users AFK."
+            Else
+               users = afkUsers.Keys
+               items = afkUsers.Items
+
+               For i = 0 To Ubound(users)
+                  If items(i)(0) = "True" Then
+                     text = text & users(i) & " (None - " & DateDiff("n", items(i)(1), Now) & " mins), "
+                  Else
+                     text = text & users(i) & " (" & items(i)(0) & " - " & DateDiff("n", items(i)(1), Now) & " mins), "
+                  End If
+               Next
+
+               If x+1 = 1 Then
+                  Command.Respond "There is " & x+1 & " user AFK: " & Left(text, Len(text)-2)
+               Else
+                  Command.Respond "There are " & x+1 & " users AFK: " & Left(text, Len(text)-2)
+               End If
+            End If
+         Case "num"
+            x = UBound(afkUsers.Keys)+1
+            If x = 1 Then
+               Command.Respond "There is " & x & " user AFK."
+            Else
+               Command.Respond "There are " & x & " users AFK."
+            End If
+      End Select
+   End If
+End Sub
+
+
+Private Sub afklistnickCmd(Command)  '// afklistnickCmd command
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If Len(Command.Args) > 0 Then
+            user = Command.Args
+
+            If NOT afkNicks.Exists(user) Then
+               Command.Respond "That user does not have any AFK nicknames associated with their name."
+               Exit Sub
+            End If
+
+            text = Replace(afkNicks.Item(user), "|", ", ")
+            Command.Respond """ " & user & " "" has the AFK nickname(s): " & Left(text, Len(text) -2)
+         End If
+      End If
+   End If
+End Sub
+
+
+Private Sub afknickCmd(Command, name)  '// addnick command
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         Select Case Split(Lcase(Command.Args))(0)
+            Case "add"
+               cmdArgs = Split(Lcase(Command.Args))
+              '// Manually check if they have the correct arguments
+               If UBound(cmdArgs) <> 2 Then Exit Sub
+
+               user = cmdArgs(1)
+               nick = cmdArgs(2)
+
+               If LCase(name) <> Lcase(user) AND name <> BotVars.Username Then
+                  Command.Respond "You are not allowed to add nicknames for other users."
+                  Exit Sub
+               End If
+               
+              '// If the nickname is too long, exit
+               If Len(nick) > 20 Then
+                  Command.Respond "Nicknames must be less than 20 characters."
+                  Exit Sub
+               End If
+
+               existNicks = afkNicks.Item(user)
+              '// If they already have a nickname
+               If Len(existNicks) > 0 Then
+                  '// Check if a user already has that nickname
+                  If InStr(existNicks, nick) > 0 Then
+                     Command.Respond "That user already has that AFK nickname associated to their name."
+                     Exit Sub
+                  End If
+                 '// Add their nickname as well as their other nicknames
+                  afkNicks.Item(user) = existNicks & nick & "|"
+               Else
+                  afkNicks.Item(user) = nick & "|"
+               End If
+
+               Command.Respond """ " & user & " "" now has an AFK nickname of "" " & nick & " "" associated to their name."
+
+            Case "del"
+               cmdArgs = Split(Lcase(Command.Args))
+               If UBound(cmdArgs) <> 2 Then Exit Sub
+
+               user = cmdArgs(1)
+               nick = cmdArgs(2)
+               
+               If LCase(name) <> Lcase(user) AND name <> BotVars.Username Then
+                  Command.Respond "You are not allowed to remove nicknames for other users."
+                  Exit Sub
+               End If               
+
+               If NOT afkNicks.Exists(user) Then
+                  Command.Respond "That user does not have any AFK nicknames associated with their name."
+                  Exit Sub
+               End If
+
+               existNicks = afkNicks.Item(user)
+               If InStr(existNicks, nick) < 1 Then
+                  Command.Respond "That user already does not have that AFK nickname associated to their name."
+                  Exit Sub
+               Else
+                 '// Remove the nickname
+                  afkNicks.Item(user) = Replace(existNicks, nick & "|", vbNullString)
+                 '// If they don't have any nicknames left, remove them from the dictionary
+                  If Len(afkNicks.Item(user)) = 0 Then afkNicks.Remove user
+                  Command.Respond """ " & user & " "" now has the AFK nickname of "" " & nick & " "" disassociated to their name."
+               End If
+
+            Case "erase"
+               cmdArgs = Split(Lcase(Command.Args))
+               If UBound(cmdArgs) <> 1 Then Exit Sub
+
+               user = cmdArgs(1)
+
+               If LCase(name) <> Lcase(user) AND name <> BotVars.Username Then
+                  Command.Respond "You are not allowed to erase nicknames for other users."
+                  Exit Sub
+               End If               
+               
+               If NOT afkNicks.Exists(user) Then
+                  Command.Respond "That user does not have any AFK nicknames associated with their name."
+                  Exit Sub
+               End If
+
+               afkNicks.Remove user
+               Command.Respond """ " & user & " "" has been stripped of all AFK nicknames."
+         End Select
+      End If
+   End If
+End Sub
+
+
+Sub afkTimer_Timer()  '// Check channel for AFK
+
+   For i = 1 To GetInternalUserCount
+      user = GetNameByPosition(i)
+      If CInt(GetInternalDataByUsername(user, 7)/60) >= Int(GetSettingsEntry("idle_time")) AND user <> BotVars.Username Then
+         exArr = Split(GetSettingsEntry("exempt_users"), "*")
+         tMatch = False
+         For Each tUser In exArr
+            If LCase(tUser) = LCase(user) Then
+               tMatch = True
+               Exit For
+            End If
+         Next
+
+         If NOT tMatch Then 
+            If NOT afkUsers.Exists(user) Then afkUsers.Item(user) = Array(True, Now)
+         End If
+      End If
+   Next
+End Sub
+
+
+Private Sub RestoreNicknames()  '// Restores nicknames from the ini file into the dictionary
+
+   '// Take nicknames from the file and put them into the dictionary
+   Set fso = CreateObject("Scripting.FileSystemObject")
+
+   If fso.FileExists(BotPath & "scripts\afk_nicks.ini") Then
+      Set File = fso.OpenTextFile(BotPath & "scripts\afk_nicks.ini", 1, False)
+         userArr = Split(File.ReadAll, vbNewLine)
+      File.Close
+
+      For i = 1 To Ubound(userArr)
+         If userArr(i) <> vbNullString Then afkNicks.Item(Split(userArr(i), "=")(0)) = Split(userArr(i), "=")(1)
+      Next
+
+      fso.DeleteFile(BotPath & "scripts\afk_nicks.ini")
+   End If
+End Sub
+
+
+Private Sub CleanINI  '// Removes the " = " after the commented out lines that this script makes
+
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 1, True)
+      data = Split(File.ReadAll, vbNewLine)
+   File.Close
+
+
+   tMatch = False
+   For i = 0 To UBound(data) -1
+      If tMatch Then
+         If Left(data(i), 3) = "'//" Then
+            line = line & Split(data(i), "=")(0) & vbNewLine
+         ElseIf InStr(data(i), "[") > 0 AND InStr(data(i), "]") > 0 Then
+            tMatch = False
+            line = line & data(i) & vbNewLine
+         Else
+            line = line & data(i) & vbNewLine
+         End If
+      Else
+         If data(i) = "[afk]" Then
+            tMatch = True
+            line = line & data(i) & vbNewLine
+         Else
+            line = line & data(i) & vbNewLine
+         End If
+      End If
+   Next
+
+   fso.DeleteFile(BotPath & "scripts\scripts.ini")
+   temp = Split(line, vbNewLine)
+   For i = 0 To Ubound(temp) -1
+      Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 8, True)
+         File.WriteLine temp(i)
+      File.Close
+   Next
+End Sub
+
+
+Private Sub CreateCmds  '// Creates AFK commands
+
+   Set cmd = OpenCommand("afk")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("afk")
+		With cmd
+			.Description = "Sets the user issuing the command as AFK." & vbNewLine & vbNewLine & _
+            "Users can give an optional reason that is under 30 characters in length."
+			.RequiredRank = 40
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("noafk")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("noafk")
+		With cmd
+			.Description = "Removes the user issuing the command from being AFK."
+			.RequiredRank = 40
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("afkList")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("afkList")
+		With cmd
+			.Description = "Displays the users that are AFK in the channel."
+			.RequiredRank = 200
+
+			Set Parameter = .NewParameter("name/reason/num", False, "Word")
+			With Parameter
+				.Description = "afkList name = Displays only the usernames of those that are AFK." & vbNewLine & vbNewLine & _
+               "afkList reason = Displays the usernames and their reason, if applicable, of those that are AFK." & vbNewLine & vbNewLine & _
+               "afkList num = Displays a number of the total users that are AFK."
+			End With
+			.Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("afkListNick")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("afkListNick")
+		With cmd
+			.Description = "Displays a list of nicknames for a user."
+			.RequiredRank = 200
+			.Save
+		End With
+	End If   
+   
+   Set cmd = OpenCommand("afknick")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("afknick")
+		With cmd
+			.Description = "Adds or removes users from the AFK nickname list."
+			.RequiredRank = 200
+
+			Set Parameter = .NewParameter("add/del/erase", False, "Word")
+			With Parameter
+				.Description = "afknick add username nickname = Adds a nickname for the username." & vbNewLine & vbNewLine & _
+               "afknick del username nickname = Removes a username's nickname to the AFK nickname list." & vbNewLine & vbNewLine & _
+               "afknick erase username = Removes all username's nicknames."
+			End With
+			.Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+   AddChat 16759296, "AFK Script:. Script is ready to use. ", 5731327, "Please view the commands in the Command Manager for descriptions, syntax, and command aliases."
+End Sub

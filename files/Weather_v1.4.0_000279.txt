@@ -1,0 +1,532 @@
+Script("Name") = "Weather"
+Script("Author") = "The-Black-Ninja."
+Script("Major") = 1
+Script("Minor") = 4
+Script("Revision") = 0
+
+
+Private wtFSO          '// FileSystemObject
+Private wtFP           '// ini file path
+Private wtXML          '// XMLHTTP object
+Private wtAttempts     '// Number of times the same site gets accessed
+Private wtLastRequest  '// Holds Now() for anti-spam
+Private wtUS           '// US states that need to be gathered
+Private wtCA           '// Canada provinces that need to be gathered
+Private wtLocation     '// Location that's currently being looked at
+Private wtSource       '// Origin of the command
+Private wtCities       '// Number of cities that need to be gathered
+
+
+Sub Event_Load()
+
+   wtFP = BotPath & "Weather Script - City Directory.ini"
+   Set wtFSO = CreateObject("Scripting.FileSystemObject")
+   Set wtCities = CreateObject("Scripting.Dictionary")
+   Set wtXML = CreateObject("Msxml2.XMLHTTP")
+   
+   Call CreateCmds
+
+   wtAttempts = 0
+   
+   wtLastRequest = Now-1
+
+   If NOT wtFSO.FileExists(wtFP) Then
+      Call CreateObj("LongTimer", "GetProvinceState")
+      GetProvinceState.Interval = 10
+      GetProvinceState.Enabled = False
+
+      Call CreateObj("LongTimer", "GetCities")
+      GetCities.Interval = 5
+      GetCities.Enabled = False
+
+      wtUS = 51
+      wtCA = 13
+      GetProvinceState.Enabled = True
+   End If
+
+   Call CreateObj("LongTimer", "GetWeatherInfo")
+   GetWeatherInfo.Interval = 5
+   GetWeatherInfo.Enabled = False
+End Sub
+
+
+Sub Event_Command(Command)
+
+   Select Case Lcase(Command.Name)
+      Case "weather" : Call weatherCMD(Command, Now)
+   End Select
+End Sub
+
+
+Private Sub weatherCMD(Command, sNow)
+
+   If Command.WasWhispered Then Exit Sub
+   If DateDiff("s", wtLastRequest, Now) < CInt(GetSettingsEntry("antispam")) Then Exit Sub   
+   
+   If NOT CheckCityFile Then
+      Command.Respond "Unable to determine weather information; required city file is non-existant or is incomplete. Please contact the bot owner."
+      Exit Sub
+   End If
+   
+   args = Command.Args
+
+   city = Left(args, InStr(args, ", ")-1)
+   provstate = Mid(args, InStr(args, ", ")+2)
+
+   If Len(provstate) = 2 Then
+      webLocation = GetProvStateShort(city, provState)      
+   Else
+      webLocation = GetConfigEntry(provstate, city, wtFP)
+   End If
+   
+   If LenB(webLocation) = 0 Then
+      Command.Respond "I cannot find information for the location "" " & Command.Args & " "". Please try a different city or check your spelling."
+      Exit Sub
+   End If
+
+   wtLocation = webLocation : wtSource = Command.Source   
+   Call GetWeatherInfo_Timer
+End Sub
+
+
+Sub GetWeatherInfo_Timer()
+
+   Call wtXML.Open("GET", "http://www.google.ca" & RND, True)
+   Call wtXML.Open("GET", "http://www.theweathernetwork.com/weather/" & wtLocation, True)
+   Call wtXML.Send()
+
+   If wtXML.readyState = 4 Then
+      If wtXML.Status = 200 Then
+         data = wtXML.responseText        
+      GetWeatherInfo.Enabled = False
+         Call ParseWeather(data, wtSource)
+         Exit Sub
+      End If
+   End If
+
+   wtAttempts = wtAttempts+1
+   If NOT GetWeatherInfo.Enabled Then GetWeatherInfo.Enabled = True
+   
+   If wtAttempts <> 0 AND wtAttempts MOD 3 = 0 Then
+      GetWeatherInfo.Interval = GetWeatherInfo.Interval + GetWeatherInfo.Interval
+      AddChat 16759296, "Weather Script: ", 10682112, "After 3 consecutive attempts of getting no updated responses from the website, the script will increase the rate of which it is requesting information to every " & GetWeatherInfo.Interval & " seconds."
+   End If
+End Sub
+
+
+Sub GetProvinceState_Timer()
+
+   If wtCities.Count = 13+51 Then
+      AddChat 16759296, "Weather Script: ", 10682112, "All States and Provinces have been accounted for. Attempting to locate all cities for each State and Province..."
+      GetProvinceState.Enabled = False
+      wtAttempts = 0
+      wtUS = vbNullString
+      wtCA = vbNullString
+      GetCities.Enabled = True
+      Exit Sub
+   End If
+
+   AddChat 16759296, "Weather Script: ", 10682112, "Canadian Provinces remaining: " & 13-CA
+   AddChat 16759296, "Weather Script: ", 10682112, "United States remaining: " & 51-US
+
+   sFound = 0
+
+   If wtCA > 0 Then
+     '// Canadian Cities
+      Call wtXML.Open("GET", "http://www.google.ca" & RND, True)
+      Call wtXML.Open("GET", "http://www.theweathernetwork.com/index.php?product=weather&pagecontent=cancities_en", True)
+      Call wtXML.Send()
+
+      If wtXML.readyState = 4 Then
+         If wtXML.Status = 200 Then
+            data = wtXML.responseText
+
+            provinceRaw = Mid(data, InStr(data, "<ol>")+4)
+            provinceRaw = Mid(provinceRaw, 1, InStr(provinceRaw, "</ol>"))
+            provinceArr = Split(provinceRaw, "cancities")
+
+            For i =1 To Ubound(provinceArr)
+               province = Mid(provinceArr(i), InStr(provinceArr(i), ">")+1)
+               province = Trim(Left(province, Len(province)-Len(province)+InStr(province, "<")-1))
+               If NOT wtCities.Exists(province & " - Canada") Then
+                  sFound = sFound+1
+                  wtCities.Item(province & " - Canada") = Left(provinceArr(i), 5)
+                  wtCA = wtCA -1
+               End If
+            Next
+         Else
+            AddChat vbRed, "Bad request for populating cities - " & wtXML.StatusText
+            Exit Sub
+         End If
+      End If
+   End If
+
+   If wtUS > 0 Then
+     '// US Cities
+      Call wtXML.Open("GET", "http://www.google.ca" & RND, True)
+      Call wtXML.Open("GET", "http://www.theweathernetwork.com/index.php?product=weather&pagecontent=usacities_en", True)
+      Call wtXML.Send()
+
+      If wtXML.readyState = 4 Then
+         If wtXML.Status = 200 Then
+            data = wtXML.responseText
+
+            stateRaw = Mid(data, InStr(data, "<ol>")+4)
+            stateRaw = Mid(stateRaw, 1, InStr(stateRaw, "</ol>"))
+            stateArr = Split(stateRaw, "usacities")
+
+            For i =1 To Ubound(stateArr)
+               state = Mid(stateArr(i), InStr(stateArr(i), ">")+1)
+               state = Trim(Left(state, Len(state)-Len(state)+InStr(state, "<")-1))
+               If NOT wtCities.Exists(state & " - United States") Then
+                  sFound = sFound+1
+                  wtCities.Item(state & " - United States") = Left(stateArr(i), 5)
+                  wtUS = wtUS-1
+               End If
+            Next
+         Else
+            AddChat vbRed, "Bad request for populating cities - " & wtXML.StatusText
+            Exit Sub
+         End If
+      End If
+   End If
+
+   If sFound = 0 Then
+      wtAttempts = wtAttempts+1
+   Else
+      wtAttempts = 0
+      GetProvinceState.Interval = 5
+   End If
+
+   If wtAttempts <> 0 AND wtAttempts MOD 3 = 0 Then
+      GetProvinceState.Interval = GetProvinceState.Interval + GetProvinceState.Interval
+      AddChat 16759296, "Weather Script: ", 10682112, "After 3 consecutive attempts of getting no updated responses from the website, the script will increase the rate of which it is requesting information to every " & GetProvinceState.Interval & " seconds."
+   End If
+End Sub
+
+
+Sub GetCities_Timer()
+
+   If wtCities.Count = 0 Then
+      GetCities.Enabled = False
+      AddChat 16759296, "Weather Script: ", 10682112, "All cities have been found. Script is ready to use."
+      Exit Sub
+   End If
+
+   AddChat 16759296, "Weather Script: ", 10682112, "Cities remaining: " & wtCities.Count
+
+   sName = wtCities.Keys
+   sItems = wtCities.Items
+
+   sFound = 0
+
+   For i = 0 To Ubound(sName)
+      Call wtXML.Open("GET", "http://www.google.ca", True)
+
+      If Instr(sName(i), "Canada") > 0 Then
+         Call wtXML.Open("GET", "http://www.theweathernetwork.com/index.php?product=weather&pagecontent=cancities" & sItems(i), True)
+      ElseIf InStr(sName(i), "United States") > 0 Then
+         Call wtXML.Open("GET", "http://www.theweathernetwork.com/index.php?product=weather&pagecontent=usacities" & sItems(i), True)
+      End If
+
+      Call wtXML.Send()
+
+      If wtXML.readyState = 4 Then
+         If wtXML.Status = 200 Then
+            data = wtXML.responseText
+
+            cityRaw = Mid(data, Instr(data, "<ol>")+4)
+            cityRaw = Mid(cityRaw, 1, InStr(cityRaw, "</ol><br />"))
+            cityArr = Split(cityRaw, "/weather/")
+
+            For j=1 To Ubound(cityArr)
+               If InStr(cityArr(j), "</a></li>") > 0 Then
+                  c1 = Mid(cityArr(j), InStr(cityArr(j), ">")+1)
+                  c2 = Left(c1, InStr(c1, "<")-1)
+                  provstate = Left(sName(i), InStr(sName(i), " - ")-1)
+                  WriteConfigEntry provstate, c2, Left(cityArr(j), 8), wtFP
+               End If
+            Next
+            sFound = sFound+1
+            wtCities.Remove sName(i)
+         Else
+            AddChat vbRed, "Bad request for populating cities - " & wtXML.StatusText
+            wtCities.Remove sName(i)
+         End If
+      End If
+   Next
+
+   If sFound = 0 Then
+      wtAttempts = wtAttempts+1
+   Else
+      wtAttempts = 0
+      GetCities.Interval = 5
+   End If
+
+   If wtAttempts <> 0 AND wtAttempts MOD 3 = 0 Then
+      GetCities.Interval = GetCities.Interval + GetCities.Interval
+      AddChat 16759296, "Weather Script: ", 10682112, "After 3 consecutive attempts of getting no updated responses from the website, the script will increase the rate of which it is requesting information to every " & GetCities.Interval & " seconds."
+   End If
+End Sub
+
+
+Private Sub CreateCmds()
+
+   If GetSettingsEntry("antispam") = vbNullString Then
+      WriteSettingsEntry "'//  Change this value to the number of seconds users must wait before using the command again.", vbNullString
+      WriteSettingsentry "antispam", 10
+   End If
+
+   Set cmd = OpenCommand("weather")
+   If cmd Is Nothing Then
+      Set cmd = CreateCommand("weather")
+      With cmd
+         .Description = "Looks up the current weather for the specified city and province/state."
+         .RequiredRank = 200
+         Set Parameter = .NewParameter("Location", False, "String")
+         With Parameter
+            .Description = "City, State/Province."
+            .MatchMessage = "^[a-zA-Z ].+, [a-zA-Z ].+$"
+            .MatchError = "Input must follow the format: City, State/Province"
+            .SpecialNotes = "State/Provinces can be abbreviated to two letters."
+         End With
+         .Parameters.Add Parameter
+         .Save
+      End With
+   End If
+
+   Set cmd = Nothing
+End Sub
+
+
+Private Sub ParseWeather(data, origin)
+    
+   '// Current Conditions
+   dataIso = Mid(data, InStr(data, "Current Weather"))
+      
+   wLocation = Mid(dataIso, InStr(dataIso, "display:")+7)
+   wLocation = Mid(wLocation, InStr(wLocation, ">")+1)
+   wLocation = Left(wLocation, InStr(wLocation, "<")-1)
+   
+   wCondition = Mid(dataIso, InStr(dataISo, "title=""")+7)
+   wCondition = Left(wCondition, InStr(wCondition, """")-1)
+   
+   wTemp = Mid(dataIso, InStr(dataIso, "<p>")+3)
+   wTempC = CInt(Left(wTemp, InStr(wTemp, "<")-1))
+   wTempF = CInt(wTempC*(9/5)+32)
+   wUnit = Mid(dataIso, InStr(dataIso, "&deg;")+5)
+   wUnit = Left(wUnit, InStr(wUnit, "<")-1)
+   
+   '// Short term Forecast
+   '// Overnight: 12:00 AM - 5:59 AM
+   '// Morning: 6:00 AM - 11:59 AM
+   '// Afternoon: 12:00 PM - 5:59 PM
+   '// Evening: 6:00 PM - 11:59 PM
+   
+   dataIso = Mid(data, InStr(data, "Short Term Forecast"))
+   
+   If InStr(dataIso, "onmouseover=""tooltip(") > 0 Then
+      wDayIso = Mid(dataIso, InStr(dataIso, "<th>")+4)
+      wDayIso = Left(wDayIso, InStr(wDayIso, "</tr>")-5)
+      wDayIso = Split(wDayIso, "<th>")
+      For i = 0 To Ubound(wDayIso)
+         wDay = Mid(wDayIso(i), InStr(wDayIso(i), "<th>")+4)
+         wDay = Left(wDay, InStr(wDay, "<")-1):wDay = Replace(wDay, CHR(9), vbNullString):wDay = Replace(wDay, CHR(32), vbNullString):wDay = Replace(wDay, vbCrLf, vbNullString)   
+         
+         wTime = Mid(wDayIso(i), InStr(wDayIso(i), "tooltip"">")+9)
+         wTime = Left(wTime, InStr(wTime, "<")-1)   
+         
+         tHour = Hour(time)
+         
+         If tHour => 0 AND tHour < 6 Then
+            wDay = wDay & " " & wTime
+            Exit For   
+         ElseIf tHour => 6 AND tHour < 12 Then
+            wDay = wDay & " " & wTime       
+            Exit For 
+         ElseIf tHour => 12 AND tHour < 18 Then
+            wDay = wDay & " " & wTime         
+            Exit For             
+         ElseIf tHour => 18 AND tHour > 0 Then
+            wDay = wDay & " " & wTime        
+            Exit For  
+         End If
+      Next
+      
+      '// Condition
+      temp = Mid(dataIso, InStr(dataIso, "stcond")+6)
+      temp = Left(temp, InStr(temp, "</tr>")-5)
+      temp = Split(temp, "cond"">")
+      wConditionB = Left(temp(i+1), InStr(temp(i+1), "<")-1)      
+      
+      '// Temp
+      temp = Mid(dataIso, InStr(dataIso, "sttemp")+6)
+      temp = Left(temp, InStr(temp, "</tr>")-5)
+      temp = Split(temp, "temp"">")
+      wTempCB = Left(temp(i+1), InStr(temp(i+1), "&")-1)   
+      wTempFB = CInt(wTempCB*(9/5)+32)
+      wUnitB = Mid(temp(i+1), InStr(temp(i+1), ";")+1):wUnitB = Left(wUnitB, 1)
+      
+      '// Percent of Precipitation
+      temp = Mid(dataIso, InStr(dataIso, "stpop")+6)
+      temp = Left(temp, InStr(temp, "</tr>")-5)
+      temp = Split(temp, "<td>")      
+      wPOP = Replace(temp(i+1), CHR(9), vbNullString):wPOP = Replace(wPOP, CHR(32), vbNullString):wPOP = Left(wPOP, Instr(wPOP, "<")-1):wPOP = Replace(wPOP, vbNewLine, vbNullString)
+      
+      '// Wind
+      temp = Mid(dataIso, InStr(dataIso, "stwind")+6)
+      temp = Left(temp, InStr(temp, "</tr>")-5)
+      temp = Split(temp, "<td>")      
+      wWind = Replace(temp(i+1), CHR(9), vbNullString):wWind = Left(wWind, Instr(wWind, "<")-1):wWind = Replace(wWind, vbNewLine, vbNullString)
+      wWindMPH = Mid(wWind, InStr(wWind, " ")+1):wWindMPH = Left(wWindMPH, InStr(wWindMPH, "k")-1):wWindMPH = CInt(wWindMPH/1.609)
+      
+      '// Humidity
+      temp = Mid(dataIso, InStr(dataIso, "sthumidity")+10)
+      temp = Left(temp, InStr(temp, "</tr>")-5)
+      temp = Split(temp, "<td>")
+      wHumidity = Replace(temp(i+1), CHR(9), vbNullString):wHumidity = Replace(wHumidity, CHR(32), vbNNullsTring):wHumidity = Left(wHumidity, Instr(wHumidity, "<")-1):wHumidity = Replace(wHumidity, vbNewLine, vbNullString)
+      
+      '// Rain / Snow
+      If InStr(dataIso, "stprecip")>0 Then
+         temp = Mid(dataIso, InStr(dataIso, "stprecip")+8)
+         temp = Left(temp, InStr(temp, "</tr>")-5)
+         temp = Split(temp, "<td>")
+         wRain = Replace(temp(i+1), CHR(9), vbNullString):wRain = Left(wRain, Instr(wRain, "<")-1):wRain = Replace(wRain, vbNewLine, vbNullString)
+      End If
+      
+      If InStr(dataIso, "stsnow")>0 Then
+         temp = Mid(dataIso, InStr(dataIso, "stsnow")+6)
+         temp = Left(temp, InStr(temp, "</tr>")-5)
+         temp = Split(temp, "<td>")
+         wSnow = Replace(temp(i+1), CHR(9), vbNullString):wSnow = Left(wSnow, Instr(wSnow, "<")-1):wSnow = Replace(wSnow, vbNewLine, vbNullString)
+      End If
+      
+      If (wRain = "-" AND wSnow = "-") OR (LenB(wRain)=0 AND LenB(wSnow) = 0) Then
+         wPrecipType = "No rain or snow"
+      Else
+         If wRain = "-" OR LenB(wRain) = 0 Then
+            If wSnow <> "-" Then wPrecipType = "Snow: " & wSnow
+         Else
+            If wSnow = "-" OR LenB(wSnow) = 0 Then wPrecipType = "Rain: " & wRain
+         End If
+      End If   
+      
+   Else
+      wDayIso = Split(dataIso, "table class=""stermfxus""")
+      For i = 1 To 2
+         temp = Mid(wDayIso(i), InStr(wDayIso(i), "thead")+5):temp = Left(temp, InStr(temp, "</tr>")-5):temp = Split(temp, "<th scope=""col""")
+         For j = 1 To UBound(temp)
+            wTime = Replace(temp(j), CHR(9), vbNullString):wTime = Replace(wTime, vbNewLine, vbNullString):wTime = Left(wTime, InStr(wTime, "<")-1):wTime = Right(wTime, Len(wTime)-1):wTime = Replace(wTime, "class=""lastColumn"">", vbNullString)
+            tTime = Hour(Time)
+
+            If tTime = 23 Then tTime = 0            
+            
+            tMatch = False
+            If tTime <= Hour(wTime) Then
+               wDay = wTime
+               tMatch = True
+               Exit For
+            End If            
+         Next
+         If tMatch Then Exit For
+      Next   
+      
+      '// Condition
+      temp = Mid(wDayIso(i), InStr(wDayIso(i), "<td class=""cond""")+16)
+      temp = Left(temp, InStr(temp, "</tr>")+5)
+      wConditionB = Split(temp, "</td>")(j-1):wConditionB = Mid(wConditionB, InStr(wConditionB, ">")+1)    
+
+      '// Temp
+      temp = Mid(wDayIso(i), InStr(wDayIso(i), "td class=""temp""")+15)
+      temp = Left(temp, InStr(temp, "</tr>")+5)
+      temp = Split(temp, "temp")(j):temp = Replace(temp, CHR(9), vbNullString):temp = Replace(temp, vbNeWLine, vbNullString):temp = Left(temp, InStr(temp, "<")-1)
+      wTempCB = Left(temp, InStr(temp, "&")-1):wTempCB = Mid(wTempCB, InStr(wTempCB, ">")+1)     
+      wTempFB = CInt(wTempCB*(9/5)+32)
+      wUnitB = Mid(temp, InStr(temp, ";")+1)
+      
+      '// Percent of Precipitation
+      temp = Mid(wDayIso(i), InStr(wDayIso(i), "P.O.P.</a></td>")+15)
+      temp = Left(temp, InStr(temp, "</tr>")+5)
+      wPOP = Split(temp, "<td")(j):wPOP = Mid(wPOP, InStr(wPOP, ">")+1):wPOP = Left(wPOP, InStr(wPOP, "<")-1)
+      
+      '// Wind
+      temp = Mid(wDayIso(i), InStr(wDayIso(i), "Wind</a></td>")+13)
+      temp = Left(temp, InStr(temp, "</tr>")+5)
+      wWind = Split(temp, "<td")(j):wWind = Mid(wWind, InStr(wWind, ">")+1):wWind = Left(wWind, InStr(wWind, "<")-1)
+      wWindMPH = Mid(wWind, InStr(wWind, " ")+1):wWindMPH = Left(wWindMPH, InStr(wWindMPH, " k")-1):wWindMPH = CInt(wWindMPH/1.609)
+      
+      '// Humidity
+      temp = Mid(wDayIso(i), InStr(wDayIso(i), "Humidity</a></td>")+17)
+      temp = Left(temp, InStr(temp, "</tr>")+5)
+      wHumidity = Split(temp, "<td")(j):wHumidity = Mid(wHumidity, InStr(wHumidity, ">")+1):wHumidity = Left(wHumidity, InStr(wHumidity, "<")-1):wHumidity = Replace(wHumidity, CHR(9), vbNullString):wHumidity = Replace(wHumidity, vbNewLine, vbNullSTring):wHumidity = Replace(wHumidity, CHR(32), vbNullString)
+
+      '// Rain / Snow
+      temp = Mid(wDayIso(i), InStr(wDayIso(i), "Rain</a></td>")+13)
+      temp = Left(temp, InStr(temp, "</tr>")+5)
+      wRain = Split(temp, "<td")(j):wRain = Mid(wRain, InStr(wRain, ">")+1):wRain = Left(wRain, InStr(wRain, "<")-1):wRain = Replace(wRain, CHR(9), vbNullString):wRain = Replace(wRain, vbNewLine, vbNullSTring)
+      
+      temp = Mid(wDayIso(i), InStr(wDayIso(i), "Snow</a></td>")+13)
+      temp = Left(temp, InStr(temp, "</tr>")+5)
+      wSnow = Split(temp, "<td")(j):wSnow = Mid(wSnow, InStr(wSnow, ">")+1):wSnow = Left(wSnow, InStr(wSnow, "<")-1):wSnow = Replace(wSnow, CHR(9), vbNullString):wSnow = Replace(wSnow, vbNewLine, vbNullSTring)
+      
+      If (wRain = "-" AND wSnow = "-") OR (LenB(wRain)=0 AND LenB(wSnow) = 0) Then
+         wPrecipType = "No rain or snow"
+      Else
+         If wRain = "-" OR LenB(wRain) = 0 Then
+            If wSnow <> "-" Then wPrecipType = "Snow: " & wSnow
+         Else
+            If wSnow = "-" OR LenB(wSnow) = 0 Then wPrecipType = "Rain: " & wRain
+         End If
+      End If           
+   End If
+   
+   Select Case origin
+      Case 1
+         AddQ "Weather for " & wLocation & ": Currently " & wTempC & CHR(176) & wUnit & " (" & wTempF & CHR(176) & "F) - " & wCondition & ". " & wDay & ": " & wConditionB & ", " & wTempCB & CHR(176) & wUnitB & " (" & wTempFB & CHR(176) & "F), P.O.P: " & wPOP & ", Winds: " & wWind & " (" & wWindMPH & " mi/h), Humidity: " & wHumidity & ", " & wPrecipType & "."
+      Case 2
+         AddQ "Weather for " & wLocation & ": Currently " & wTempC & CHR(176) & wUnit & " (" & wTempF & CHR(176) & "F) - " & wCondition & ". " & wDay & ": " & wConditionB & ", " & wTempCB & CHR(176) & wUnitB & " (" & wTempFB & CHR(176) & "F), P.O.P: " & wPOP & ", Winds: " & wWind & " (" & wWindMPH & " mi/h), Humidity: " & wHumidity & ", " & wPrecipType & "."
+      Case 4
+         AddChat 16759296, "Weather Script: ", 10682112, "Weather for " & wLocation & ": Currently " & wTempC & CHR(176) & wUnit & " (" & wTempF & CHR(176) & "F) - " & wCondition & ". " & wDay & ": " & wConditionB & ", " & wTempCB & CHR(176) & wUnitB & " (" & wTempFB & CHR(176) & "F), P.O.P: " & wPOP & ", Winds: " & wWind & " (" & wWindMPH & " mi/h), Humidity: " & wHumidity & ", " & wPrecipType & "."
+   End Select   
+   
+   wtLastRequest = Now
+End Sub
+
+
+Private Function GetProvStateShort(city, provState)
+
+   Set File = wtFSO.OpenTextFile(wtFP, 1, True)
+   data = Split(LCase(File.ReadAll), vbNewLine)
+   File.Close
+   Set File = Nothing
+   
+   For Each line In data
+      If InStr(line, "[") < 1 AND line <> vbNullString Then
+         temp = Mid(line, InStr(line, "=")+3)
+         temp1 = Left(line, InStr(line, "=")-1)
+         If Left(temp, 2) = Lcase(provState) AND temp1 = Lcase(city) Then 
+            GetProvStateShort = Mid(line, InStr(line, "=")+1)
+            Exit Function
+         End If
+      End If
+   Next
+   
+   GetProvStateShort = vbNullString
+End Function
+
+
+Private Function CheckCityFile
+
+   If wtFSO.FileExists(wtFP) Then
+      Set getFile = wtFSO.GetFile(wtFP)
+      If Int(getFile.Size/1000) < 140 Then
+         CheckCityFile = False
+      Else
+         CheckCityFile = True
+      End If
+   Else
+      CheckCityFile = False
+   End If   
+
+   Set getFile = Nothing      
+End Function

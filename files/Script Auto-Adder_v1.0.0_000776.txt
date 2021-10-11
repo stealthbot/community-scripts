@@ -1,0 +1,64 @@
+Script("Name") = "Script Auto-Adder"
+Script("Author") = "MrPunkKid"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 0
+Script("Description") = "Checks your desktop for new stealthbot scripts and adds them into the scripts folder."
+
+Private saaFSO, saaFile, wshShell, desktop, desktopFolder, saaWFSO
+
+Sub Event_Load()
+  Set saaFSO = CreateObject("Scripting.FileSystemObject")
+  Set saaWFSO = CreateObject("Scripting.FileSystemObject")
+  Set wshShell = CreateObject("WScript.Shell")
+  desktop = wshShell.SpecialFolders("Desktop")
+  Call CreateObj("LongTimer", "checkScripts")
+  checkScripts.Interval = 1
+  checkScripts.Enabled = True
+End Sub
+
+Private Function IsScript(FileName)
+  Set saaWFSO = CreateObject("Scripting.FileSystemObject")
+  Set saaFile = saaWFSO.OpenTextFile(FileName, 1, False)
+  Do While Not saaFile.AtEndOfStream
+    line = saaFile.ReadLine
+    If InStr(LCase(line), "script") > 0 Then
+      IsScript = True
+      saaFile.Close
+      Set saaFile = Nothing
+      Exit Function
+    End If
+  Loop
+  saaFile.Close
+  Set saaFile = Nothing
+  Set saaWFSO = Nothing
+  IsScript = False
+End Function
+
+Sub checkScripts_Timer()
+  scriptLoaded = 0
+  Set desktopFolder = saaFSO.GetFolder(desktop).Files
+  For Each File in desktopFolder
+    If LCase(saaFSO.GetExtensionName(File)) = "txt" Then 
+      If IsScript(File) Then
+        Set saaWFSO = CreateObject("Scripting.FileSystemObject")
+        If Not saaFile is Nothing Then
+          saaFile.Close
+          Set saaFile = Nothing
+        End If
+        saaWFSO.CopyFile File, BotPath & "/scripts/"
+        Set saaWFSO = Nothing
+        Set saaWFSO = CreateObject("Scripting.FileSystemObject")
+        File.Delete
+        scriptLoaded = scriptLoaded + 1
+        Set saaWFSO = Nothing
+      End If
+    End If
+  Next
+  If scriptLoaded > 0 Then
+    wshShell.AppActivate desktop
+    wshShell.SendKeys "{F5}"
+    AddChat vbWhite, "New script(s) detected, reloading scripts..."
+    ReloadScript
+  End If
+End Sub

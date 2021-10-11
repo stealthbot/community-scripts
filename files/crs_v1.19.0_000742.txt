@@ -1,0 +1,1765 @@
+Script("Name") = "crs"
+Script("Author") = "The-Black-Ninja, original author: Swent"
+Script("Major") = 1
+Script("Minor") = 19
+Script("Revision") = 0
+Script("Description") = "Extends Battle.Net's clan management capabilities."
+
+
+'// Change Log
+'//
+'//  :: v1.18 - v1.19 ::
+'//   ->  Added a filter by rank option for the crsAdmin members command - Thanks Red
+'//  :: v1.17 - v1.18 ::
+'//   ->  Fixed adding unique greets for a username - Thanks DaveTheBat
+'//  :: v1.16 - v1.17 ::
+'//   ->  Added settings option to auto-remove user from bot database when removed from CRS database - Thanks DaveTheBat
+'//  :: v1.9 - v1.16 ::
+'//   ->  Various fixes
+'//   ->  Fixed issue with auto-promote
+'//  :: v1.9 - v1.10 ::
+'//   ->  Fixed issue with setting members to a rank by specifying a name instead of a number - Thanks Spiritless
+'//   ->  Fixed issue with adding reasons that contain apostrophe's
+'//  :: v1.8 - v1.9 ::
+'//   ->  Corrected some spelling mistakes
+'//   ->  Fixed issue for the auto-promote
+'//   ->  Fixed issue with an infinite loop happening when you have 0 files in the backup folder and the backup_num value is set to 1 or more
+'//   ->  Altered how commands were created to allow for a better command description
+'//  :: v1.7 - v1.8 ::
+'//   ->  Added anti-spam settings for greetings.
+'//  :: v1.6 - v1.7 ::
+'//   ->  Added command to mass set users from the bot's clan to a certain crs rank depending on their clan rank (peon, grunt, shaman) - Thanks 008
+'//   ->  Fixed issue with using commands offline - Thanks Tower
+'//   ->  Fixed error when removing a non-existant user from the database - Thanks Tower
+'//   ->  Fixed error when setting a user to a specific rank - Thanks Tower
+'//   ->  Minor fix with the ini about greeting users when they enter.
+'//  :: v1.5 - v1.6 ::
+'//   ->  Fixed issue with IsAlterValid - Thanks Tower
+
+
+
+Public crsConn             '// Holds database connection
+Public crsRanks()          '// Holds rank names specified in program settings
+Public crsRankAccess()     '// Holds access for the ranks
+Public crsDatabasePath     '// Holds database file path
+Private crsFSO             '// FileSystemObject
+Private crsUsers           '// Holds their time spent in channel, in seconds
+Private crsGreetUsers      '// Holds their time since last greet
+Private crsLastGreet       '// Holds the time of last greet
+
+
+'// Notes
+'//   --> Any columns having a date and time is formatted in mm/dd/YYY and the time. This allows for using DateDiff with the row value and the Now function without giving a crazy number.
+
+
+Sub Event_Load()
+
+   '// [ Rank Settings ]
+   '// =============================================================================================================
+   '// GUIDE TO CUSTOMIZING YOUR CRS RANKS - READ THIS BEFORE CHANGING ANYTHING!
+   '//
+   '// <<<<< ALL MODIFICATIONS TO THE NUMBER OF EXISTING RANKS SHOULD BE MADE *BEFORE* YOU START ADDING MEMBERS >>>>>
+
+   '// If ** you haven't added members yet **, FOLLOW THESE SIMPLE STEPS TO CUSTOMIZE YOUR RANKS:
+   '//   1) You may have as many ranks as you want. List them out in the RANK LIST section below in this format (WITHOUT the '//):
+   '//      crsRanks(1) = "first rank name"     : crsRankAccess(1) = 90
+   '//      crsRanks(2) = "second rank name"    : crsRankAccess(2) = 60
+   '//      crsRanks(3) = "third rank name"     : crsRankAccess(3) = 30
+   '//      Don't forget to set each rank's access on the same line like the example provides!!!
+   '//   2) After you finish writing your ranks, ** you MUST change the numRanks variable, above our ranks, to the value of your GREATEST NUMBERED RANK
+   '//      Example: If my rank list was the three ranks above, I would change the value numRanks to 3
+   '//   3) Inside your bot hit Settings > Reload Script
+
+   '// If you HAVE already added members, and you need to change the number of ranks, follow these steps:
+   '//   1) Close your bot.
+   '//   2) Go to your StealthBot folder. Delete "MemberData.mdb"
+   '//   3) Make the desired rank modifications below.
+   '//   4) Open your bot back up.
+   '//   5) All of the your rank data will be gone, so you'll need to read all of your members.
+   '// Note that after adding members, modifying the NAMES of existing ranks is fine, as long as you don't change the number that exist.
+
+   '// =========  This line needs to be changed after you've altered the amount of ranks you have   ============
+
+      numRanks = 14 '// Highest number of ranks. Change this value after adding or removing ranks.
+
+   '// =========================================================================================================
+
+   ReDim crsRanks(numRanks + 1): crsRanks(0) = "Unranked" '// Do not modify this line
+   ReDim crsRankAccess(numRanks + 1): crsRankAccess(0) = "Unranked" '// Do not modify this line
+
+   '// <<<< RANK LIST -- YOUR RANKS SHOULD BE LISTED ** BELOW ** HERE >>>>
+
+   crsRanks(1) = "Night Angel"             : crsRankAccess(1) = 10
+   crsRanks(2) = "Speaker"                 : crsRankAccess(2) = 10
+   crsRanks(3) = "Silencer"                : crsRankAccess(3) = 10
+   crsRanks(4) = "Assassin"                : crsRankAccess(4) = 10
+   crsRanks(5) = "Eliminator"              : crsRankAccess(5) = 10
+   crsRanks(6) = "Slayer"                  : crsRankAccess(6) = 10
+   crsRanks(7) = "Murderer"                : crsRankAccess(7) = 10
+   crsRanks(8) = "Creed Probation Lvl 5"   : crsRankAccess(8) = 10
+   crsRanks(9) = "Creed Probation Lvl 4"   : crsRankAccess(9) = 10
+   crsRanks(10) = "Creed Probation Lvl 3"  : crsRankAccess(10) = 10
+   crsRanks(11) = "Creed Probation Lvl 2"  : crsRankAccess(11) = 10
+   crsRanks(12) = "Creed Probation Lvl 1"  : crsRankAccess(12) = 10
+   crsRanks(13) = "Thug"                   : crsRankAccess(13) = 10
+   crsRanks(14) = "Banned"                 : crsRankAccess(14) = 0
+   '// <<<< YOUR RANKS SHOULD BE LISTED ** ABOVE ** HERE >>>>
+
+   If crsRanks(UBound(crsRanks)-1) = vbNullString OR crsRankAccess(UBound(crsRankAccess)-1) = vbNullString Then
+      AddChat 16759296, "CRS Script:. ", 5731327, "ERROR:  Your "" numRanks "" does not match up with your maximum crsRank value or your maximum crsRankAccess value. Consult this post for information on this error: "
+      AddChat vbGreen, "http://www.stealthbot.net/forum/index.php?showtopic=368&st=0#FAQ_ErrNum"
+   End If
+
+   If GetSettingsEntry("dsllLimit") = vbNullString Then
+      WriteSettingsEntry "'//  For all settings that have a True or False, True enables the setting, False disables the setting. Do not remove the True/False, simply put one or the other.", vbNullString
+      WriteSettingsEntry "'//  This setting will determine how many backups of the CRS database you want to keep; -1 = unlimited, 0 = disable this feature", vbNullString
+      WriteSettingsEntry "'//  Any other number will reflect how many backups will be in the folder. Once that limit is reached, the script will start deleting the oldest backup to make room.", vbNullString
+      WriteSettingsEntry "'//  When the bot closes or you reload the script, the CRS script will make a backup into a directory called CRS DB Backups.", vbNullString
+      WriteSettingsEntry "backupNum", -1
+      WriteSettingsEntry "'//  Clan Name.", vbNullString
+      WriteSettingsEntry "clan_name", "Black Hand Assassins"
+      WriteSettingsEntry "'//  Enable CRS auto-access so when users are promoted to different ranks, their access will be automatically adjusted according to each rank's access setting.", vbNullString
+      WriteSettingsEntry "aa_on", False
+      WriteSettingsEntry "'//  Enable CRS auto-access removal so when users are removed from the CRS database, their entry in the bot's Database Manager will also be removed.", vbNullString
+      WriteSettingsEntry "aa_rem_on", False
+      WriteSettingsEntry "'//  Set autoadd_tag_on to True to automatically add members to the database with a certain tag in their name (autoadd_tag).", vbNullString
+      WriteSettingsEntry "autoadd_tag_on", False
+      WriteSettingsEntry "autoadd_tag", "(BHA)"
+      WriteSettingsEntry "'//  Demotes users with X days of last logging into the channel.", vbNullString
+      WriteSettingsEntry "dsllLimit", 10
+      WriteSettingsEntry "'//  Enable auto-demote based on days of last channel log in.", vbNullString
+      WriteSettingsEntry "dsll_on", True
+      WriteSettingsEntry "'//  Every X days (dayIncrement) in the clan, users will be promoted starting from the numerical rank of dayLowRank, stopping at dayHighRank", vbNullString
+      WriteSettingsEntry "'//  Disable this system by setting dayPromote_on to False", vbNullString
+      WriteSettingsEntry "dayPromote_on", True
+      WriteSettingsEntry "dayHighRank", 7
+      WriteSettingsEntry "dayLowRank", 12
+      WriteSettingsEntry "dayIncrement", 5
+      WriteSettingsEntry "'//  For every X recruits recruited (recruitIncrement), users will be promoted starting from the numerical rank of recruitLowRank, stopping at recruitHighRank", vbNullString
+      WriteSettingsEntry "'//  Disable this system by setting recruitPromote_on to False", vbNullString
+      WriteSettingsEntry "recruitPromote_on", True
+      WriteSettingsEntry "recruitHighRank", 6
+      WriteSettingsEntry "recruitLowRank", 4
+      WriteSettingsEntry "recruitIncrement", 5
+      WriteSettingsEntry "'//  Member greet display type; 1 - all chat, 2 - emote, 3 - whisper", vbNullString
+      WriteSettingsEntry "m_greet_dsp", 3
+      WriteSettingsEntry "'//  Non-member greet display type; 1 - all chat, 2 - emote, 3 - whisper", vbNullString
+      WriteSettingsEntry "nm_greet_dsp", 3
+      WriteSettingsEntry "'//  Member greet enabled?", vbNullString
+      WriteSettingsEntry "m_greet_on", True
+      WriteSettingsEntry "'//  Non-member greet enabled?", vbNullString
+      WriteSettingsEntry "nm_greet_on", True
+      WriteSettingsEntry "'//  Member greet message.", vbNullString
+      WriteSettingsEntry "m_greet", "Welcome back, %0. You are ranked %u - %r. You have %a Access."
+      WriteSettingsEntry "'//  Non-member greet message.", vbNullString
+      WriteSettingsEntry "nm_greet", "Welcome %0 to %c. Your ping is %pms."
+      WriteSettingsEntry "'//  Anti-flood settings for the greet message.", vbNullString
+      WriteSettingsEntry "'//  greet_bufferTime - If users join within these seconds, they will not be greeted.", vbNullString
+      WriteSettingsEntry "'//  greet_coolDown - Users will need to wait these amount of seconds before they will be greeted again. 1800 sec = 30 mins", vbNullString
+      WriteSettingsEntry "'//  greet_queueExit - If the queue load gets to this number, the bot will not greet until the queue decreases.", vbNullString
+      WriteSettingsEntry "greet_bufferTime", 7
+      WriteSettingsEntry "greet_coolDown", 1800
+      WriteSettingsEntry "greet_queueExit", 4
+      WriteSettingsEntry "'//  Rank specific greet messages.", vbNullString
+      WriteSettingsEntry "***", "***"
+
+      Call CleanINI()
+   End If
+
+   AddChat 16759296, "CRS Script:. ", 10682112, "Checking commands and creating if neccesary ... This may take a few minutes; ignore the Script-Control pop-up."
+   Call CreateCmds()
+
+   '// Database exists?
+   crsDatabasePath = BotPath() & "MemberData.mdb"
+   Set crsFSO = CreateObject("Scripting.FileSystemObject")
+   If Not crsFSO.FileExists(crsDatabasePath) Then
+      AddChat 16759296, "Welcome to the Clan Rank Script! You can customize the number and names of existing ranks inside crsClanRankScript.txt"
+      AddChat 16759296, "Please note that all changes to the ", vbRed, "NUMBER OF EXISTING RANKS", vbCyan, " should be made ", vbRed, "BEFORE", vbCyan, " you start adding members!"
+      AddChat 16759296, "You may customize the access level for each rank inside crsClanRankScript.txt"
+      AddChat 10682112, "For help on common CRS questions and issues, visit:"
+      AddChat 10682112, "http://www.stealthbot.net/forum/index.php?/topic/368-clan-rank-script-faqs-crs/"
+      crs_create_database '// Create the database
+   Else
+      crs_connect '// Connect to database
+   End If
+
+   Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members`")
+   If rs.Fields(0) = 0 Then
+      '// No one is in the Database, so add the bot's username as the first user
+      crsConn.Execute("INSERT INTO `members` (`name`, `rank`, `previous_rank`, `promoter_name`, `promotion_date`, `join_date`, `reason`, `time_logged`, `last_active`, `recruiter`) " & _
+         "Values ('" & BotVars.Username & "', " & 1 & ", " & 1 & ", '" & BotVars.Username & "', '" & Now & "', '" & Now & "', 'Bot Console', " & 0 & ", '0', '" & BotVars.Username & "')")
+
+      AddChat 16759296, "CRS Script:. ", 10682112, "Bot console has been added as the first member in your CRS database. Console is now able to add other users and perform CRS commands."
+   End If
+
+   Call CreateObj("LongTimer", "Check_dsll")
+   Check_dsll.Enabled = True
+   Check_dsll.Interval = 720
+
+   Set crsUsers = CreateObject("Scripting.Dictionary")
+   crsUsers.CompareMode = 1
+
+   Set crsGreetUsers = CreateObject("Scripting.Dictionary")
+   crsGreetUsers.CompareMode = 1
+
+   crsLastGreet = Now -1
+End Sub
+
+
+Sub Event_Userjoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+
+   '// Get user's rank data
+   Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name`='" & Username & "'")
+   If rs.Fields(0) <> 0 Then
+      Set rs = crsConn.Execute("SELECT * FROM `members` WHERE `name`='" & Username & "'")
+      rank = rs.Fields(1)
+      reason = rs.Fields(6)
+
+      '// Update last active date/time
+      crsConn.Execute("UPDATE `members` SET `last_active` = '" & Now() & "' WHERE `name`='" & Username & "'")
+      AutoPromote(Username)
+
+      crsUsers.Item(Username) = Now
+   Else
+      If GetSettingsEntry("autoadd_tag_on") Then
+         If InStr(Username, GetSettingsEntry("autoadd_tag")) > 0 Then
+            If LCase(crsRanks(UBound(crsRanks)-1)) = "banned" Then
+               nRank = UBound(crsRanks)-2
+            Else
+               nRank = UBound(crsRanks)-1
+            End If
+            crsConn.Execute("INSERT INTO `members` (`name`, `rank`, `previous_rank`, `promoter_name`, `promotion_date`, `join_date`, `reason`, `time_logged`, `last_active`, `recruiter`) " & _
+               "Values ('" & Username & "', " & nRank & ", " & nRank & ", '" & BotVars.Username & "', '" & Now & "', '" & Now & "', 'Automatically added due to tag in name.', " & 0 & ", '0', '" & BotVars.Username & "')")
+            AddChat 16759296, "CRS Script:. ", 10682112, Username & " was added to the database for having "" " & GetSettingsEntry("autoadd_tag") & " "" within their name."
+         Else
+            rank = 0
+         End If
+      Else
+         rank = 0
+      End If
+   End If
+
+   '// Replace greet variables
+   If rank > 0 Then
+      If LCase(crsRanks(rank)) = "banned" Then
+         Command BotVars.Username, "/ipban " & Username & " " & reason, True
+         Exit Sub
+      End If
+
+      If NOT GetSettingsEntry("m_greet_on") Then Exit Sub
+      If GetSettingsEntry(rank) = vbNullString Then
+         strRankGreet = GetSettingsEntry("m_greet")
+      Else
+         strRankGreet = GetSettingsEntry(rank)
+      End If
+   Else
+      If NOT GetSettingsEntry("nm_greet_on") Then Exit Sub
+      If Len(GetSettingsEntry(Username)) > 0 Then
+         strRankGreet = GetSettingsEntry(Username)
+      Else
+         strRankGreet = GetSettingsEntry("nm_greet")
+      End If
+   End If
+
+   strRankGreet = Replace(strRankGreet, "%0", Username)
+   strRankGreet = Replace(strRankGreet, "%r", crsRanks(rank))
+   strRankGreet = Replace(strRankGreet, "%u", CInt(rank))
+   strRankGreet = Replace(strRankGreet, "%m", GetDBMembers(0, vbNullString))
+   strRankGreet = Replace(strRankGreet, "%n", GetSettingsEntry("clan_name"))
+   strRankGreet = Replace(strRankGreet, "%c", myChannel)
+   strRankGreet = Replace(strRankGreet, "%1", BotVars.Username)
+   strRankGreet = Replace(strRankGreet, "%t", Time)
+   strRankGreet = Replace(strRankGreet, "%d", Date)
+   strRankGreet = Replace(strRankGreet, "%v", ssc.GetBotVersion())
+   strRankGreet = Replace(strRankGreet, "%a", GetDBEntry(Username).Rank)
+   strRankGreet = Replace(strRankGreet, "%f", GetDBEntry(Username).Flags)
+   strRankGreet = Replace(strRankGreet, "%p", Ping)
+
+   '// Display greeting
+
+   If GetQueueSize => CInt(GetSettingsEntry("greet_queueExit")) Then Exit Sub
+   If DateDiff("s", crsLastGreet, Now) < CInt(GetSettingsEntry("greet_bufferTime")) Then Exit Sub
+
+   If crsGreetUsers.Exists(Username) Then
+      If DateDiff("s", crsGreetUsers.Item(Username), Now) < CInt(GetSettingsEntry("greet_coolDown")) Then Exit Sub
+      If rank > 0 Then
+         dspId = GetSettingsEntry("m_greet_dsp")
+         Select Case dspId
+            Case 1: AddQ strRankGreet
+            Case 2: AddQ "/me " & strRankGreet
+            Case 3: AddQ "/w " & Username & " " & strRankGreet
+         End Select
+      Else
+         dspId = GetSettingsEntry("nm_greet_dsp")
+         Select Case dspId
+            Case 1: AddQ strRankGreet
+            Case 2: AddQ "/me " & strRankGreet
+            Case 3: AddQ "/w " & Username & " " & strRankGreet
+         End Select
+      End If
+      crsGreetUsers.Item(Username) = Now
+   Else
+      If rank > 0 Then
+         dspId = GetSettingsEntry("m_greet_dsp")
+         Select Case dspId
+            Case 1: AddQ strRankGreet
+            Case 2: AddQ "/me " & strRankGreet
+            Case 3: AddQ "/w " & Username & " " & strRankGreet
+         End Select
+      Else
+         dspId = GetSettingsEntry("nm_greet_dsp")
+         Select Case dspId
+            Case 1: AddQ strRankGreet
+            Case 2: AddQ "/me " & strRankGreet
+            Case 3: AddQ "/w " & Username & " " & strRankGreet
+         End Select
+      End If
+      crsGreetUsers.Item(Username) = Now
+   End If
+
+   crsLastGreet = Now
+End Sub
+
+Sub Event_UserLeaves(Username, Flags)
+
+   If crsUsers.Exists(Username) Then
+      crsConn.Execute("UPDATE `members` SET `time_logged` = `time_logged` +" & DateDiff("s", crsUsers.Item(Username), Now) & " WHERE `name` = '" & Username & "'")
+      crsUsers.Remove Username
+   End If
+End Sub
+
+Sub Event_Close()
+
+  '// Close DB Connection
+   AddChat 16759296, "CRS Script:. ", 10682112, "Closing Database connection."
+   crsConn.Close
+
+  '// Create a backup of the database
+   temp = Int(GetSettingsEntry("backupNum"))
+   If temp <> 0 Then
+      AddChat 16759296, "CRS Script:. ", 10682112, "Creating backup of current database."
+
+     '// Make our backup folder
+      backFolder = BotPath & "CRS Database Backups\"
+      If NOT crsFSO.FolderExists(backFolder) Then crsFSO.CreateFolder(backFolder)
+
+     '// Unlimited backups allowed
+      If temp = -1 Then
+         Set Folder = crsFSO.GetFolder(backFolder)
+        '// If there are no files in the folder, create the first one
+         If Folder.Files.Count = 0 Then
+            tFile = backFolder & "MemberData (1).mdb"
+
+            Set File = crsFSO.GetFile(crsDatabasePath)
+            File.Copy(tFile)
+         Else
+           '// Find the highest appeneded number and set the new file to +1
+            highestAppend = 0
+
+            For Each f In Folder.Files
+               appendNum = Int(Split(Split(f.Name, "(")(1), ")")(0))
+               If appendNum > highestAppend Then highestAppend = appendNum
+            Next
+
+            Set File = crsFSO.GetFile(crsDatabasePath)
+            File.Copy(backFolder & "MemberData (" & highestAppend+1 & ").mdb")
+         End If
+      Else
+         Set Folder = crsFSO.GetFolder(backFolder)
+         If Folder.Files.Count >= temp Then
+            oldFile = 0
+            fName = vbNullString
+            highestAppend = 0
+
+            For Each f In Folder.Files
+               dDiff = DateDiff("s", f.DateCreated, Now)
+               appendNum = Int(Split(Split(f.Name, "(")(1), ")")(0))
+               If appendNum > highestAppend Then highestAppend = appendNum
+               If dDiff > oldFile Then
+                  oldFile = dDiff
+                  fName = f.Name
+               End If
+            Next
+
+            tFile = backFolder & "MemberData (" & highestAppend+1 & ").mdb"
+            crsFSO.DeleteFile(backFolder & fName)
+            Set File = crsFSO.GetFile(crsDatabasePath)
+            File.Copy(tFile)
+         Else
+            Set File = crsFSO.GetFile(crsDatabasePath)
+            tFile = backFolder & "MemberData (1).mdb"
+            Set Folder = crsFSO.GetFolder(backFolder)
+
+            If Folder.Files.Count = 0 Then
+               tFile = backFolder & "MemberData (" & Folder.Files.Count+1 & ").mdb"
+               File.Copy(tFile)
+               Exit Sub
+            End If
+
+           '// If a backup already exists, append a #
+            i = Folder.Files.Count
+            Do
+               If crsFSO.FileExists(tFile) Then
+                  i=i+1
+                  tFile = backFolder & "MemberData (" & i & ").mdb"
+               Else
+                  nFound = True
+               End If
+            Loop While nFound
+
+            File.Copy(tFile)
+         End If
+      End If
+   End If
+End Sub
+
+
+Public Sub Event_Command(Command)
+
+  '// This makes it so you can use the commands while offline
+   If Command.IsLocal Then Command.Username = BotVars.Username
+
+   Select Case LCase(Command.Name)
+      Case "crsadmin":     Call crsadminCmd(Command, Command.Username)
+      Case "crscmds":      Call crsCmdsCmd(Command, Command.Username)
+      Case "crsdemote":    Call crsdemoteCmd(Command, Command.Username)
+      Case "crsdisable":   Call crsdisableCmd(Command, Command.Username)
+      Case "crsgreet":     Call crsgreetCmd(Command, Command.Username)
+      Case "crsmeminfo":   Call crsmeminfoCmd(Command, Command.Username)
+      Case "crspromote":   Call crspromoteCmd(Command, Command.Username)
+      Case "crsqranks":    Call crsqranksCmd(Command, Command.Username)
+      Case "crsrank":      Call crsrankCmd(Command, Command.Username)
+      Case "crsrankinfo":  Call crsrankinfoCmd(Command, Command.Username)
+      Case "crsrankstats": Call crsrankstatsCmd(Command, Command.Username)
+      Case "crsremove":    Call crsremoveCmd(Command, Command.Username)
+      Case "crsrestore":   Call crsrestoreCmd(Command, Command.Username)
+      Case "crsset":       Call crssetCmd(Command, Command.Username)
+   End Select
+End Sub
+
+
+Sub Check_dsll_Timer()
+
+   If NOT GetSettingsEntry("dsll_on") Then Exit Sub
+
+   Set rs = crsConn.Execute("SELECT `name`, `promotion_date`, `reason` FROM `members`")
+   If NOT (rs.BOF OR rs.EOF) Then
+      Do Until rs.EOF
+         iniLimit = Int(GetSettingsEntry("dsllLimit"))
+         dsll = GetDaysLastLogged(rs.Fields(0))
+         If dsll >= iniLimit AND rs.Fields(0) <> BotVars.Username Then
+            If DateDiff("d", rs.Fields(1), Now) >= iniLimit Then
+               Command BotVars.Username, "/crsdemote " & rs.Fields(0) & " Days inactive: " & dsll, True
+            End If
+         End If
+         rs.MoveNext
+      Loop
+   End If
+End Sub
+
+
+
+Sub crs_create_database()
+
+   '// Create the database
+   Set Catalog = CreateObject("ADOX.Catalog")
+   Catalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & crsDatabasePath
+
+   '// Connect to database
+   crs_connect()
+
+   '// Create members Table
+   crsConn.Execute("CREATE TABLE `members` (`name` varchar(30) NOT NULL, `rank` int NULL, `previous_rank` int NULL, " & _
+                "`promoter_name` varchar(30) NOT NULL, `promotion_date` varchar(32), " & _
+                "`join_date` varchar(32), `reason` Text, `time_logged` Int, `last_active` varchar(32), `recruiter` varchar(15))")
+End Sub
+
+Sub crs_connect()
+
+   '// Create database connection
+   Set crsConn = CreateObject("ADODB.connection")
+   dsn = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & crsDatabasePath
+   crsConn.ConnectionString = dsn
+
+   crsConn.Open
+End Sub
+
+
+
+Private Sub crsCmdsCmd(Command, user)
+
+  '// If proper syntax
+   If Command.IsValid Then
+     '// Has enough access
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+        '// Get command requirements. Use official names as they appear in the Command Manager; these names will not change unless users edit the XML, which is idiotic when they can just create an alias.
+         cmdNames = Array("crsAdmin", "crsCmds", "crsDemote", "crsDisable", "crsGreet", "crsMemInfo", "crsPromote", "crsQRanks", "crsRank", "crsRankInfo", "crsRankStats", "crsRemove", "crsRestore", "crsSet")
+         For i = 0 To UBound(cmdNames)
+            Set cmd = OpenCommand(cmdNames(i))
+            If cmd.RequiredRank <= GetDBEntry(user).Rank OR user = BotVars.Username Then text = text & cmdNames(i) & ", "
+         Next
+
+         If text <> vbNullString Then
+            Command.Respond "You are able to use the following CRS commands: " & Left(text, Len(text) -2)
+         Else
+            Command.Respond "You are not able to use any CRS commands."
+         End If
+      End If
+   End If
+End Sub
+
+Private Sub crsadminCmd(Command, user)
+
+   If Command.IsValid Then
+      If user = BotVars.Username Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         Select Case LCase(Split(Command.Args)(0))
+            Case "override"
+               cmdArr = Split(Command.Args)
+               If Ubound(cmdArr) < 3 Then Exit Sub
+
+               Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` = '" & cmdArr(2) & "'")
+               If rs.Fields(0) <> 0 Then
+                  On Error Resume Next
+                  If IsNumeric(cmdArr(3)) Then
+                     crsConn.Execute("UPDATE `members` SET `" & cmdArr(1) & "` = " & cmdArr(3) & " WHERE `name` ='" & cmdArr(2) & "'")
+                     On Error Resume Next
+                     Select Case Err.Number
+                        Case -2147217904
+                           Command.Respond "CRS Database error: That field does not exist. Please do not use this command if you don't know what you are doing. Misuse of this command WILL cause this script to error."
+                           Exit Sub
+                        Case -2147217913
+                           Command.Respond "CRS Database error: Field is not formatted for the specified entry. Please do not use this command if you don't know what you are doing. Misuse of this command WILL cause this script to error."
+                           Exit Sub
+                     End Select
+                     Command.Respond "Field was changed to the specified entry for user "" " & cmdArr(2) & """ ."
+                  Else
+                     If UBound(cmdArr) > 3 Then
+                        sValue = Split(Command.Args, " ", 4)(3)
+                     Else
+                        sValue = cmdArr(3)
+                     End If
+                     crsConn.Execute("UPDATE `members` SET `" & cmdArr(1) & "` = '" & sValue & "' WHERE `name` ='" & cmdArr(2) & "'")
+                     Select Case Err.Number
+                        Case -2147217904
+                           Command.Respond "CRS Database error: That field does not exist. Please do not use this command if you don't know what you are doing. Misuse of this command WILL cause this script to error."
+                           Exit Sub
+                        Case -2147217913
+                           Command.Respond "CRS Database error: Field is not formatted for the specified entry. Please do not use this command if you don't know what you are doing. Misuse of this command WILL cause this script to error."
+                           Exit Sub
+                     End Select
+                     Command.Respond "Field was changed to the specified entry for user "" " & cmdArr(2) & """ ."
+                  End If
+               End If
+
+            Case "members"
+               cmdArr = Split(Command.Args)
+               If UBound(cmdArr) > 0 Then
+                  If IsNumeric(cmdArr(1)) Then
+                     Command.Respond "Members in the CRS database " & GetDBMembers(3, cmdArr(1))
+                  Else
+                     Command.Respond "Invalid rank. Ranks must be numeric."
+                  End If
+               Else
+                  Command.Respond "Members in the CRS database (" & GetDBMembers(0, vbNullString) & "): " & GetDBMembers(1, vbNullString)
+               End If
+
+            Case "massrank"
+               cmdArr = Split(LCase(Command.Args))
+               If IsNumeric(cmdArr(2)) AND (cmdArr(1) = "probation" OR cmdArr(1) = "peon" OR cmdArr(1) = "grunt" OR cmdArr(1) = "shaman") Then
+                  If Int(cmdArr(2)) > UBound(crsRanks)-1 OR Int(cmdArr(2)) < LBound(crsRanks)+1 Then
+                     Command.Respond "Invalid rank. Ranks must be between " & LBound(crsRanks)+1 & " and " & UBound(crsRanks)-1 &"."
+                     Exit Sub
+                  End If
+
+                  addchat vbGreen, cmdArr(1)
+
+                  Select Case cmdArr(1)
+                     Case "probation":sRank = 0
+                     Case "peon":sRank = 1
+                     Case "grunt":sRank = 2
+                     Case "shaman":sRank = 3
+                  End Select
+
+                  For Each mem In Clan.Members
+                     If mem.Rank = sRank Then
+                        Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` = '" & mem.Name & "'")
+                        If rs.Fields(0) <> 0 Then
+                           crsConn.Execute("UPDATE `members` SET `promotion_date` ='" & Now & "', `previous_rank` = `rank`, `rank` =" & cmdArr(2) & ", `promoter_name`='" & BotVars.Username & "', `reason` = 'Mass Set' WHERE `name` ='" & mem.Name & "'")
+
+                           Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & mem.Name & "'")
+                           Command.Respond """ " & mem.Name & " "" has had their rank changed to rank " & rs.Fields(0) & " - " & crsRanks(rs.Fields(0))
+                           If GetSettingsEntry("aa_on") Then Call GiveAccess(Mem.name, rs.Fields(0))
+                        Else  '// Brand new member
+                           crsConn.Execute("INSERT INTO `members` (`name`, `rank`, `previous_rank`, `promoter_name`, `promotion_date`, `join_date`, `reason`, `time_logged`, `last_active`, `recruiter`) " & _
+                              "Values ('" & mem.Name & "', " & cmdArr(2) & ", " & cmdArr(2) & ", '" & BotVars.Username & "', '" & Now & "', '" & Now & "', 'Mass Set', " & 0 & ", '0', '" & BotVars.Username & "')")
+
+                           Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & mem.Name & "'")
+                           Command.Respond """ " & mem.Name & " "" has been added as a new member with the rank of " & rs.Fields(0) & " - " & crsRanks(rs.Fields(0))
+                           If GetSettingsEntry("aa_on") Then Call GiveAccess(mem.Name, rs.Fields(0))
+                        End If
+                     End If
+                  Next
+               End If
+
+            Case "resetdb"
+               AddChat 16759296, "CRS Script:. ", 10682112, "Resetting database..."
+               crsConn.Close
+               crsFSO.DeleteFile(crsDatabasePath)
+               Call crs_create_database()
+
+               Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members`")
+               If rs.Fields(0) = 0 Then
+                  '// No one is in the Database, so add the bot's username as the first user
+                  crsConn.Execute("INSERT INTO `members` (`name`, `rank`, `previous_rank`, `promoter_name`, `promotion_date`, `join_date`, `reason`, `time_logged`, `last_active`, `recruiter`) " & _
+                     "Values ('" & BotVars.Username & "', " & 1 & ", " & 1 & ", '" & BotVars.Username & "', '" & Now & "', '" & Now & "', 'Bot Console', " & 0 & ", '0', '" & BotVars.Username & "')")
+
+                  AddChat 16759296, "CRS Script:. ", 10682112, "Bot console has been added as the first member in your CRS database. Console is now able to add other users and perform CRS commands."
+               End If
+         End Select
+      End If
+   End If
+End Sub
+
+Private Sub crsgreetCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         '// Get command agruments
+         cmdArr = Split(Command.Args)
+         Select Case LCase(cmdArr(0))
+            Case "on"
+               WriteSettingsEntry "nm_greet_on", True
+               WriteSettingsEntry "m_greet_on", True
+               Command.Respond "Member and non-member CRS greets have been turned on."
+            Case "off"
+               WriteSettingsEntry "nm_greet_on", False
+               WriteSettingsEntry "m_greet_on", False
+               Command.Respond "Member and non-member CRS greets have been turned off."
+            Case "mem"
+               If UBound(cmdArr) < 1 Then Exit Sub
+               Select Case cmdArr(1)
+                  Case "on"
+                     WriteSettingsEntry "m_greet_on", True
+                     Command.Respond "Member CRS greets have been turned on."
+                  Case "off"
+                     WriteSettingsEntry "m_greet_on", False
+                     Command.Respond "Member CRS greets have been turned off."
+                  Case Else
+                     WriteSettingsEntry "m_greet", Split(Command.Args, " ", 2)(1)
+                     Command.Respond "Greet saved for CRS members."
+               End Select
+            Case "nmem"
+               If UBound(cmdArr) < 1 Then Exit Sub
+               Select Case cmdArr(1)
+                  Case "on"
+                     WriteSettingsEntry "nm_greet_on", True
+                     Command.Respond "Non member CRS greets have been turned on."
+                  Case "off"
+                     WriteSettingsEntry "nm_greet_on", False
+                     Command.Respond "Non member CRS greets have been turned off."
+                  Case Else
+                     WriteSettingsEntry "nm_greet", Split(Command.Args, " ", 2)(1)
+                     Command.Respond "Greet saved for non CRS members."
+               End Select
+            Case Else
+              '// Rank Specific greets
+               If UBound(cmdArr) < 1 Then Exit Sub
+               If IsNumeric(cmdArr(0)) Then
+                  WriteSettingsEntry cmdArr(0), Split(Command.Args, " ", 2)(1)
+                  Command.Respond "Greet saved for rank " & cmdArr(0) & "."
+               End If
+         End Select
+      End If
+   End If
+End Sub
+
+Private Sub crsremoveCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         name = Command.Args
+
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name`='" & name & "'")
+         If rs.Fields(0) <> 0 Then
+            If NOT IsAlterValid("remove", name, user, vbNullString) Then
+               Command.Respond "You cannot remove someone equal to or higher than your current CRS rank."
+               Exit Sub
+            End If
+
+            crsConn.Execute("DELETE FROM `members` WHERE `name`='" & name & "'")
+            Command.Respond """ " & name & " "" has been removed from the CRS database."
+            If GetSettingsEntry("aa_rem_on") Then Command BotVars.Username, "/rem " & name, True
+         Else
+            Command.Respond """ " & name & " "" does not have a record on the CRS database."
+         End If
+      End If
+   End If
+End Sub
+
+Private Sub crsdemoteCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         If Len(Command.Args) < 1 Then Exit Sub
+
+         cmdArr = Split(Command.Args)
+
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` ='" & cmdArr(0) & "'")
+         If rs.Fields(0) <> 0 Then
+            Select Case UBound(cmdArr)
+               Case 0  '// No number, no reason = demoting down by 1
+                 '// Check if rank is a valid rank
+                  If NOT IsAlterValid("demote", cmdArr(0), user, 1) Then
+                     Command.Respond "You cannot demote someone that is an equal or higher rank than yourself, or below the lowest rank."
+                     Exit Sub
+                  End If
+
+                  Call GivePromotion(Command, cmdArr(0), user, 1, vbNullString)
+
+               Case Else  '// Number and/or reason
+                  If IsNumeric(cmdArr(1)) Then
+                     If NOT IsAlterValid("demote", cmdArr(0), user, cmdArr(1)) Then
+                        Command.Respond "You cannot demote someone that is an equal or higher rank than yourself, or below the lowest rank."
+                        Exit Sub
+                     End If
+
+                     If Int(cmdArr(1)) > UBound(crsRanks)-1 OR Int(cmdArr(1)) < LBound(crsRanks)+1 Then
+                        Command.Respond "Invalid rank. Ranks must be between " & LBound(crsRanks)+1 & " and " & UBound(crsRanks)-1 &"."
+                        Exit Sub
+                     End If
+
+                     '// Check for a reason
+                     If UBound(cmdArr) > 1 Then
+                        reason = Split(Command.Args, " ", 3)(2)
+                     Else
+                        reason = vbNullString
+                     End If
+
+                     Call GivePromotion(Command, cmdArr(0), user, cmdArr(1), reason)
+                  Else
+                     If NOT IsAlterValid("demote", cmdArr(0), user, 1) Then
+                        Command.Respond "You cannot demote someone that is an equal or higher rank than yourself, or below the lowest rank."
+                        Exit Sub
+                     End If
+
+                     If UBound(cmdArr) => 0 Then
+                        reason = Split(Command.Args, " ", 2)(1)
+                     Else
+                        reason = vbNullString
+                     End If
+
+                     Call GivePromotion(Command, cmdArr(0), user, 1, reason)
+                  End If
+            End Select
+         Else
+            Command.Respond """ " & cmdArr(0) & " "" does not have a record on the CRS database."
+         End If
+      End If
+   End If
+End Sub
+
+Private Sub crsdisableCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         If Len(Command.Args) < 1 Then Exit Sub
+
+         cmdArr = Split(Command.Args)
+
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` ='" & cmdArr(0) & "'")
+         If rs.Fields(0) <> 0 Then
+            If NOT IsAlterValid("demote", cmdArr(0), user, 0) Then
+               Command.Respond "You cannot disable someone that is of equal or higher rank than yourself."
+               Exit Sub
+            End If
+
+            If UBound(cmdArr) > 0 Then
+               reason = Split(Command.Args, " ", 2)(1)
+            Else
+               reason = vbNullString
+            End If
+
+            Call GivePromotion(Command, cmdArr(0), user, vbNullString, reason)
+         Else
+            Command.Respond """ " & cmdArr(0) & " "" does not have a record on the CRS database."
+         End If
+      End If
+   End If
+End Sub
+
+Private Sub crspromoteCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         If Len(Command.Args) < 1 Then Exit Sub
+
+         cmdArr = Split(Command.Args)
+
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` ='" & cmdArr(0) & "'")
+         If rs.Fields(0) <> 0 Then
+            Select Case UBound(cmdArr)
+               Case 0  '// No number, no reason = promoting up by 1
+                 '// Check if rank is a valid rank
+                  If NOT IsAlterValid("promote", cmdArr(0), user, 1) Then
+                     Command.Respond "You cannot promote someone to an equal or higher rank than yourself."
+                     Exit Sub
+                  End If
+
+                  Call GivePromotion(Command, cmdArr(0), user, 1, vbNullString)
+
+               Case Else  '// Number and/or reason
+                  If IsNumeric(cmdArr(1)) Then
+                     If NOT IsAlterValid("promote", cmdArr(0), user, cmdArr(1)) Then
+                        Command.Respond "You cannot promote someone to an equal or higher rank than yourself."
+                        Exit Sub
+                     End If
+
+                     If Int(cmdArr(1)) > UBound(crsRanks)-1 OR Int(cmdArr(1)) < LBound(crsRanks)+1 Then
+                        Command.Respond "Invalid rank. Ranks must be between " & LBound(crsRanks)+1 & " and " & UBound(crsRanks)-1 &"."
+                        Exit Sub
+                     End If
+
+                     '// Check for a reason
+                     If UBound(cmdArr) > 1 Then
+                        reason = Split(Command.Args, " ", 3)(2)
+                     Else
+                        reason = vbNullString
+                     End If
+
+                     Call GivePromotion(Command, cmdArr(0), user, cmdArr(1), reason)
+                  Else
+                     If NOT IsAlterValid("promote", cmdArr(0), user, 1) Then
+                        Command.Respond "You cannot promote someone to an equal or higher rank than yourself."
+                        Exit Sub
+                     End If
+
+                     If UBound(cmdArr) => 1 Then
+                        reason = Split(Command.Args, " ", 2)(1)
+                     Else
+                        reason = vbNullString
+                     End If
+
+                     Call GivePromotion(Command, cmdArr(0), user, 1, reason)
+                  End If
+            End Select
+         Else
+            Command.Respond """ " & cmdArr(0) & " "" does not have a record on the CRS database."
+         End If
+      End If
+   End If
+End Sub
+
+Private Sub crsrestoreCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         If Len(Command.Args) < 1 Then Exit Sub
+
+         cmdArr = Split(Command.Args)
+
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` ='" & cmdArr(0) & "'")
+         If rs.Fields(0) <> 0 Then
+            If NOT IsAlterValid("restore", cmdArr(0), user, vbNullString) Then
+               Command.Respond "You cannot restore someone that is or will be of equal or higher rank than yourself."
+               Exit Sub
+            End If
+
+            If UBound(cmdArr) > 0 Then
+               reason = Split(Command.Args, " ", 2)(1)
+            Else
+               reason = vbNullString
+            End If
+
+            Call GivePromotion(Command, cmdArr(0), user, vbNullString, reason)
+         Else
+            Command.Respond """ " & cmdArr(0) & " "" does not have a record on the CRS database."
+         End If
+      End If
+   End If
+End Sub
+
+Private Sub crssetCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         If Len(Command.Args) < 0 Then Exit Sub
+
+         cmdArr = Split(Command.Args)
+
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` ='" & cmdArr(0) & "'")
+
+         Select Case UBound(cmdArr)
+            Case 0
+               Call GivePromotion(Command, cmdArr(0), user, UBound(crsRanks)-1, vbNullString)
+            Case Else
+               If IsNumeric(cmdArr(1)) Then
+                  If NOT IsAlterValid("set", cmdArr(0), user, cmdArr(1)) Then
+                     Command.Respond "You cannot set someone equal to or higher than your current CRS rank."
+                     Exit Sub
+                  End If
+
+                  If Int(cmdArr(1)) > UBound(crsRanks)-1 OR Int(cmdArr(1)) < LBound(crsRanks)+1 Then
+                     Command.Respond "Invalid rank. Ranks must be between " & LBound(crsRanks)+1 & " and " & UBound(crsRanks)-1 &"."
+                     Exit Sub
+                  End If
+
+                  If UBound(cmdArr) > 1 Then
+                     reason = Split(Command.Args, " ", 3)(2)
+                  Else
+                     reason = vbNullString
+                  End If
+
+                  Call GivePromotion(Command, cmdArr(0), user, cmdArr(1), reason)
+               Else
+                  '// Check if the rank name is valid
+                  rankName = Split(Command.Args, " ", 2)(1)
+                  For i = 0 To UBound(crsRanks)-1
+                     If Match(LCase(rankName), LCase(crsRanks(i)) & "*", True) Then
+                        rank = i
+                        If Len(rankName) = Len(crsRanks(rank)) Then
+                           reason = vbNullString
+                        Else
+                           reason = Right(rankName, Len(rankName) - (Len(crsRanks(rank))+1))
+                        End If
+                        Exit For
+                     End If
+                  Next
+
+                  Call GivePromotion(Command, cmdArr(0), user, rank, reason)
+               End If
+         End Select
+      End If
+   End If
+End Sub
+
+Private Sub crsmeminfoCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         name = Split(Command.Args)(0)
+
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` ='" & name & "'")
+         If rs.Fields(0) <> 0 Then
+            Set rs = crsConn.Execute("SELECT `join_date`, `last_active`, `time_logged` FROM `members` WHERE `name` ='" & name & "'")
+            Command.Respond """ " & name & " "" joined on " & rs.Fields(0) & ", has spent " & GetTimeSpent(rs.Fields(2), False) & " in the clan, and was last active on " & rs.Fields(1) & "."
+         Else
+            Command.Respond """ " & name & " "" does not have a record on the CRS database."
+         End If
+      End If
+   End If
+End Sub
+
+Private Sub crsrankCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         name = Split(Command.Args)(0)
+
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` ='" & name & "'")
+         If rs.Fields(0) <> 0 Then
+            Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+            Command.Respond """ " & name & " "" is ranked #" & rs.Fields(0) & " - " & crsRanks(rs.Fields(0)) & "."
+         Else
+            Command.Respond """ " & name & " "" does not have a record on the CRS database."
+         End If
+      End If
+   End If
+End Sub
+
+Private Sub crsrankstatsCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         name = Split(Command.Args)(0)
+
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` ='" & name & "'")
+         If rs.Fields(0) <> 0 Then
+            Command.Respond """ " & name & " "" has spent " & GetDaysInClan(name) & " days in the clan, recruited " & GetNumOfRecruits(name) & " members, and last logged into the channel " & GetDaysLastLogged(name) & " days ago."
+         Else
+            Command.Respond """ " & name & " "" does not have a record on the CRS database."
+         End If
+      End If
+   End If
+End Sub
+
+Private Sub crsrankinfoCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         name = Split(Command.Args)(0)
+
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` ='" & name & "'")
+         If rs.Fields(0) <> 0 Then
+            Set rs = crsConn.Execute("SELECT `previous_rank`, `rank`, `promotion_date`, `promoter_name` FROM `members` WHERE `name` ='" & name & "'")
+            Command.Respond """ " & name & " "" is ranked #" & rs.Fields(1) & " (previously #" & rs.Fields(0) & "), last promoted on " & Split(rs.Fields(2), "/")(1) & "/" & Split(rs.Fields(2), "/")(0) & "/" & Split(rs.Fields(2), "/", 3)(2) & " by " & rs.Fields(3) & "."
+         Else
+            Command.Respond """ " & name & " "" does not have a record on the CRS database."
+         End If
+      End If
+   End If
+End Sub
+
+Private Sub crsqranksCmd(Command, user)
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If NOT IsCRSMember(user) Then Exit Sub
+         If Len(Command.Args) < 1 Then Exit Sub
+
+         cmdArr = Split(Command.Args)
+
+         Select Case LCase(cmdArr(0))
+            Case "find"
+               If UBound(cmdArr) <> 1 Then Exit Sub
+
+               If IsNumeric(cmdArr(1)) Then
+                  Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `rank` =" & cmdArr(1))
+                  If NOT rs.EOF Then
+                     Set ss = crsConn.Execute("SELECT `name` FROM `members` WHERE `rank` =" & cmdArr(1))
+                     Do Until ss.EOF
+                        text = text & ss.Fields(0) & ", "
+                        ss.MoveNext
+                     Loop
+                     Command.Respond "Users with rank " & cmdArr(1) & " (" & crsRanks(cmdArr(1)) & "): " & Left(text, Len(text)-2)
+                  Else
+                     Command.Respond "There are no members with a rank of "" " & cmdArr(1) & " ""."
+                  End If
+               Else
+                  For i = 0 To Ubound(crsRanks)
+                     If LCase(cmdArr(1)) = LCase(crsRanks(i)) Then
+                        Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `rank` =" & i)
+                        If NOT rs.EOF Then
+                           Set ss = crsConn.Execute("SELECT `name` FROM `members` WHERE `rank` =" & i)
+                           Do Until ss.EOF
+                              text = text & ss.Fields(0) & ", "
+                              ss.MoveNext
+                           Loop
+                           Command.Respond "Users with rank " & cmdArr(1) & " (" & i & "): " & Left(text, Len(text)-2)
+                           Exit Sub
+                        Else
+                           Command.Respond "There are no members with a rank of "" " & cmdArr(1) & " ""."
+                           Exit Sub
+                        End If
+                     End If
+                  Next
+                  Command.Respond "There are no members with a rank of "" " & cmdArr(1) & " ""."
+               End If
+            Case "list"
+               For i = 1 To UBound(crsRanks)-1
+                  text = text & i & " (" & crsRanks(i) & "), "
+               Next
+
+               Command.Respond "Ranks are the following: " & Left(text, Len(text)-2)
+            Case "info"
+               If Ubound(cmdArr) < 1 Then Exit Sub
+               If IsNumeric(cmdArr(1)) Then
+                  If Int(cmdArr(1)) > UBound(crsRanks)-1 OR Int(cmdArr(1)) < LBound(crsRanks)+1 Then
+                     Command.Respond "Invalid rank. Ranks must be between " & LBound(crsRanks)+1 & " and " & UBound(crsRanks)-1 &"."
+                     Exit Sub
+                  End If
+
+                  Command.Respond "Information for rank #" & cmdArr(1) & ": Name [" & crsRanks(cmdArr(1)) & "], Access level [" & crsRankAccess(cmdArr(1)) & "], Position [" & cmdArr(1) & " out of " & UBound(crsRanks)-1 & "]"
+               Else
+                  For i = 0 To Ubound(crsRanks)
+                     If Lcase(cmdArr(1)) = LCase(crsRanks(i)) Then
+                        Command.Respond "Information for rank " & cmdArr(1) & ": Number [" & i & "], Access level [" & crsRankAccess(i) & "], Position [" & i & " out of " & UBound(crsRanks)-1 & "]"
+                        Exit Sub
+                     End If
+                  Next
+
+                  Command.Response "No information available for rank name: " & cmdArr(1)
+               End If
+         End Select
+      End If
+   End If
+End Sub
+
+
+
+Private Sub CreateCmds  '// Creates CRS commands
+
+   '// crsMembers = lists all members, will be left out due to the possibility of severely causing lag issues - bot console only
+   '// Users wanting to find out about ranks will need to know what rank/member they want information for, or they will need to use a combination of listing all ranks and finding info about the specific rank/member
+
+   Set cmd = OpenCommand("crsGreet")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsGreet")
+		With cmd
+			.Description = "Manages the CRS greet settings."
+			.RequiredRank = 200
+
+			Set Parameter = .NewParameter("on/off/mem/nmem/#", False, "Word")
+			With Parameter
+				.Description = "crsGreet on = Enables the greeting of clan and non clan members." & vbNewLine & vbNewLine & _
+               "crsGreet off = Disables the greeting of clan and non clan members." & vbNewLine & vbNewLine & _
+               "crsGreet mem on = Enables the greeting of clan members." & vbNewLine & vbNewLine & _
+               "crsGreet mem off = Disables the greeting of clan members." & vbNewLine & vbNewLine & _
+               "crsGreet mem (greet) = Sets the greet message of clan members. Do not include the brackets." & vbNewLine & vbNewLine & _
+               "crsGreet # (greet) = Sets the greet message for a specified numerical CRS rank. Do not include the brackets." & vbNewLine & vbNewLine & _
+               "crsGreet nmem on = Enables the greeting of non clan members." & vbNewLine & vbNewLine & _
+               "crsGreet nmem off = Disables the greeting of non clan members." & vbNewLine & vbNewLine & _
+               "crsGreet nmem (greet) = Sets the greet message of non clan members."
+			End With
+			.Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsRemove")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsRemove")
+		With cmd
+			.Description = "Removes a specified CRS member."
+			.RequiredRank = 200
+         Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "Username of the user to be removed."
+         End With
+         .Parameters.Add Parameter
+         .SpecialNotes = "Users cannot remove someone equal to or higher than their own rank." & vbNewLine & vbNewLine & _
+            "Bot console is an exception."
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsDemote")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsDemote")
+		With cmd
+			.Description = "Demotes the specified CRS member." & vbNewLine & vbNewLine & _
+            "crsDemote <username> (#) (reason is optional) = Demotes user down # rank(s). If # is omitted, user is demoted by 1 rank."
+			.RequiredRank = 200
+         Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "Username of the user recieving the demotion."
+         End With
+         .Parameters.Add Parameter
+         .SpecialNotes = "Users cannot demote someone equal to or higher than their own rank." & vbNewLine & vbNewLine & _
+            "Bot console is an exception."
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsPromote")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsPromote")
+		With cmd
+			.Description = "Promotes the specified CRS member." & vbNewLine & vbNewLine & _
+            "crsPromote <username> (#) (reason is optional) = Promotes user down # rank(s). If # is omitted, user is promoted by 1 rank."
+         Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "Username of the user recieving the promotion."
+         End With
+         .Parameters.Add Parameter
+			.RequiredRank = 200
+         .SpecialNotes = "Users cannot promote someone; equal to or higher than their own rank, to a rank higher than their own." & vbNewLine & vbNewLine & _
+            "Bot console is an exception."
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsSet")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsSet")
+		With cmd
+			.Description = "Sets the specified CRS member to a rank. If the user does not exist, they will be added to the database automatically." & vbNewLine & vbNewLine & _
+            "crsSet <username> (#) (reason is optional) = Sets user to the specified # rank. If # is omitted, user is set to the lowest rank."
+			.RequiredRank = 200
+         Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "Username of the user recieving the rank change."
+         End With
+         .Parameters.Add Parameter
+         .SpecialNotes = "Users cannot set someone equal to or higher than their own rank." & vbNewLine & vbNewLine & _
+            "Bot console is an exception."
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsRestore")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsRestore")
+		With cmd
+			.Description = "Restores the specified CRS member to the last rank they held." & vbNewLine & vbNewLine & _
+            "crsRestore <username> (reason is optional) = Restores username to their previous rank."
+			.RequiredRank = 200
+         Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "Username of the user to be restored."
+         End With
+         .Parameters.Add Parameter
+         .SpecialNotes = "Users cannot restore someone that will be equal to or higher than their own rank." & vbNewLine & vbNewLine & _
+            "Bot console is an exception."
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsDisable")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsDisable")
+		With cmd
+			.Description = "Immediately sets the specified CRS member to the lowest rank." & vbNewLine & vbNewLine & _
+            "crsDisable <username> (reason is optional) = Sets user to the lowest rank."
+			.RequiredRank = 200
+         Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "Username of the user to be disabled."
+         End With
+         .Parameters.Add Parameter
+         .SpecialNotes = "Users cannot disable someone that is equal to or higher than their own rank." & vbNewLine & vbNewLine & _
+            "Bot console is an exception."
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsMemInfo")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsMemInfo")
+		With cmd
+			.Description = "crsMemInfo <username> = Displays a specified CRS user's join date and date/time last active."
+			.RequiredRank = 200
+         Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "Username of the user to be profiled."
+         End With
+         .Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsRankStats")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsRankStats")
+		With cmd
+			.Description = "crsRankStats <username> = Displays a days in clan, number of recruits, and days since last logged into channel for a spefified CRS user."
+			.RequiredRank = 200
+         Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "Username of the user to be profiled."
+         End With
+         .Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsRank")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsRank")
+		With cmd
+			.Description = "crsRank <username> = Displays a specified CRS user's rank."
+			.RequiredRank = 200
+         Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "Username of the user to be profiled."
+         End With
+         .Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsRankInfo")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsRankInfo")
+		With cmd
+			.Description = "crsRankInfo <username> = Displays previous & current ranks, date/time of last promotion, and name of last promoter for a specificied CRS user."
+			.RequiredRank = 200
+         Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "Username of the user to be profiled."
+         End With
+         .Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsQRanks")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsQRanks")
+		With cmd
+			.Description = "Displays information regarding various ranks."
+			.RequiredRank = 200
+
+			Set Parameter = .NewParameter("find/list/info", False, "Word")
+			With Parameter
+				.Description = "crsQRanks find (rank) = Lists the members with the the specified rank name or a rank number." & vbNewLine & vbNewLine & _
+               "crsQRanks list = Lists all rank names." & vbNewLine & vbNewLine & _
+               "crsQRanks info (rank) = Displays detailed information about the specified rank name or a rank number."
+			End With
+			.Parameters.Add Parameter
+
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsCmds")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsCmds")
+		With cmd
+			.Description = "Displays a list of commands for the user's rank that uses the command."
+			.RequiredRank = 200
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("crsAdmin")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("crsAdmin")
+		With cmd
+			.Description = "CRS commands that are available to the bot console only."
+			.RequiredRank = 200
+
+			Set Parameter = .NewParameter("override/members/massrank/closedb/opendb", False, "Word")
+			With Parameter
+				.Description = "crsAdmin override (field) (username) entry = Sets the user's database field to the specified entry text." & vbNewLine & vbNewLine & _
+               "crsAdmin members (rank #) = Lists all members and their ranks. If a rank number is supplied, the list will be filtered for that criteria." & vbNewLine & vbNewLine & _
+               "crsAdmin massrank <probation/peon/grunt/shaman> <rank #> = Sets all peons or grunts or shamans (whatever you choose) in the bot's clan to a specified CRS rank." & vbNewLine & vbNewLine & _
+               "crsAdmin resetdb = Clears the database of all data and sets your bot as the first member, effectively resetting your database."
+			End With
+			.Parameters.Add Parameter
+         .SpecialNotes = "These commands are limited to the bot console only for security reasons and for flood control issues."
+			.Save
+		End With
+	End If
+
+   AddChat 16759296, "CRS Script:. Script is ready to use. ", 5731327, "Please view the commands in the Command Manager for descriptions, syntax, and command aliases."
+End Sub
+
+Private Sub CleanINI  '// Removes the " = " after the commented out lines that this script makes
+
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 1, True)
+      data = Split(File.ReadAll, vbNewLine)
+   File.Close
+
+
+   tMatch = False
+   For i = 0 To UBound(data) -1
+      If tMatch Then
+         If Left(data(i), 3) = "'//" Then
+            line = line & Split(data(i), "=")(0) & vbNewLine
+         ElseIf InStr(data(i), "[") > 0 AND InStr(data(i), "]") > 0 Then
+            tMatch = False
+            line = line & data(i) & vbNewLine
+         Else
+            line = line & data(i) & vbNewLine
+         End If
+      Else
+         If data(i) = "[crs]" Then
+            tMatch = True
+            line = line & data(i) & vbNewLine
+         Else
+            line = line & data(i) & vbNewLine
+         End If
+      End If
+   Next
+
+   fso.DeleteFile(BotPath & "scripts\scripts.ini")
+   temp = Split(line, vbNewLine)
+   For i = 0 To Ubound(temp) -1
+      Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 8, True)
+         File.WriteLine temp(i)
+      File.Close
+   Next
+End Sub
+
+Private Sub AutoPromote(Username)  '// Auto-promots users based on Days in Clan or Number of Recruits
+
+   Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name`='" & Username & "'")
+
+   If rs.Fields(0) <> 0 Then
+      If GetSettingsEntry("dayPromote_on") Then
+         dic = GetDaysInClan(Username)
+         Set rs = crsConn.Execute("SELECT `rank`, `promotion_date` FROM `members` WHERE `name` = '" & Username & "'")
+         cRank = rs.Fields(0)
+         pDate = rs.Fields(1)
+
+         dLower = Int(GetSettingsEntry("dayLowRank"))
+         dUpper = Int(GetSettingsEntry("dayHighRank"))
+         dIncrement = Int(GetSettingsEntry("dayIncrement"))
+
+         dLimit = dLower - dUpper
+        
+         If cRank > dUpper AND (cRank => dLower OR (cRank < dLower AND cRank =< dLower-1)) Then
+            DaysSinceLastPromote = DateDiff("d", pDate, Now)
+           '// Check if the days since their last promotion is a multiple of dIncrement
+            If DaysSinceLastPromote MOD dIncrement = 0 AND DaysSinceLastPromote > 0 Then
+              '// Find out how many ranks they will need to be promoted
+               promoteNum = DaysSinceLastPromote/dIncrement
+              '// Check if the amount of ranks they need to be promoted will not let them go above dUpper. If it does, promote them up to dUpper
+               If (cRank - promoteNum) < dUpper Then
+                  AddChat 16759296, "CRS Script:. ", 10682112, Username & " was last promoted " & DaysSinceLastPromote & " days ago and was ranked " & crsRanks(cRank) & "(" & cRank & "); needs +" & promoteNum & " promotions. Auto promoting to " & crsRanks(dUpper) & "(" & dUpper & ") (dayHighRank)."
+                  Command BotVars.Username, "/crsPromote " & Username & " " & cRank - dUpper & " Was last promoted " & pDiff & " days ago.", True
+               Else
+                  AddChat 16759296, "CRS Script:. ", 10682112, Username & " was last promoted " & DaysSinceLastPromote & " days ago and was ranked " & crsRanks(cRank) & "(" & cRank & "); needs +" & promoteNum & " promotions. Auto promoting to " & crsRanks(cRank-promoteNum) & "(" & cRank-promoteNum & ")."
+                  Command BotVars.Username, "/crsPromote " & Username & " " & promoteNum & " Was last promoted " & pDiff & " days ago.", True
+               End If
+            End If
+         End If
+      End If
+
+      If GetSettingsEntry("recruitPromote_on") Then
+         numRec = GetNumOfRecruits(Username)
+         Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` = '" & Username & "'")
+         cRank = rs.Fields(0)
+
+         recLower = Int(GetSettingsEntry("recruitLowRank"))
+         recUpper = Int(GetSettingsEntry("recruitHighRank"))
+         recIncrement = Int(GetSettingsEntry("recruitIncrement"))
+
+         dLimit = recLower - recUpper
+
+        '// If they're joining the channel that's a multiple of the dIncrement and they've recruited more than 0 users
+         If numRec MOD recIncrement = 0 AND numRec > 0 Then
+           '// If their rank is less than the max and equal to or greater than the lowest
+            If cRank > recUpper AND (cRank => recLower OR (cRank < recLower AND cRank => recLower-1)) Then
+              '// If the number of possible promotions is less than or equal to that which is allowed
+               If (numRec/recIncrement) <= dLimit Then
+                 '// If their rank-to-be is less than the max
+                  If cRank-(numRec/recIncrement) < recUpper Then
+                     AddChat 16759296, "CRS Script:. ", 10682112, Username & " has recruited " & numRec & " users and was ranked " & crsRanks(cRank) & ". Auto promoting to " & crsRanks(recUpper) & " (maximum)."
+                     Command BotVars.Username, "/crsPromote " & Username & " " & cRank-recUpper & " Has recruited " & numRec & " users.", True
+                  Else
+                     AddChat 16759296, "CRS Script:. ", 10682112, Username & " has recruited " & numRec & " users and was ranked " & crsRanks(cRank) & ". Auto promoting to " & crsRanks(cRank-(numRec/recIncrement)) & "."
+                     Command BotVars.Username, "/crsPromote " & Username & " " & numRec/recIncrement & " Has recruited " & numRec & " users.", True
+                  End If
+               Else
+                  AddChat 16759296, "CRS Script:. ", 10682112, Username & " has recruited " & numRec & " users and was ranked " & crsRanks(cRank) & ". Auto promoting to " & crsRanks(recUpper) & " (maximum)."
+                  Command BotVars.Username, "/crsPromote " & Username & " " & cRank-recUpper & " Has recruited " & numRec & " users.", True
+               End If
+            End If
+         End If
+      End If
+   End If
+   
+   Set rs = Nothing
+End Sub
+
+Private Sub GivePromotion(Command, name, promoter, rank, reason)  '// Promotes/Demotes/Disables/Restores/Adds members
+
+   reason = Replace(reason, "'", CHR(156))
+
+   Select Case LCase(Command.Name)
+      Case "crsdemote"
+         If reason <> vbNullString Then
+            crsConn.Execute("UPDATE `members` SET `promotion_date` ='" & Now & "', `previous_rank` = `rank`, `rank` = `rank`+" & rank & ", `promoter_name`='" & promoter & "', `reason` = '" & reason & "' WHERE `name` ='" & name & "'")
+         Else
+            crsConn.Execute("UPDATE `members` SET `promotion_date` ='" & Now & "', `previous_rank` = `rank`, `rank` = `rank` +" & rank & ", `promoter_name`='" & promoter & "', `reason` = 'N/A' WHERE `name` ='" & name & "'")
+         End If
+
+         Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+         Command.Respond """ " & name & " "" has been demoted to rank " & rs.Fields(0) & " - " & crsRanks(rs.Fields(0))
+         If GetSettingsEntry("aa_on") Then Call GiveAccess(name, rs.Fields(0))
+
+      Case "crspromote"
+         If reason <> vbNullString Then
+            crsConn.Execute("UPDATE `members` SET `promotion_date` ='" & Now & "', `previous_rank` = `rank`, `rank` = `rank`-" & rank & ", `promoter_name`='" & promoter & "', `reason` = '" & reason & "' WHERE `name` ='" & name & "'")
+         Else
+            crsConn.Execute("UPDATE `members` SET `promotion_date` ='" & Now & "', `previous_rank` = `rank`, `rank` = `rank` -" & rank & ", `promoter_name`='" & promoter & "', `reason` = 'N/A' WHERE `name` ='" & name & "'")
+         End If
+
+         Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+         Command.Respond """ " & name & " "" has been promoted to rank " & rs.Fields(0) & " - " & crsRanks(rs.Fields(0))
+         If GetSettingsEntry("aa_on") Then Call GiveAccess(name, rs.Fields(0))
+
+      Case "crsdisable"
+         If reason <> vbNullString Then
+            crsConn.Execute("UPDATE `members` SET `promotion_date` ='" & Now & "', `previous_rank` = `rank`, `rank` = " & UBound(crsRanks)-1 & ", `promoter_name`='" & promoter & "', `reason` = '" & reason & "' WHERE `name` ='" & name & "'")
+         Else
+            crsConn.Execute("UPDATE `members` SET `promotion_date` ='" & Now & "', `previous_rank` = `rank`, `rank` = " & UBound(crsRanks)-1 & ", `promoter_name`='" & promoter & "', `reason` = 'N/A' WHERE `name` ='" & name & "'")
+         End If
+
+         Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+         Command.Respond """ " & name & " "" has been disabled to rank " & rs.Fields(0) & " - " & crsRanks(rs.Fields(0))
+         If GetSettingsEntry("aa_on") Then Call GiveAccess(name, rs.Fields(0))
+
+      Case "crsrestore"
+         If reason <> vbNullString Then
+            crsConn.Execute("UPDATE `members` SET `promotion_date` ='" & Now & "', `previous_rank` = `rank`, `rank` = `previous_rank`, `promoter_name`='" & promoter & "', `reason` = '" & reason & "' WHERE `name` ='" & name & "'")
+         Else
+            crsConn.Execute("UPDATE `members` SET `promotion_date` ='" & Now & "', `previous_rank` = `rank`, `rank` = previous_rank, `promoter_name`='" & promoter & "', `reason` = 'N/A' WHERE `name` ='" & name & "'")
+         End If
+
+         Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+         Command.Respond """ " & name & " "" has been restored to rank " & rs.Fields(0) & " - " & crsRanks(rs.Fields(0))
+         If GetSettingsEntry("aa_on") Then Call GiveAccess(name, rs.Fields(0))
+
+      Case "crsset"
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` = '" & name & "'")
+         If rs.Fields(0) <> 0 Then
+            If reason <> vbNullString Then
+               crsConn.Execute("UPDATE `members` SET `promotion_date` ='" & Now & "', `previous_rank` = `rank`, `rank` =" & rank & ", `promoter_name`='" & promoter & "', `reason` = '" & reason & "' WHERE `name` ='" & name & "'")
+            Else
+               crsConn.Execute("UPDATE `members` SET `promotion_date` ='" & Now & "', `previous_rank` = `rank`, `rank` =" & rank & ", `promoter_name`='" & promoter & "', `reason` = 'N/A' WHERE `name` ='" & name & "'")
+            End If
+
+            Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+            Command.Respond """ " & name & " "" has had their rank changed to rank " & rs.Fields(0) & " - " & crsRanks(rs.Fields(0))
+            If GetSettingsEntry("aa_on") Then Call GiveAccess(name, rs.Fields(0))
+
+         Else  '// Brand new member
+            If reason <> vbNullString Then
+               crsConn.Execute("INSERT INTO `members` (`name`, `rank`, `previous_rank`, `promoter_name`, `promotion_date`, `join_date`, `reason`, `time_logged`, `last_active`, `recruiter`) " & _
+                  "Values ('" & name & "', " & rank & ", " & rank & ", '" & promoter & "', '" & Now & "', '" & Now & "', '" & reason & "', " & 0 & ", '0', '" & promoter & "')")
+            Else
+               crsConn.Execute("INSERT INTO `members` (`name`, `rank`, `previous_rank`, `promoter_name`, `promotion_date`, `join_date`, `reason`, `time_logged`, `last_active`, `recruiter`) " & _
+                  "Values ('" & name & "', " & rank & ", " & rank & ", '" & promoter & "', '" & Now & "', '" & Now & "', 'New Member', " & 0 & ", '0', '" & promoter & "')")
+            End If
+
+            Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+            Command.Respond """ " & name & " "" has been added as a new member with the rank of " & rs.Fields(0) & " - " & crsRanks(rs.Fields(0))
+            If GetSettingsEntry("aa_on") Then Call GiveAccess(name, rs.Fields(0))
+         End If
+   End Select
+End Sub  
+
+Private Sub GiveAccess(user, rank)  '// If CRS auto-access is enabled, give them access.
+
+   '// This is in its own sub incase I add flags to be associated with ranks, as well as access, AND if users want to be able to have their members retain their existing flags and only update the access, and vice versa.
+   GetDBEntry user, A, F
+
+   If Lcase(user) <> Lcase(BotVars.Username) Then
+      Command BotVars.Username, "/set " & user & " " & crsRankAccess(rank), True
+   End If
+End Sub
+
+
+
+Private Function IsCRSMember(name)  '// Returns True if they're a CRS member, False if not
+
+   Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `name` ='" & name & "'")
+   If rs.Fields(0) <> 0 Then
+      IsCRSMember = True
+   Else
+      If name <> BotVars.Username Then
+         IsCRSMember = False
+      Else
+         IsCRSMember = True
+      End If
+   End If
+End Function
+
+Private Function IsAlterValid(alterType, name, user, num)  '// Returns True if they're trying to promote equal to or greater than their own rank, False if not
+
+   Select Case alterType
+      Case "promote"
+         If user <> BotVars.Username Then
+            Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & user & "'")
+            uRank = CInt(rs.Fields(0))
+            Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+            nRank = CInt(rs.Fields(0))
+
+            If nRank > uRank Then
+               If nRank-CInt(num) > uRank Then
+                  IsAlterValid = True
+               Else
+                  IsAlterValid = False
+               End If
+            End If
+         Else
+            IsAlterValid = True
+         End If
+      Case "set"
+         If user <> BotVars.Username Then
+            Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+            If rs.EOF OR rs.BOF Then
+               Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & user & "'")
+               If CInt(rs.Fields(0)) < CInt(num) Then
+                  IsAlterValid = True
+               Else
+                  IsAlterValid = False
+               End If
+            Else
+               Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+               uRank = CInt(rs.Fields(0))
+               Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & user & "'")
+               nRank = CInt(rs.Fields(0))
+
+               If nRank < uRank Then
+                  If nRank < CInt(num) Then
+                     IsAlterValid = True
+                  Else
+                     IsAlterValid = False
+                  End If
+               End If
+            End If
+         Else
+            IsAlterValid = True
+         End If
+      Case "demote"
+         Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+         uRank = CInt(rs.Fields(0))
+
+         If user <> BotVars.Username Then
+            Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & user & "'")
+            nRank = rs.Fields(0)
+            If nRank < uRank Then
+               If uRank+num > UBound(crsRanks)-1 Then
+                  IsAlterValid = False
+               Else
+                  IsAlterValid = True
+               End If
+            End If
+         Else
+            If uRank+num > UBound(crsRanks)-1 Then
+               IsAlterValid = False
+            Else
+               IsAlterValid = True
+            End If
+         End If
+      Case "restore"
+         Set rs = crsConn.Execute("SELECT `rank`, `previous_rank` FROM `members` WHERE `name` ='" & name & "'")
+         uRank = CInt(rs.Fields(0)):pRank = CInt(rs.Fields(1))
+
+         If user <> BotVars.Username Then
+            Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & user & "'")
+            If CInt(rs.Fields(0)) < uRank Then
+               If pRank > CInt(rs.Fields(0)) Then
+                  IsAlterValid = True
+               Else
+                  IsAlterValid = False
+               End If
+            End If
+         Else
+            IsAlterValid = True
+         End If
+      Case "remove"
+         Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & name & "'")
+         nRank = rs.Fields(0)
+
+         If user <> BotVars.Username Then
+            Set rs = crsConn.Execute("SELECT `rank` FROM `members` WHERE `name` ='" & user & "'")
+
+            If rs.Fields(0) < nRank Then
+               IsAlterValid = True
+            Else
+               IsAlterValid = False
+            End If
+         Else
+            IsAlterValid = True
+         End If
+   End Select
+End Function
+
+Private Function GetNumOfRecruits(name)  '// Returns number of recruits a user has recruited
+
+   Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members` WHERE `recruiter` ='" & name & "'")
+   GetNumOfRecruits = rs.Fields(0)
+End Function
+
+Private Function GetDaysInClan(name)  '// Returns the days spent in clan for a username
+
+   Set rs = crsConn.Execute("SELECT `join_date` FROM `members` WHERE `name` ='" & name & "'")
+   GetDaysInClan = ABS(INT(DateDiff("d", rs.Fields(0), Now)))
+End Function
+
+Private Function GetDaysLastLogged(name)  '// Returns the days since user last logged into the channel
+
+   Set rs = crsConn.Execute("SELECT `last_active` FROM `members` WHERE `name` ='" & name & "'")
+   If NOT IsDate(rs.Fields(0)) Then
+      GetDaysLastLogged = "unknown"
+   Else
+      GetDaysLastLogged = DateDiff("d", rs.Fields(0), Now)
+   End If
+End Function
+
+Private Function GetDBMembers(sType, num)  '// Returns either a number of members in the db or a list of names
+
+   Select Case sType
+      Case 0  '// Integers only
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members`")
+         GetDBMembers = rs.Fields(0)
+      Case 1  '// Member names
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members`")
+         If NOT (rs.EOF OR rs.BOF) Then
+            Set rs = crsConn.Execute("SELECT `name` FROM `members`")
+            Do Until rs.EOF
+               text = text & rs.Fields(0) & ", "
+               rs.MoveNext
+            Loop
+            GetDBMembers = Left(text, Len(text) -2)
+         Else
+            GetDBMembers = "Database is empty."
+         End If
+      Case 3  '// Filtered results
+         Set rs = crsConn.Execute("SELECT COUNT(*) FROM `members`")
+         If NOT (rs.EOF OR rs.BOF) Then
+            Set rs = crsConn.Execute("SELECT `name`, `rank` FROM `members`")
+            x = 0
+            Do Until rs.EOF
+               If rs.Fields(1) = Int(num) Then
+                  text = text & rs.Fields(0) & ", "
+                  x = x+1
+               End If
+               rs.MoveNext
+            Loop
+            If x=0 Then
+               GetDBMembers = "(0): None"
+            Else
+               GetDBMembers = "(" & x & "): " & Left(text, Len(text) -2)
+            End If             
+         Else
+            GetDBMembers = "Database is empty."
+         End If         
+   End Select
+End Function
+
+Private Function GetTimeSpent(sTime, isShortForm)  '// Returns the time spent in the channel in Years/Days/Hours/Minutes/Seconds
+
+   If sTime = 0 Then
+      GetTimeSpent = "0 secs"
+      Exit Function
+   End If
+
+   years = Split(FormatNumber(sTime/60/60/24/365, 9), ".")(0)
+   'AddChat vbGreen, "Years: " & years
+
+   dayDeci = FormatNumber(sTime/60/60/24/365, 9) - Split(FormatNumber(sTime/60/60/24/365, 9), ".")(0)
+   'AddChat vbGreen, "Day Decimal: " & dayDeci
+
+   days = Int(dayDeci*365)
+   'AddChat vbGreen, "Days: " & days
+
+   hourDeci = FormatNumber(sTime/60/60/24, 9) - Split(FormatNumber(sTime/60/60/24, 9), ".")(0)
+   'AddChat vbGreen, "hour Decimal: " & hourDeci
+
+   hours = Int(hourDeci*24)
+   'AddChat vbGreen, "Hours: " & hours
+
+   minDeci = FormatNumber(sTime/60/60, 9) - Split(FormatNumber(sTime/60/60, 9), ".")(0)
+   'AddChat vbGreen, "Minute Decimal: " & minDeci
+
+   minutes = Int(minDeci*60)
+   'AddChat vbGreen, "Minutes: " & minutes
+
+   secDeci = FormatNumber(sTime/60, 9) - Split(FormatNumber(sTime/60, 9), ".")(0)
+   'AddChat vbGreen, "Seconds Deicmal: " & secDeci
+
+
+   seconds = Int(secDeci*60)
+   'AddChat vbGreen, "Seconds: " & seconds
+
+   If NOT isShortForm Then
+      GetTimeSpent = years & " Years, " & days & " Days, " & hours & " Hours, " & minutes & " Minutes, " & seconds & " Seconds"
+   Else
+      If years <> 0 Then text = text & years & " yrs/"
+      If days <> 0 Then text = text & days & " days/"
+      If hours <> 0 Then text = text & hours & " hrs/"
+      If minutes <> 0 Then text = text & minutes & " mins/"
+      If seconds <> 0 Then text = text & seconds & " secs/"
+
+      GetTimeSpent = Left(text, Len(text) - 1)
+   End If
+End Function

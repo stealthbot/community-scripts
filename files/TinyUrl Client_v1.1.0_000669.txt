@@ -1,0 +1,57 @@
+Script("Name") 			= "TinyUrl Client"
+Script("Abbreviation")	= "TUC"
+Script("Author") 		= "Neco"
+Script("Category")		= "Utility"
+Script("Major")			= 1
+Script("Minor")			= 1
+Script("Revision")		= 0
+Script("Description")	= "Allows users to convert large URL's into shorter links via the TinyUrl service."
+
+' This will display the last created url if no arguments are given.
+Private Const ALLOW_LAST_URL = True
+
+Public Sub Event_Load()
+	Dim Cmd : Set Cmd = OpenCommand("tinyurl")
+	If Not Cmd Is Nothing Then
+		If Cmd.SpecialNotes = Script("Major") & "." & Script("Minor") Then
+			Exit Sub
+		Else
+			Cmd.Delete
+		End If
+	End If
+	Set Cmd = Nothing
+	
+ 	With CreateCommand("tinyurl")
+  		.Description = "Converts the supplied URL into a tinyurl link. If an alias is supplied, then it will attempt to create a link from the string."        
+  		.RequiredRank = 1
+		.Parameters.Add .NewParameter("Alias", False, "Word")
+  		.Parameters.Add .NewParameter("Url", False, "String")
+		.SpecialNotes = Script("Major") & "." & Script("Minor")
+		.Save
+	End With
+End Sub
+
+Public Sub Event_Command(Command)
+	If Not LCase(Command.Name) = "tinyurl" Then Exit Sub
+	Dim Alias : Alias = Trim(Command.Argument("Alias"))
+	Dim Url : Url = Trim(Command.Argument("Url"))
+	If LenB(Url) = 0 And LenB(Alias) > 0 Then Url = Alias : Alias = vbNullString
+	If LenB(Url) > 0 Then
+		Dim Source
+		With CreateObject("Microsoft.XMLHTTP")
+			.Open "GET", "http://tinyurl.com/create.php?alias=" & Alias & "&url=" & Url, False
+			.Send
+		Source = .responseText
+		End With
+		Source = Split(Split(Source, "<blockquote><b>")(2), "</b>")(0)
+		WriteSettingsEntry "LAST_CREATED_URL", Source
+		Command.Respond StringFormat("New TinyUrl: {0}", Source)
+	Else
+		Dim Last : Last = GetSettingsEntry("LAST_CREATED_URL")
+		If LenB(Last) = 0 Or Not ALLOW_LAST_URL Then
+			Command.Respond "Error: You must supply a url to shorten."
+		Else
+			Command.Respond StringFormat("Last Created TinyUrl: {0}", Last)
+		End If
+	End If
+End Sub

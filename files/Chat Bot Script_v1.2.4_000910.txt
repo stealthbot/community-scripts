@@ -1,0 +1,1083 @@
+ Option Explicit
+ Script("Name") = "Chat Bot Script"
+ Script("Author") = "WataBoy7"
+ Script("Major") = 1
+ Script("Minor") = 2
+ Script("Revision") = 4
+ Script("Description") = "Helps your bot greet users who enter the channel, and respond to users who output certain words in chat."
+ ' ____________________________________________________________________________________________________________________________________
+ '|   Change Log                                                                                                                       |
+ '|                                                                                                                                    |
+ '|   v1.23 - v1.24                                                                                                                    |
+ '|       Changed Whisper_Greet to a boolean. Added the subs Event_LoggedOn, Event_MessageQueued, and Event_ServerInfo.                |
+ '|       Replaced the dsp function with AddQ function in most instances. Chat Bot messages now have higher priority than Clan         |
+ '|       Eligibility Notification messages. Created the variable Queued_Messages - when a user leaves the channel or is               |                 
+ '|       currently marked as 'away' or 'unavailable', the list of unsent messages for him are removed from the queue. Also,           |
+ '|       manually aligned all the lines in this script so everything is properly indented.                                            |
+ '|                                                                                                                                    |
+ '|   v1.2 - 1.23                                                                                                                      |
+ '|       Added the whisper_greet option in the scripts.ini as well as the enabled condition under Clan Eligibility Notifications      |
+ '|       (CEN). Added an entry in the Chat File that allows users to turn on the bot's Silent Mode by simply stating their            |
+ '|       intention in chat.                                                                                                           |
+ '|                                                                                                                                    |
+ '|   v1.1 - v1.2                                                                                                                      |
+ '|       Changed Heard to a Scripting Dictionary rather than unnecessary entries in the *.ini file. Added the .ct .key and .crl       |
+ '|       commands. Modified the CheckWord function to reflect the transfer of conditions named 'keywords' to the Chat File rather     |
+ '|       (so that others might modify and add to these conditions) rather than having a complex set of AND and OR conditions in       |
+ '|       this script. Also added the Retrieve and Display Clan Data (RCD) Function and hence, integrated Clan Eligibility             |
+ '|       Notifications (CEN) that will be displayed when an eligible user joins the channel.                                          |
+ '|                                                                                                                                    |
+ '|   v1.0 - v1.1                                                                                                                      |
+ '|       Added the subs Event_UserTalk and Event_UserJoin, as well as the CheckWord function to check if a user's message contains    |
+ '|       an AND or OR condition specified under the sub Event_UserJoin.                                                               |
+ '|                                                                                                                                    |
+ '|____________________________________________________________________________________________________________________________________|
+
+ '// Constant Vars
+  Const Chat_TimeWindow = 1.5       '// maximum elapsed time from a user's entry into the channel (in x minutes) in which the script will search for that user's Chat Keywords
+  Const SilentCheck_Interval = 10   '// In Minutes
+  Const Greet_UIC_Interval = 10     '// In Minutes
+  Const ELIGIBLE_WINPERCENT = 45    '// The eligible Win % for possible recruitment into your Bot's Clan (If CEN is Enabled)
+  Const PER_PAGE = 15               '// Maximum number of players per page. Used in the retrieval of cached website data in the RCD function.
+
+ '// Public Vars
+  Public DisplayID          '// Determines the output format/delivery method: dispense to General Chat or whisper to user
+  Public Whisper_Greet      '// Determines the output format for [Topic List 1: Introduction] to users who enter the channel. Modified in the scripts.ini in your bot's folder.
+  Public ExceptionList      '// Contains the list of names of users to exclude from all greetings
+  Public SilentMode         '// If Silent Mode is on, the Bot will not respond to user keywords for a set amount of time (default is 10 minutes).
+  Public SpCase(2)          '// Contains the 'exceptions' listed in the keywords entries of the ChatBot settings file.
+  Public ChatList           '// Scripting object that holds all the Chat Topics and their associated keywords listed in the Chat *.ini file.
+  Public Topic_List         '// A list of all Chat Topics mentioned in the *.ini file.
+  Public Keywords           '// A list of all the keywords of the Chat Topics.
+  Public Max_Phrases        '// Holds the maximum number of phrases or 'responses' listed under each Chat Topic.
+  Public Heard              '// Scripting object that holds all the Chat Topics and the list of users who have already heard a response associated with each Topic.
+  Public Heard_UserList     '// The list of users for whom the bot has caught a keyword and dispensed a response associated with that Chat Topic.
+  Public Queued_Messages    '// Holds the IDs of queued messages for each user that enters the channel
+
+ '// Private Vars
+  Private ChatFSO           '// File System Object (FSO)
+  Private ChatFile          '// The name and the listed directory of the Chat settings (*.ini) file
+  Private CB_File           '// Opens the ChatFile for reading or writing.
+  Private UIC_ClanRank      '// The clan rank (i.e. Chieftain, Shaman, Grunt, Peon) of a user who enters the channel
+  Private UIC_ClanFullName  '// The full name of the clan to which a user entering the channel belongs to
+
+
+ Sub Event_Load()
+   Dim ReadFile, New_Topic, WG_Query, i
+
+   '//////////////////////////////////////////////////////////
+   '//  The following users will not be greeted upon entry. //
+   '//  Recommended users to exclude: bots                  //
+   '//////////////////////////////////////////////////////////
+   ExceptionList = Array(BotVars.Username, "ClanPuRe.Trivia@USEast", "Snall", "PingGnome")
+   SilentMode = False
+   
+   ChatFile = BotPath & "scripts\ChatFile_settings.ini"
+   Set ChatFSO = CreateObject("Scripting.FileSystemObject")
+   Set ChatList = CreateObject("Scripting.Dictionary")
+   Set Heard = CreateObject("Scripting.Dictionary")
+   Set Queued_Messages = CreateObject("Scripting.Dictionary")
+
+   If Not ChatFSO.FileExists(ChatFile) Then
+      Call Create_Commands
+      Call Create_ChatFile
+      If IsOnline <> True Then AddChat 16759296, "Chat Bot Script:. ", 10682112, "The Clan Eligibility Notifications (CEN) message box will be shown when you log on to BNet."
+   End If
+
+   '// Determine whether the greeting (upon users' entry into the channel) should be whispered
+   If GetSettingsEntry("whisper_greet") = vbNullString Then
+      WG_Query = MsgBox("Whisper instead of outputting to General Chat 'Chat Topic 1: Introduction' to users who enter the channel?", 4 Or 32 Or 0, Script("Name"))
+	  Select Case WG_Query
+         Case 6: WriteSettingsEntry "whisper_greet", "True"
+         Case 7: WriteSettingsEntry "whisper_greet", "False"
+      End Select
+   End If
+   Whisper_Greet = GetSettingsEntry("whisper_greet")
+
+   '// Read in all the Chat Topic entries (headers) included in the *.ini file
+   Set CB_File = ChatFSO.OpenTextFile(ChatFile, 1, True)
+   ReadFile = CB_File.ReadAll
+   i = Chr(49)
+   Do While InStr(ReadFile, StringFormat("[{0} - ", i))
+      New_Topic = Split(Split(ReadFile, StringFormat("[{0} - ", i))(1), "]")(0)
+      Keywords = GetConfigEntry(StringFormat("{0} - {1}", i, New_Topic), "Keywords", ChatFile)
+      ChatList.add New_Topic, Keywords
+      Heard.add New_Topic, "n/a"
+      i = i + Chr(49)
+   Loop
+   Topic_List = ChatList.Keys
+   Keywords = ChatList.Items
+   Heard_UserList = Heard.Items
+   ReDim Max_Phrases(ChatList.Count-1)
+
+   '// Timer to check if Silent Mode is on, and if so, turn it off.
+   CreateObj "LongTimer", "SilentCheck"
+   SilentCheck.Enabled = True
+   SilentCheck.Interval = Int(SilentCheck_Interval*60)
+
+  '// Timer to Greet a Random User in the Channel every x minutes
+   CreateObj "LongTimer", "TimedGreet_UIC"
+   TimedGreet_UIC.Enabled = True
+   TimedGreet_UIC.Interval = Int(Greet_UIC_Interval*60)
+
+ End Sub
+
+
+ Sub Event_LoggedOn(Username, Product)
+   Dim ShowCEN_Query
+
+   '// If the bot belongs to a clan, check if Clan Eligibility Notifications (CEN) is enabled. Otherwise, disable it.
+   If GetConfigEntry("Eligibility Notifications", "Enabled", ChatFile) = vbNullString Then
+      If Len(Clan.Name) > 0 Then
+         ShowCEN_Query = MsgBox("Show Clan Eligibility Notifications to users who enter the channel and are eligible to join the Clan? (Current Reqs: Icon and " &ELIGIBLE_WINPERCENT& "%)", 4 Or 32 Or 0, Script("Name"))
+         Select Case ShowCEN_Query
+            Case 6: WriteConfigEntry "Eligibility Notifications", "Enabled", "True", ChatFile
+            Case 7: WriteConfigEntry "Eligibility Notifications", "Enabled", "False", ChatFile
+         End Select
+      End If
+   End If
+
+ End Sub
+
+
+ Sub Event_MessageQueued(ID, Message, Tag)
+   If Tag <> vbNullString Then Queued_Messages.Item(Tag) = StringFormat("{0}{1} ", Queued_Messages.Item(Tag), ID)
+ End Sub
+
+
+ Public Sub Event_Command(Command)
+
+   Select Case LCase(Command.Name)
+      Case "silent":   Call Silent_cmd(Command.Username, Command)
+      Case "hide":     Call Hide_Notifications_cmd(Command.Username)
+      Case "topic":    Call Create_NewChatTopic_cmd(Command.Username, Command)
+      Case "key":      Call Create_New_CT_Keyword_cmd(Command.Username, Command)
+      Case "cstr":     Call Create_New_CT_Response_cmd(Command.Username, Command)
+   End Select
+
+ End Sub
+
+ 
+ Public Sub Event_UserTalk(Username, Flags, Message, Ping)
+   Dim i
+
+   If Left(Message, 1) = BotVars.Trigger Then Exit Sub
+   For i = 0 to UBound(ExceptionList)
+      If LCase(Username) = LCase(ExceptionList(i)) Then Exit Sub
+   Next	
+   '// In my clan, I've encountered problems when users used these words in conjunction with any caught 'keywords' listed in the *.ini file
+   '// These words indicate that users are talking amongst themselves or about another topic, rather than conversing directly with the bot.
+   If CheckWord(Message, "at,game,tourney,torny", Username) Then Exit Sub
+
+   If SilentMode <> True Then
+      If Channel.GetUser(Username).TimeInChannel < Int(Chat_TimeWindow*60) Then
+         For i = 1 to UBound(Topic_List)
+            If Topic_List(i) <> "Stop Talking" And Topic_List(i) <> "Silent On" Then
+               If CheckWord(Message, Keywords(i), Username) Then
+                  If FindName("Heard List", i, Username) <> True Then
+                     Modify_UserList "Heard List", i, Username, "add"
+                     Call GreetUser(Topic_List(i), Username)
+                     Exit For
+                  End If
+               End If
+            End If
+         Next
+      End If
+
+      '////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      '// This is a special instance that I'm currently testing out. It is NOT needed, but it serves a very simple and crucial   //
+      '// purpose - this being that many users who enter the channel aren't aware that the command <.silent on> exists, so they  //
+      '// complain about the bot annoying them or spamming too much. Thus, if a user complains about the bot in chat, then they  //
+      '// are given the option of turning the bot's silent mode on.                                                              //
+      '////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      For i = 1 To UBound(Topic_List)
+         If Topic_List(i) = "Stop Talking" Or Topic_List(i) = "Silent On" Then
+            If CheckWord(Message, Keywords(i), Username) Then
+               If FindName("Heard List", i, Username) <> True Then
+                  Modify_UserList "Heard List", i, Username, "add"
+                  Call GreetUser(Topic_List(i), Username)
+                  If Topic_List(i) = "Silent On" Then Command BotVars.Username, "/silent on", True
+               End If
+            End If
+         End If
+      Next
+   End If
+
+   DisplayID = vbNullString
+
+ End Sub
+
+ 
+ Public Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+
+   DisplayID = StringFormat("{0} {1} ", "/w", Username)
+   Call Event_UserTalk(Username, Flags, Message, Ping)
+
+ End Sub
+
+
+ Public Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+
+   Dim GreetID, UIC_ClanTag, i
+
+   For i = 0 to UBound(Topic_List)
+      If FindName("Heard List", i, Username) Then Modify_UserList "Heard List", i, Username, "del"
+   Next
+
+   Queued_Messages.Add LCase(Username), vbNullString
+   UIC_ClanTag = Channel.GetUser(Username).Clan
+   GreetID = StringFormat("{0} {1} ", "/w", Username)
+
+   If Len(UIC_ClanTag) > 0 Then
+      Retrieve_Clan_Data Username, UIC_ClanTag
+      AddQ StringFormat("{0}Welcome, {1}, {2} of Clan {3} [{4}]!", GreetID, Username, UIC_ClanRank, UIC_ClanTag, UIC_ClanFullName), 1, LCase(Username)
+      If Rand(1,3) = 1 Then AddQ StringFormat("{0}{1}, you can use Clan Mail ({2}cmail or {2}cm) to send out a mass-mail to all members of your Clan. Try it out!", GreetID, Username, BotVars.Trigger), 2, LCase(Username)
+   End If
+ 
+   '// Clan Eligibility Notifications - If CEN is enabled, and the user is not in the clan and is eligible to join (Default: Icon + 45%) then notify them.
+   Display_CEN Username
+
+   If Whisper_Greet = "True" Then DisplayID = StringFormat("{0} {1} ", "/w", Username)
+   If SilentMode <> True Then Call GreetUser(Topic_List(0), Username)
+  
+ End Sub
+
+
+ Private Sub Display_CEN(Username)
+
+   Dim GreetID
+
+   GreetID = StringFormat("{0} {1} ", "/w", Username)
+   If GetConfigEntry("Eligibility Notifications", "Enabled", ChatFile) Then
+      If Len(Clan.Name) > 0 Then
+         If LCase(Channel.GetUser(Username).Stats.IconName) <> "peon" Then
+            If Retrieve_UserWinPercent(Username) >= Int(ELIGIBLE_WINPERCENT) Then
+               If Channel.GetUser(Username).Clan <> Clan.Name Then
+                  If FindName("Eligibility Notifications", "Hide", Username) = False Then
+
+                     '// Display the Notifications
+                     AddQ StringFormat("{0}1. {1}, you are eligible to join Clan {2}.", GreetID, Username, Clan.Name), 2, LCase(Username)
+                     If Len(Channel.GetUser(Username).Clan) > 0 Then
+                        AddQ StringFormat("{0}2. If you would like to do so, you must leave your Clan and then type {1}apply.", GreetID, BotVars.Trigger), 2, LCase(Username)
+                     Else
+                        AddQ StringFormat("{0}2. If you would like to do so, type {1}apply or contact the chief ({2}) via {1}page.", GreetID, BotVars.Trigger, Clan.Chieftain.Name), 2, LCase(Username)
+                     End If
+                     AddQ StringFormat("{0}3. If you would like to hide these notifications next time, type {1}hide.", GreetID, BotVars.Trigger), 2, LCase(Username)
+
+                  End If
+               End If
+            End If
+         End If
+      End If
+   End If
+
+ End Sub
+
+ Sub Event_ServerInfo(Message)
+   Dim Name, MessageIDs, i
+
+   '// If a user is marked as 'away' or 'unavailable', cancel the messages currently queued for them
+   Name = LCase(Split(Message)(0))
+   If CheckWord(Message, "away,unavailable", Name) Then
+      If Queued_Messages.Exists(Name) Then
+         MessageIDs = Split(Trim(Queued_Messages.Item(Name)))
+         For i = 0 To UBound(MessageIDs)
+            Queue.RemoveItemByID(MessageIDs(i))
+         Next
+         Queued_Messages.Remove(Name)
+      End If
+   End If
+
+End Sub
+
+
+ Public Sub Event_UserLeaves(Username, Flags)
+   Dim MessageIDs, i
+
+   '// If a user leaves the channel, remove any unsent messages queued for them
+   If Queued_Messages.Exists(LCase(Username)) Then
+      MessageIDs = Split(Trim(Queued_Messages.Item(LCase(Username))))
+      For i = 0 To UBound(MessageIDs)
+         Queue.RemoveItemByID(MessageIDs(i))
+      Next
+      Queued_Messages.Remove(LCase(Username))
+   End If
+
+ End Sub
+
+ Function FindName(List, List_Num, Name)
+
+   Dim User_Heard, i
+
+   Select Case List
+	  Case "Heard List":  List = Heard_UserList(List_Num)
+	  Case Else:          List = GetConfigEntry(List, List_Num, ChatFile)
+   End Select
+
+   If InStr(List, Chr(44)) Then
+      User_Heard = Split(List, Chr(44))
+      For i = 0 to UBound(User_Heard)
+         If LCase(User_Heard(i)) = LCase(Name) Then
+            FindName = True
+            Exit Function
+         End If
+      Next
+   Else
+      User_Heard = List
+      If LCase(User_Heard) = LCase(Name) Then
+         FindName = True
+         Exit Function
+      End If
+   End If
+
+   FindName = False
+
+ End Function
+
+
+ Function Modify_UserList(List, List_Num, Name, Action_Type)
+
+   Dim Names, List_Name, text, i
+
+   List_Name = List
+   Select Case List_Name
+      Case "Heard List":  List = Heard_UserList(List_Num)
+      Case Else:          List = GetConfigEntry(List, List_Num, ChatFile)
+   End Select
+
+   Select Case Action_Type
+      Case "add"
+         If List <> "n/a" Then
+            text = StringFormat("{0}{1}{2}", List, Chr(44), Name)
+         Else
+            text = Name
+         End If
+      Case "del"
+         If InStr(List, Chr(44)) Then
+            Names = Split(List, Chr(44))
+            For i = 0 To Ubound(Names)
+               If LCase(Names(i)) <> LCase(Name) Then text = StringFormat("{0}{1}{2}", text, Names(i), Chr(44))
+            Next
+            text = Left(text, Len(text)-1)
+         Else
+            If LCase(List) = Lcase(Name) Then text = "n/a"
+         End If
+   End Select
+
+   Select Case List_Name
+      Case "Heard List":  Heard_UserList(List_Num) = text
+      Case Else:          WriteConfigEntry List_Name, List_Num, text, ChatFile
+   End Select
+
+ End Function
+
+
+ Sub Silent_cmd(Username, Command)
+   Dim Mode, SilentID
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If Len(Command.Args) > 0 Then
+            If Command.WasWhispered Then
+               SilentID = 3
+            Else
+               If Username <> BotVars.Username Then SilentID = 1 Else SilentID = 4
+            End If
+            Mode = Split(Command.Args)(0)
+            Select Case Mode
+               Case "on"
+                  If SilentMode <> True Then
+                     dsp SilentID, StringFormat("Silent Mode is {0} for {1} minutes.", Mode, SilentCheck_Interval), Username
+                     SilentMode = True
+                     SilentCheck.Enabled = True
+                     TimedGreet_UIC.Enabled = False
+                  Else
+                     dsp SilentID, StringFormat("Silent Mode is already {0}.", Mode), Username
+                  End If
+               Case "off"
+                  dsp SilentID, StringFormat("Silent Mode has been turned {0}.", Mode), Username
+                  SilentMode = False
+                  SilentCheck.Enabled = False
+                  TimedGreet_UIC.Enabled = True
+            End Select
+         End If
+      End If
+   End If
+
+ End Sub
+
+
+ Sub Hide_Notifications_cmd(Username)
+ 
+   If IsOnline Then
+      If Len(Clan.Name) > 0 Then
+         If FindName("Eligibility Notifications", "Hide", Username) <> True Then
+            dsp 3, StringFormat("Clan {0} eligibility notifications have been turned off.", Clan.Name), Username
+            Modify_UserList "Eligibility Notifications", "Hide", Username, "add"
+         Else
+            dsp 3, StringFormat("Clan {0} eligibility notifications have been turned on.", Clan.Name), Username
+            Modify_UserList "Eligibility Notifications", "Hide", Username, "del"
+         End If
+      End If
+   End If
+
+ End Sub
+
+
+ Sub Create_NewChatTopic_cmd(Username, Command)
+   Dim CTopic, i, j
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If Len(Command.Args) < 1 Then
+            For i = 1 To UBound(Topic_List)+1
+               Command.Respond StringFormat("{0} - {1}", i, Topic_List(i-1))
+            Next
+         Else
+            CTopic = Command.Args
+            If IsNumeric(CTopic) Then
+               If Int(CTopic) > 0 And Int(CTopic) < ChatList.Count+1 Then
+                  Command.Respond StringFormat("{0}", UCase(Topic_List(CTopic-1)))
+                  Command.Respond StringFormat("Keywords: {0}", Keywords(CTopic-1))
+                  i = 1
+                  While GetConfigEntry(StringFormat("{0} - {1}", Int(CTopic), Topic_List(CTopic-1)), i, ChatFile) <> vbNullString
+                     Command.Respond StringFormat("{0} - {1}", i, GetConfigEntry(StringFormat("{0} - {1}", Int(CTopic), Topic_List(CTopic-1)), i, ChatFile))
+                     i = i + 1
+                  Wend 
+               Else
+                  Command.Respond "Error: Chat Topic Number is Invalid."
+               End If
+            Else
+               For i = 0 To UBound(Topic_List)
+                  If LCase(CTopic) = LCase(Topic_List(i)) Then
+                     Command.Respond StringFormat("{0}", UCase(Topic_List(i)))
+                     Command.Respond StringFormat("Keywords: {0}", Keywords(i))
+                     j = 1 
+                     While GetConfigEntry(StringFormat("{0} - {1}", i+1, Topic_List(i)), j, ChatFile) <> vbNullString
+                        Command.Respond StringFormat("{0} - {1}", j, GetConfigEntry(StringFormat("{0} - {1}", i+1, Topic_List(i)), j, ChatFile))
+                        j = j + 1
+                     Wend 
+                     Exit Sub
+                  End If
+               Next
+               Set CB_File = ChatFSO.OpenTextFile(ChatFile, 8, True)
+               With CB_File
+                  .WriteLine vbNewLine
+                  .WriteLine StringFormat("[{0} - {1}]", ChatList.Count+1, CTopic)
+                  .WriteLine vbNullString
+                  .WriteLine "keywords = n/a"
+                  .Close
+               End With
+
+               Command.Respond StringFormat("'{0}' was successfully added in as a new Chat Topic!", CTopic)
+               ChatList.add CTopic, "n/a"
+               Heard.add CTopic, "n/a"
+               Topic_List = ChatList.Keys
+               Keywords = ChatList.Items
+               Heard_UserList = Heard.Items
+               ReDim Max_Phrases(ChatList.Count-1)
+            End If
+         End If
+      End If
+   End If
+
+ End Sub
+
+
+ Sub Create_New_CT_Keyword_cmd(Username, Command)
+   Dim cmd, num, New_Key, i
+ 
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If Len(Command.Args) > 0 Then
+            cmd = Split(Command.Args)
+            If UBound(cmd) > 0 Then
+               If IsNumeric(cmd(0)) Then
+                  num = Int(cmd(0))
+                  If num > 0 And num <= ChatList.Count Then
+                     New_Key = Trim(Split(Command.Args, num)(1))
+                     ChatList.Item(Topic_List(num-1)) = New_Key
+                     Keywords = ChatList.Items
+                     WriteConfigEntry StringFormat("{0} - {1}", num, Topic_List(num-1)), "keywords", New_Key, ChatFile
+                     Command.Respond StringFormat("[Topic {0} - {1}] keywords successfully updated to: {2}", num, Topic_List(num-1),New_Key)
+                  Else
+                     Command.Respond "Error: Chat Topic Number is Invalid."
+                  End If
+               End If
+            End If
+         End If
+      End If
+   End If
+
+ End Sub
+
+
+ Sub Create_New_CT_Response_cmd(Username, Command)
+   Dim cmd, num, Response_Str
+
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         If Len(Command.Args) > 0 Then
+            cmd = Split(Command.Args)
+            If UBound(cmd) > 0 Then
+               If IsNumeric(cmd(0)) Then
+                  num = Int(cmd(0))
+                  If num > 0 And num <= ChatList.Count Then
+                     Response_Str = Trim(Split(Command.Args, num)(1))
+                     Load_Greetings BotVars.Username, num-1
+                     If Max_Phrases(num-1) <> vbNullString Then
+                        WriteConfigEntry StringFormat("{0} - {1}", num, Topic_List(num-1)), Max_Phrases(num-1)+1, Response_Str, ChatFile
+                     Else
+                        WriteConfigEntry StringFormat("{0} - {1}", num, Topic_List(num-1)), "1", Response_Str, ChatFile
+                     End If
+                     Command.Respond StringFormat("'{0}' has been saved as a response under the Topic '{1}'", Response_Str, Topic_List(num-1)) 
+                  Else
+                     Command.Respond "Error: Chat Topic Number is Invalid."
+                  End If
+               End If
+            End If
+         End If
+      End If
+   End If
+
+ End Sub
+
+
+ Private Function Retrieve_Clan_Data(Username, ClanTag)
+
+    Dim web
+    Dim webObject
+    Dim P_Name
+    Dim P_Tag
+    Dim P_RankNum_Raw
+    Dim P_RankNum
+    Dim i, j
+
+	Set webObject = CreateObject("Microsoft.XMLHTTP")
+
+       '// Default - Runs for 10 pages. If the last page is found before this, then the loop ends there.
+       For i = 1 To 10
+          webObject.Open "GET", StringFormat("http://classic.battle.net/war3/ladder/w3xp-clan-profile.aspx?ClanTag={0}&Gateway={1}&PageNo={2}", UCase(ClanTag), BotVars.Gateway, i), False
+          webObject.Send
+          web = webObject.responseText
+
+          '// Ensures that the following action(s) only happen once: on the 1st Page
+          Select Case i
+             Case "1":
+                UIC_ClanFullName = "<title>Frozen Throne - " & BotVars.Gateway & " - "
+                UIC_ClanFullName = Split(Split(web, UIC_ClanFullName)(1), " - Clan Profile</title>")(0)
+          End Select
+
+          P_Tag = Split(web, "&PlayerName=")
+          P_RankNum_Raw = Split(web, "clans/rank")
+
+          For j = 1 to UBound(P_Tag)
+             P_Name = Split(P_Tag(j), """>")(0)
+             P_Name = Replace(P_Name, "%5b", "[")
+             P_Name = Replace(P_Name, "%5d", "]")
+             P_RankNum = Split(P_RankNum_Raw(j), ".gif")(0)
+
+             Select Case P_RankNum
+                Case "0": UIC_ClanRank = "Peon"
+                Case "2": UIC_ClanRank = "Grunt"
+                Case "3": UIC_ClanRank = "Shaman"
+                Case "4": UIC_ClanRank = "Chieftain"
+             End Select
+
+             If LCase(P_Name) = LCase(Username) Then Exit Function
+          Next
+
+          '// If the last page is found, exit out.
+          If UBound(P_Tag) < PER_PAGE Then Exit For 
+       Next
+    Retrieve_Clan_Data = True
+ End Function
+
+
+ Private Function Retrieve_UserWinPercent(Username)
+   Dim web, webObject, TotalPercent
+
+   Set webObject = CreateObject("Microsoft.XMLHTTP")
+   webObject.Open "GET", StringFormat("http://classic.battle.net/war3/ladder/w3xp-player-profile.aspx?Gateway={0}&PlayerName={1}", BotVars.Gateway, Username), False
+   webObject.Send
+   web = webObject.responseText 
+
+   TotalPercent = Split(Split(Split(web, "Total:")(1), """rankingRow"">")(3), " %")(0)
+   Retrieve_UserWinPercent = TotalPercent
+
+ End Function
+
+
+ Function Load_Greetings(Username, List_Num)
+   Dim Rand_Ln, Vars_Arr, i
+
+   Vars_Arr = Array(Array("%c", Channel.Name), Array("%p", Channel.GetUser(Username).Ping), Array("%t", BotVars.Trigger), Array("%u", Username), Array("%sci", SilentCheck_Interval))
+
+   i = Chr(49)
+   Do Until GetConfigEntry(StringFormat("{0} - {1}", List_Num+1, Topic_List(List_Num)), i, ChatFile) = vbNullString
+      Max_Phrases(List_Num) = i
+      i = i + Chr(49)
+   Loop 
+
+   Rand_Ln  = GetConfigEntry(StringFormat("{0} - {1}", List_Num+1, Topic_List(List_Num)), Rand(1,Max_Phrases(List_Num)), ChatFile)
+   For i = 0 To UBound(Vars_Arr)
+      Rand_Ln = Replace(Rand_Ln, Vars_Arr(i)(0), Vars_Arr(i)(1))
+   Next
+   Load_Greetings = Rand_Ln
+
+ End Function
+
+
+ Function GreetUser(GreetType, Username)
+   Dim Response_List, i
+
+   For i = 0 To UBound(Topic_List)
+      If GreetType = Topic_List(i) Then
+         Response_List = Load_Greetings(Username, i) 
+         AddQ StringFormat("{0}{1}", DisplayID, Response_List), 1, LCase(Username)
+         If i = 1 Then AddQ StringFormat("{0}Do you need some help?", DisplayID), 1, LCase(Username)
+      End If
+   Next
+   DisplayID = vbNullString
+
+ End Function
+
+
+ Private Function Rand(min, max)
+   Rand = Int(((max + 1) - (min)) * Rnd + (min))
+ End Function
+
+
+ Function CheckWord(Message, ByVal Raw_Phrase, Name)
+   Dim word, Phrase, PuncArray, temp_word(2), i, j
+
+   '// If there's an AND condition included in the list of keywords
+   If InStr(Raw_Phrase, Chr(42)) Then
+      Phrase = Split(Raw_Phrase, Chr(42))
+      For i = 1 to UBound(Phrase)
+
+         '// Find out what's to the left of the asterisk (*)
+         If Right(Phrase(i-1), 1) = Chr(41) Then
+            temp_word(0) = Split(Split(Phrase(i-1), Chr(40))(1), Chr(41))(0)
+         Else
+            If InStr(Phrase(i-1), Chr(44)) Then
+               temp_word(0) = Split(Phrase(i-1), Chr(44))(UBound(Split(Phrase(i-1), Chr(44))))
+            Else
+               temp_word(0) = Phrase(i-1)
+            End If
+         End If
+         '// Special Case - If the following words are to the left of the *
+         If InStr(Phrase(i-1), "heard") Then SpCase(0) = True
+         If InStr(Phrase(i-1), "keywords") Then SpCase(1) = True
+
+         '// Find out what's to the right of the asterisk (*)
+         If Left(Phrase(i), 1) = Chr(40) Then
+            temp_word(1) = Split(Split(Phrase(i), Chr(40))(1), Chr(41))(0)
+         Else
+            '// Special Case - If the following words are to the right of the *
+            If InStr(Phrase(i), "heard") Then
+               temp_word(1) = Split(Split(Phrase(i), StringFormat("heard{0}", Chr(40)))(1), Chr(41))(0)
+               SpCase(0) = True
+            Else
+               If InStr(Phrase(i), "keywords") Then
+                  temp_word(1) = Split(Split(Phrase(i), StringFormat("keywords{0}", Chr(40)))(1), Chr(41))(0)
+                  SpCase(1) = True
+               Else
+                  '// If there are OR condition(s) following the AND condition, exclude the rest and only include the first word
+                  If InStr(Phrase(i), Chr(44)) Then
+                     temp_word(1) = Split(Phrase(i), Chr(44))(0)
+                  Else
+                     temp_word(1) = Phrase(i)
+                  End If
+               End If
+            End If
+         End If
+
+         '// If the AND Condition is true, then exit the function
+         If CheckWord(Message, temp_word(0), Name) And CheckWord(Message, temp_word(1), Name) Then
+            CheckWord = True
+            Exit Function
+         End If
+
+         '// Get rid of the words that have already been scanned - otherwise, we could risk re-scanning them 
+         Phrase(i) = Mid(Phrase(i), InStr(Phrase(i), temp_word(1)) + Len(temp_word(1))+1) 
+         Raw_Phrase = Replace(Raw_Phrase, temp_word(0), vbNullString, 1, 1, vbTextCompare)
+         Raw_Phrase = Replace(Raw_Phrase, temp_word(1), vbNullString, 1, 1, vbTextCompare)
+      Next
+
+      Raw_Phrase = Replace(Raw_Phrase, Chr(42), vbNullString)
+      Raw_Phrase = Replace(Raw_Phrase, StringFormat("{0}{1}", Chr(40), Chr(41)), vbNullString)
+      Raw_Phrase = Replace(Raw_Phrase, "heard", vbNullString)
+      Raw_Phrase = Replace(Raw_Phrase, "keywords", vbNullString)
+      If Len(Raw_Phrase) < 1 Then
+         CheckWord = False
+         Exit Function
+      End If
+      Raw_Phrase = Replace(Raw_Phrase, StringFormat("{0}{0}", Chr(44)), Chr(44))
+      If Left(Raw_Phrase, 1) = Chr(44) Then Raw_Phrase = Mid(Raw_Phrase, 2)
+      If Right(Raw_Phrase, 1) = Chr(44) Then Raw_Phrase = Left(Raw_Phrase, Len(Raw_Phrase)-1)
+   End If
+
+   '// This is the heart of the Check Word function - once we take care of that annoying AND (*) condition, we can deal with the keywords that matter
+
+   '// Check for OR seperators (commas) and if found, split the words up
+   If InStr(Raw_Phrase, Chr(44)) Then
+      Phrase = Split(Raw_Phrase, Chr(44))
+      For j = 0 to UBound(Phrase) 
+         If CheckWord(Message, Phrase(j), Name) Then
+            CheckWord = True
+            Exit Function
+         End If
+      Next
+   End If
+
+   Phrase = Raw_Phrase
+
+   '// Check for Heard() or Keywords() conditions
+   If IsNumeric(Phrase) Then
+      If SpCase(0) = True Then
+         SpCase(0) = False
+         If FindName("Heard List", Phrase-1, Name) Then
+            CheckWord = True
+            Exit Function
+         End If
+      Else
+         If SpCase(1) = True Then
+            SpCase(1) = False
+            If CheckWord(Message, keywords(Phrase-1), Name) Then
+               CheckWord = True
+               Exit Function
+            End If
+         End If
+      End If
+   End If
+
+   '// Replace punctuations in a user's message
+   PuncArray = Array(Chr(33), Chr(39), Chr(44), Chr(46), Chr(63))
+   For i = 0 To UBound(PuncArray)
+      Message = Replace(Message, PuncArray(i), Chr(32))
+      Message = Replace(Message, StringFormat("{0}{0}", Chr(32)), Chr(32))
+   Next
+
+   word = Split(Trim(Message))
+
+   '// Check for a NOT condition (exclamation mark before a word)
+   If Left(Phrase, 1) = Chr(33) Then
+      SpCase(2) = True
+      Phrase = Mid(Phrase, 2)
+      For i = 0 To UBound(word)
+         If LCase(word(i)) = LCase(Phrase) Then
+            CheckWord = False
+            Exit Function
+         End If
+      Next
+      CheckWord = True
+      Exit Function
+   End If
+
+   '// Check for quotes - signifies a literal comparison (i.e. a user's message should be word-for-word the same as a 'keyword')
+   If Left(Phrase, 1) = Chr(34) And Right(Phrase, 1) = Chr(34) Then
+      If LCase(Message) = LCase(Mid(Phrase, InStr(Phrase, Chr(34))+1, Len(Phrase)-2)) Then
+         CheckWord = True
+      Else
+         CheckWord = False
+      End If
+      Exit Function
+   End If
+
+   '// Run the actual Check Word - find out if a user says a 'keyword' in chat
+   For i = 0 To UBound(word)
+      If LCase(word(i)) = LCase(Phrase) Then
+         CheckWord = True
+         Exit Function
+      End If
+   Next
+   CheckWord = False
+
+ End Function
+
+
+ Sub TimedGreet_UIC_Timer()
+   Dim Lowest_TimeSinceTalk, UIC_ToGreet, DoNotGreet_User, i, j
+
+   If IsOnline Then
+      If Channel.Users.Count > 1 Then
+         ReDim DoNotGreet_User(Channel.Users.Count)
+         Lowest_TimeSinceTalk = Channel.Users(1).TimeSinceTalk
+         For i = 1 to Channel.Users.Count
+            '// If a user's name matches one of the names held in the Exception List, make sure NOT to greet them
+            For j = 0 to UBound(ExceptionList)
+               If LCase(Channel.Users(i).Name) = LCase(ExceptionList(j)) Then
+                  DoNotGreet_User(i) = True
+               End If
+            Next
+            '// Find the user in the channel who's the MOST active (i.e. their time since talk (in seconds) is the lowest)
+            If Channel.Users(i).TimeSinceTalk < Lowest_TimeSinceTalk And DoNotGreet_User(i) <> True Then
+               UIC_ToGreet = Channel.Users(i).Name
+               Lowest_TimeSinceTalk = Channel.Users(i).TimeSinceTalk
+            End If
+         Next
+         Call GreetUser(Topic_List(1), UIC_ToGreet)
+      End If
+   End If
+
+ End Sub
+
+
+ Sub SilentCheck_Timer()
+
+   '// Disable silent mode if it's currently on.
+   If SilentMode = True Then
+      SilentMode = False
+      AddChat vbGreen, "Silent mode has been turned off."
+      dsp 1, "Silent Mode has been automatically turned off."
+      SilentCheck.Enabled = False
+      TimedGreet_UIC.Enabled = True
+   End If
+    
+ End Sub
+
+
+ Private Sub Create_ChatFile
+   Set CB_File = ChatFSO.OpenTextFile(ChatFile, 8, True)
+
+   AddChat 16759296, "Chat Bot Script:. ", 10682112, "Creating settings file for first time use at location: ", 7077375, ChatFile
+   With CB_File
+      .WriteLine "////////////////////////////////////////////////////////////////////////"
+      .WriteLine "//                                                                    //"
+      .WriteLine "// List of users who have opted to hide the Clan eligibility          //"
+      .WriteLine "// notification  messages (this will be displayed only if your bot    //"
+      .WriteLine "// belongs to a Clan and if CEN has been Enabled)                     //"
+      .WriteLine "//                                                                    //"
+      .WriteLine "////////////////////////////////////////////////////////////////////////"
+      .WriteLine vbNullString
+      .WriteLine "[Eligibility Notifications]"
+      .WriteLine "Enabled = "
+      .WriteLine "Hide = n/a"
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "/////////////////////////////////////////////////////////////////////////"
+      .WriteLine "///                                                                   ///"
+      .WriteLine "///   Phrases and responses are categorized under their Chat Topics.  ///"
+      .WriteLine "///   If you want to add a new Topic, please use the .ct command      ///"
+      .WriteLine "///   and then use the .key and .crl commands to create a new keyword ///"
+      .WriteLine "///   and add new phrases to a Topic that already exists. Here is     ///"
+      .WriteLine "///   an example usage:                                               ///"
+      .WriteLine "///       .ct Mark User As AFK                                        ///"
+      .WriteLine "///       .key 12 ""ill brb"",i*afk                                     ///"
+      .WriteLine "///       .crl 12 %u, you have been marked as AFK.                    ///"
+      .WriteLine "///                                                                   ///"
+      .WriteLine "///   You can use the following optional variables in declaring       ///"
+      .WriteLine "///   your phrases:                                                   ///"
+      .WriteLine "///       %u - The username of the person to respond to.              ///"
+      .WriteLine "///       %c - The current channel name.                              ///"
+      .WriteLine "///       %p - The user's Ping                                        ///"
+      .WriteLine "///       %t - The Bot's trigger.                                     ///"
+      .WriteLine "///                                                                   ///"
+      .WriteLine "///   You can use these conditions in the list of keywords to         ///"
+      .WriteLine "///   search for:                                                     ///"
+      .WriteLine "///       heard(topic num) - If a user has already heard a Topic.     ///"
+      .WriteLine "///       keywords(topic num) - the keywords of another Topic.        ///"
+      .WriteLine "///       , - OR seperator. Place between words.                      ///" 
+      .WriteLine "///       * - AND condition. Place between words.                     ///"
+      .WriteLine "///       ! - Not condition. Place before a word.                     ///"
+      .WriteLine "///                                                                   ///"
+      .WriteLine "///   In addition, please examine this file closely for usage         ///"
+      .WriteLine "///   and methodology prior to any modification(s) on your part.      ///"
+      .WriteLine "///                                                                   ///"
+      .WriteLine "/////////////////////////////////////////////////////////////////////////"
+      .WriteLine vbNullString
+      .WriteLine "[1 - Introduction]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = n/a"
+      .WriteLine "1 = Hello, %u! How are you doing?"
+      .WriteLine "2 = Welcome, %u! And what is your current status/mood as of today?"
+      .WriteLine "3 = Welcome, %u! Please spread the word about %tclanmail"
+      .WriteLine "4 = Heya, %u! How ya doin'?"
+      .WriteLine "5 = Hi there, %u, hows it goin'?"
+      .WriteLine "6 = Your ping is %pms. What's up, %u?"
+      .WriteLine "7 = Greetings, %u! If you have a message to share with Clan members, please use %tcmail"
+      .WriteLine "8 = SUP, %u! If you want to share something funny, feel free to use %tcmail"
+      .WriteLine "9 = Hey, %u, fancy yourself a speed challenge against others? Type %tstartsc to get started."
+      .WriteLine "10 = %u, wanna play Unscramble with others? Type %tsbstart to get started."
+      .WriteLine "11 = Welcome, %u! If you would like to know your ping, please ask for it ;}"
+      .WriteLine "12 = Wanna hear something hilarious, %u? Type %tjoke if you do."
+      .WriteLine "13 = Hey, %u! If you're bored, feel free to type %tjoke."
+      .WriteLine "14 = Welcome to %c, %u! Your ping is %p. Have yourself a nice day now!"
+      .WriteLine "15 = SUP, %u, welcome to %c. If you would like to know your ping, just say so :|"
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[2 - Greetings]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = hi,hello,hey,heya,whats*up,wasup,sup,yo,(how,hows)*(goin,going)"
+      .WriteLine "1 = Hey, %u! How's it goin'?"
+      .WriteLine "2 = Hiya, %u!"
+      .WriteLine "3 = What's up, %u?"
+      .WriteLine "4 = Hello, %u!"
+      .WriteLine "5 = Greetings, my friend, %u!"
+      .WriteLine "6 = Howdy, %u! What's goin' on?"
+      .WriteLine "7 = Glad to meet your acquaintance, %u!"
+      .WriteLine "8 = How's it rollin', %u?"
+      .WriteLine "9 = %u, what's up, dude?"
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[3 - Already Greeted]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = heard(2)*keywords(2)"
+      .WriteLine "1 = How many times are you going to say ""Hi"", %u?"
+      .WriteLine "2 = You already said that, %u!"
+      .WriteLine "3 = You're giving me a headache, %u. Stop saying that."
+      .WriteLine "4 = %u, we already exchanged pleasantries. Please say something else."
+      .WriteLine "5 = %u, you've already introduced yourself!"
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[4 - Just Fine]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = fine,ok,okay"
+      .WriteLine "1 = Aw, Just fine? Come on, %u, cheer up! :)"
+      .WriteLine "2 = Just 'ok', %u? Guess that's not too bad :P"
+      .WriteLine "3 = %u, I've met people feeling more down than you. Carry on, then!"
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[5 - Feeling Good]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = !not*(good,great,awesome,spectacular,fantastic,well,superb,splendid,spiffy,solid,happy)"
+      .WriteLine "1 = That's great, %u! Actually, come to think of it, I'm feeling rather spiffy myself! :D"
+      .WriteLine "2 = Boy, am I ever to glad to hear that, %u! My emotions, which were previously in brazen and haphazard turmoil, have suddenly calmed down a bit."
+      .WriteLine "3 = Superb, my friend! Simply superb. Maybe I should climb Mount Kilmanjaro to commemorate this happy and oh-so-gloriously triumphant occassion."
+      .WriteLine "4 = Feelin' on top-of-the-world, eh? Good for you!"
+      .WriteLine "5 = %u, I envy your happiness Q_Q ... really, I do!"
+      .WriteLine "6 = That's great, %u! I'm so happy for you *bursts into tears of joy* /sarcasm off"
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[6 - Feeling Down]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = not*(good,great,awesome,spectacular,fantastic,well,superb,splendid,spiffy,solid,happy),sad,angry,upset,mad,bad,terrible,horrible,stfu"
+      .WriteLine "1 = I'm very sorry to hear that, %u! I hope you feel better ;["
+      .WriteLine "2 = Well, %u, as terrible as your mood is, I can guarantee you that mine is worse >;("
+      .WriteLine "3 = In a sour mood, eh, %u? Here, have yourself a cookie. :]"
+      .WriteLine "4 = I'm feeling very angry myself, %u! If I could, I would smash small, fragile objects, like glass vases or clay pots mayhaps. O, if only I was a corporeal entity rather than the poor, hopeless Automaton that I am *cries*"
+      .WriteLine "5 = Q_Q more %u ... HAHA!"
+      .WriteLine "6 = CRYMORE CRYMORE LOLOL ;D"
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[7 - Help]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = help,commands,cmd,heard(2)*(yes,yeah,""i do"")"	    
+      .WriteLine "1 = My main commands are as follows: [%tclanmail] [%ttrivia on/off] [%tafklist] [%tafk <reason>] [%t(start/stop)sc]. In addition, you can type [%thelp] for a more in-depth command listing."
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[8 - Don't Need Help]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = heard(2)*(no,na,nope,""i dont"")"
+      .WriteLine "1 = OK, %u, was just askin'! Have yourself a good day now :D"
+      .WriteLine "2 = Well, I was just checkin' if you needed assistance, %u :)"
+      .WriteLine "3 = Alright. If you ever need any help, %u, all you need to do is ask ;]"
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[9 - Request to Join]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = join,invite"
+      .WriteLine "1 = If you are interested in joining our clan, please type [%tapply], and I will check if you meet the requirements."
+      .WriteLine "2 = So you want to join, %u? Splendid! You can either contact our chieftain by using [%tpage] or type [%tapply]"
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[10 - AFK]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = afk,away"
+      .WriteLine "1 = Hi, %u! Do you want me to display the list of AFK users?"
+      .WriteLine "2 = Do you want to see who's AFK, %u?"
+      .WriteLine "3 = Commands are: [%tafklist][%tafk <reason>]"
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[11 - Ping Me]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = (me,my)*ping"
+      .WriteLine "1 = %u, your Ping is %p ms. Have a nice day!"
+      .WriteLine "2 = Your recorded Ping at entry was %p ms, %u."
+      .WriteLine "3 = %u, your computer's reachability on the IP Network is %p ms."
+      .WriteLine "4 = Did someone say 'ping'? %u, howdy there! I believe %pms is what you're lookin' for."
+      .WriteLine "5 = %u, I believe %pms is the answer to your request/question :D"
+      .WriteLine "6 = %u, did you know that 'ping' originally meant sending out a pulse of sound and listening for an echo? btw your ping is %pms."
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[12 - Stop Talking]"
+      .WriteLine vbNullString
+      .WriteLine "keywords =""shut up"",""stop talking"",stfu,annoying"
+      .WriteLine "1 = Would you like me to stop talking, %u?"
+      .WriteLine "2 = %u, do you want me to turn my silent mode on?"
+      .WriteLine "3 = Hey, %u, do you want me to be quiet?"
+      .WriteLine vbNullString
+      .WriteLine vbNullString
+      .WriteLine "[13 - Silent On]"
+      .WriteLine vbNullString
+      .WriteLine "keywords = (yes,yeah,""i do"")*heard(12)"
+      .WriteLine "1 = Silent mode is on for %sci minutes."
+      .WriteLine "2 = OK, %u, I will remain silent for %sci minutes."
+      .Close
+   End With
+   AddChat 16759296, "Chat Bot Script:. ", 10682112, "Settings file created."
+
+ End Sub
+
+
+ Private Sub Create_Commands
+   Dim cmd, Parameter
+
+   AddChat 16759296, "Clan Mail Script:. ", 10682112, "Creating commands ... This may take a few minutes."
+
+   If OpenCommand("topic") Is Nothing Then
+      With CreateCommand("topic")
+         .Description = StringFormat("Usage: {0}ct will list all the current Chat Topics." & vbNewLine & "{0}ct <topic name> will list the keywords and phrases of a Topic.", BotVars.Trigger)
+         .Aliases.Add "ct"
+         .RequiredRank = 0
+         .Save
+      End With
+   End If  
+
+   If OpenCommand("cstr") Is Nothing Then
+      With CreateCommand("cstr")
+         .Description = StringFormat("Usage: {0}cstr <topic_name/topic_num> will list all the responses stored under a specific Chat Topic." & vbNewLine &_
+         "Example: {0}cstr Introduction lists all the responses of the topic 'Introduction'. {0}cstr 0 achieves the same purpose." & vbNewLine &_
+         "If you want to delete a particular phrase, do {0}cstr <topic_name/topic_num> <phrase_num>. For instance, {0}cstr 0 2 will delete the 2nd phrase" & vbNewLine &_
+         "Stored under the Chat Topic 'Introduction'" & vbNewLine & vbNewLine &_
+         "Aliases: {0}crl", BotVars.Trigger)
+         .Aliases.Add "crl"
+         .RequiredRank = 0
+         .Save
+      End With
+   End If  
+
+   If OpenCommand("key") Is Nothing Then
+      With CreateCommand("key")
+         .Description = StringFormat("Usage: {0}key <topic_name/topic_num> creates a new keyword for a Chat Topic if none exists, or modifies an existing one." & vbNewLine & vbNewLine &_
+         "Usage: {0}key 2 whats*up,cool,kid - this would catch a phrase like 'what's up bro?' and also one like 'he's a kid'", BotVars.Trigger)
+         .RequiredRank = 0
+         .Save
+      End With
+   End If  
+
+      If OpenCommand("hide") Is Nothing Then
+      With CreateCommand("hide")
+         .Description = "Hides Clan Invitiation Notifications (automatically displayed upon an eligible user's entry) for said user." & vbNewLine & vbNewLine & _
+         "Usage: .hide"
+         .RequiredRank = 0
+         .Save
+      End With
+   End If  
+
+   If OpenCommand("silent") Is Nothing Then
+      With CreateCommand("silent")
+         .Description = "Toggles Bot Silent Mode. If set to 'on', Bot will not respond to chat keywords for 10 minutes." & vbNewLine & vbNewLine & _
+         "Usage: .silent <on/off>"
+         .RequiredRank = 0
+         Set Parameter = .NewParameter("on/off", False)
+         .Parameters.Add Parameter
+         .Save
+      End With
+   End If  
+
+   AddChat 16759296, "Chat Bot Script:. ", 10682112, "Commands added - script is ready to use."
+   AddChat 5731327,  "Please view the commands in the Command Manager for descriptions, syntax, and command aliases."  
+
+ End Sub

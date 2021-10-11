@@ -1,0 +1,450 @@
+Script("Name") = "PimpScript"
+Script("Author") = "Dragon_Legion"
+Script("Description") = "Pimping Greet Script"
+Script("Major") = 1
+Script("Minor") = 35
+Script("Revision") = 1
+
+'// Constants and variables.  Will add variables to the settings file for editing rather than doing it in here
+'// Current info: pimp = actual user/greet
+'// Current info: pimpFile = find, save, load, greet
+'// Current info: pFSO = Pimp File System Object
+'// Current info: pimpPrefix = character prefix for script (unchangable)
+'// Current info: pimpDebug = allow debug (changable)
+'// Current info: pimpFlag = letter flag required for usage
+'// Current info: pimpAccess = numerical access equivalent to pimpFlag
+'// Current info: pimpSeparator = Chr(255) (y with umlaut)
+'// Current info: %user = user no domain
+'// Current info: %realm = domain no user
+'// Current info: %full = user@domain (if applicable)
+'// Current info: %clan = clan (if applicable)
+'// Current info: %prod = game type
+'// Current info: %me = bot
+'// Current info: %join = person who just joined
+'// Current info: %chan = Channel joined
+'// Current info: %ping = User's ping
+'// Current info: %access = access
+'// Current info: %flag = flags
+'// Current info: %time = current time
+'// Current info: %date = today's date
+'// Current info: %level = d2 level (requires d2 client)
+
+Public pimp, pimpFile, psFSO, color, psLast
+Public pimpDebug, pimpAccess, pimpFlag
+Const pimpPrefix = "[PS] "
+
+Sub psLoad()
+	If pimpDebug = True Then AddChat color, pimpPrefix, vbGreen, "Pimp Loading"
+	color = rgb(&Hbe,&H92,&H56)
+	'//Set the FSO
+	Set psFSO = CreateObject("Scripting.FileSystemObject")
+	'//Ensure files are valid
+	If NOT psFSO.fileExists(BotPath & "\pimp\greet.dat") = True Then
+		AddChat color, pimpPrefix, vbRed, "Error.  The Greet file is not available.  Attempting to create."
+		psFSO.createFolder(BotPath & "\pimp\")
+		psFSO.createTextFile(BotPath & "\pimp\greet.dat")
+	End If
+	'//Activate the pimpClass class
+	If pimpDebug = True Then AddChat color, pimpPrefix, vbGreen, "Loading pimpClass"
+	Set pimp = New pimpClass
+	'//Activate the pimpFileParse class
+	If pimpDebug = True Then AddChat color, pimpPrefix, vbGreen, "Loading pimpFileParse"
+	Set pimpFile = New pimpFileParse
+
+	pimpFile.loadGreet
+
+	cmdListAdd
+End Sub
+
+Sub CmdListAdd()
+
+	Set pimpadd = OpenCommand("pimpadd")
+	Set pimpdel = OpenCommand("pimpdel")
+	Set pimplist = OpenCommand("pimplist")
+	Set pimphelp = OpenCommand("pimphelp")
+
+	If pimpadd Is Nothing Then
+		Set Cmd = CreateCommand("pimpadd")
+		With Cmd
+			.RequiredRank = pimpAccess
+			.RequiredFlags = pimpFlag
+			.Description = "Add a pimp greet for a user (.pimphelp for the list)"
+			Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "The User to pimp"
+			End With
+			.Parameters.Add Parameter
+			Set Parameter = .NewParameter("Pimp", False, "word")
+			With Parameter
+				.Description = "The Pimpage"
+			End With
+			.Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+	If pimpdel Is Nothing Then
+		Set Cmd = CreateCommand("pimpdel")
+		With Cmd
+			.RequiredRank = pimpAccess
+			.RequiredFlags = pimpFlag
+			.Description = "Delete a pimp from the pimpbase"
+			Set Parameter = .NewParameter("Username", False, "Word")
+			With Parameter
+				.Description = "The User to delete"
+			End With
+			.Parameters.Add Parameter
+			.Save
+		End With
+	End If
+
+	If pimplist Is Nothing Then
+		Set Cmd = CreateCommand("pimplist")
+		With Cmd
+			.RequiredRank = pimpAccess
+			.RequiredFlags = pimpFlag
+			.Description = "List all Users currently being pimped"
+			.Save
+		End With
+	End If
+
+	If pimphelp Is Nothing Then
+		Set Cmd = CreateCommand("pimphelp")
+		With Cmd
+			.RequiredRank = pimpAccess
+			.RequiredFlags = pimpFlag
+			.Description = "Help for pimp script"
+			.Save
+		End With
+	End If
+
+End Sub
+
+Sub cmdListDel()
+
+	Set pimpAdd = OpenCommand("pimpadd")
+	Set pimpDel = OpenCommand("pimpdel")
+	Set pimpList = OpenCommand("pimplist")
+	Set pimpHelp = OpenCommand("pimphelp")
+
+	If NOT pimpAdd IS Nothing Then
+		DeleteCommand("pimpadd")
+	End If
+
+	If NOT pimpAdd IS Nothing Then
+		DeleteCommand("pimpdel")
+	End If
+
+	If NOT pimpList IS Nothing Then
+		DeleteCommand("pimplist")
+	End If
+
+	If NOT pimpHelp IS Nothing Then
+		DeleteCommand("pimphelp")
+	End If
+
+End Sub
+
+Sub Event_Load()
+
+	If getSettingsEntry("pimpDebug") <> vbNullString Then 
+		pimpDebug = CBool(getSettingsEntry("pimpDebug"))
+	Else
+		pimpDebug = False
+		WriteSettingsEntry "pimpDebug","0"
+	End If
+
+	If getSettingsEntry("pimpAccess") <> vbNullString Then
+		pimpAccess = CInt(getSettingsEntry("pimpAccess"))
+	Else
+		pimpAccess = "50"
+		WriteSettingsEntry "pimpAccess","50"
+	End If
+
+	If getSettingsEntry("pimpFlag") <> vbNullString Then
+		pimpFlag = CStr(getSettingsEntry("pimpFlag"))
+	Else
+		pimpFlag = "Z"
+		WriteSettingsEntry "pimpFlag", "Z"
+	End If
+
+	If pimpDebug = True Then AddChat color, pimpPrefix, vbGreen, "Settings Loaded. Starting Main Load...."
+	psLoad
+	psLast = Now()
+
+End Sub
+
+Sub Event_Close()
+	pimpFile.saveGreet
+	cmdListDel
+End Sub
+
+Sub Event_UserInChannel(Username, Flags, Message, Ping, Product, StatUpdate)
+	'//Dont do anything on bot join
+End Sub
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+
+	'//Do greet on client join
+	If pimp.pimpGreet.Exists(Username) Then
+		If InStr(Username,"@") Then
+			uname = Split(Username,"@")
+			pimped = uname(0)
+		Else
+			pimped = Username
+		End If
+		AddQ "Pimped " & pimped & ": " & pimpFile.Convert(Username,pimp.pimpGreet.Item(Username))
+	End If
+
+End Sub
+
+Sub Event_Command(Command)
+
+	If Command.Source < 4 Then
+		pimp.Parse Command, 1
+	ElseIf Command.Source = 4 Then
+		pimp.Parse Command, 2
+	End If
+
+End Sub
+
+Class pimpClass
+	Public pimpGreet, pimpUserLog
+
+	Private Sub Class_Initialize()
+		If pimpDebug = True Then AddChat color, pimpPrefix, vbGreen, "In class_init()"
+		Set pimpGreet = CreateObject("Scripting.Dictionary")
+		If pimpDebug = True Then AddChat color, pimpPrefix, vbGreen, "Greet Dictionary Created"
+		pimpGreet.CompareMode = 1
+
+	End Sub
+
+	Public Sub Parse(Command,Origin)
+		'//1 = command, 2 = console
+		If Origin > 2 Then 
+			If pimpDebug = True Then AddChat color, pimpPrefix, vbRed, "The message cannot be parsed."
+			Exit Sub
+		End If
+		Select Case LCase(Command.Name)
+			Case "pimpadd"
+				If NOT Command.HasAccess Then
+					SendMsg Command.Username, "You do not have the access required to use this command", Origin
+					Exit Sub
+				Else
+					If Command.Arguments.Count < 2 Then
+						SendMsg Command.Username, "You dont have enough parameters in the add.  Its: " & BotVars.Trigger & "pimpadd Username Pimp text", Origin
+						Exit Sub
+					End If
+					uarr = Split(Command.Args)
+					uname = Left(Command.Args, Len(uarr(0)))
+					pimpText = Mid(Command.Args, Len(uarr(0))+2)
+					If pimp.pimpGreet.Exists(uname) Then
+						SendMsg Command.Username, "That user already exists.  You need to do " & BotVars.Trigger & "pimpdel " & uname & " and then readd them", Origin
+					Else
+						'If Command.Source = 4 Then
+						pimp.pimpGreet.Add uname, pimpText
+						SendMsg Command.Username, uname & " has been added to the pimpbase.", Origin
+					End If
+				End If
+
+			Case "pimpdel"
+				If NOT Command.HasAccess Then
+					SendMsg Command.Username, "You do not have the access required to use this command", Origin
+					Exit Sub
+				Else
+					If Command.Arguments.Count < 1 Then
+						SendMsg Command.Username, "You dont have enough parameters in the del. Its: " & BotVars.Trigger & "pimpdel Username", Origin
+						Exit Sub
+					End If
+					If NOT pimp.pimpGreet.Exists(Command.Args) Then
+						SendMsg Command.Username, "That user does not exist.", Origin
+					Else
+						pimp.pimpGreet.Remove Command.Args
+						SendMsg Command.Username, Command.Args & " has been deleted from the pimpbase.", Origin
+					End If
+				End If
+
+			Case "pimplist"
+				If NOT Command.HasAccess Then
+					SendMsg Command.Username, "You do not have the access required to use this command", Origin
+					Exit Sub
+				Else
+					For Each Key in pimp.pimpGreet.Keys
+						count = count+1
+						list = list & "#" & count & ": " & Key & " "
+					Next
+					If Len(list) = 0 Then
+						SendMsg Command.Username, "There is nobody in the pimplist.  Add someone.", Origin
+					Else
+						SendMsg Command.Username, RTrim(list), Origin
+					End If
+				End If
+
+			Case "pimphelp"
+				If NOT Command.HasAccess Then
+					SendMsg Command.Username, "You do not have the access required to use this command", Origin
+					Exit Sub
+				Else
+					SendMsg Command.Username, "----------- PimpScript Help -----------", Origin
+					SendMsg Command.Username, "Commands: pimpadd, pimpdel, pimplist, pimphelp", Origin
+					SendMsg Command.Username, "Format for pimp: %user (username), %realm (realm), %full (%user@%realm), %clan (clan), %prod (game), %me (botname), %chan (channel)", Origin
+					SendMsg Command.Username, "%access (access level), %flags (user flags), %ping (User ping), %time (Current time), %date (current date), %level (Diablo 2 level. Requires d2 client)", Origin
+				End If
+
+		End Select
+	End Sub
+
+End Class
+
+Class pimpFileParse
+
+	Private Sub Class_Initialize()
+		If pimpDebug = True Then AddChat color, pimpPrefix, vbGreen, "In class_init()"
+	End Sub
+
+	Public Sub loadGreet()
+		On Error Resume Next : Err.Clear
+		'If pimpDebug = True Then AddChat color, pimpPrefix, vbGreen, "In loadGreet()"
+		Set gFile = psFSO.OpenTextFile(BotPath & "\pimp\greet.dat",1,false,0)
+		'If pimpDebug = True Then AddChat color, pimpPrefix, vbGreen, "Greet File Opened"
+		greets = Split(gFile.ReadAll(),vbCrLf)
+		If pimpDebug = True Then AddChat color, pimpPrefix, vbGreen, "Greet file read"
+		For i = 0 To UBound(greets)
+			'If pimpDebug = True Then AddChat color, pimpPrefix, vbRed, greets(i)
+			info = Split(greets(i),"=")
+			pimp.pimpGreet.Add info(0), info(1)
+		Next
+	End Sub
+
+	Public Sub saveGreet()
+		If pimpDebug = True Then AddChat color, pimpPrefix, vbGreen, "In saveGreet()"
+		Set greet = psFSO.OpenTextFile(BotPath & "\pimp\greet.dat",2)
+		If pimpDebug = True Then AddChat color, pimpPrefix, vbRed, "File Opened"
+		For Each Key in pimp.pimpGreet.Keys
+			If pimpDebug = True Then AddChat color, pimpPrefix, vbRed, "Key = ", vbYellow, Key, vbRed, " text = ", vbYellow, pimp.pimpGreet.Item(Key)
+			greet.WriteLine Key & "=" & pimp.pimpGreet.Item(Key)
+		Next
+		greet.Close
+	End Sub
+
+	Public Function Convert(Username, parse)
+		'AddChat color, pimpPrefix, vbYellow, "In convert() and parse = " & parse
+		count = 0
+		For Each User in Channel.Users
+			If User.Name = Username Then
+				Exit For
+			Else
+				count = count+1
+			End If
+		Next
+		'Incorporate Channel.GetUserIndex(Username)
+		index = count+1
+		GetDBEntry Username, Access, Flag
+		'AddChat color, pimpPrefix, vbRed, Channel.Users(index).Name
+		'AddChat color, pimpPrefix, vbRed, EntryType
+		a = Array("%user","%realm","%full","%clan","%prod","%me","%chan","%ping","%access","%flag","%time","%date","%level")
+		b = Array(getUser(Username),getRealm(Username),getFull(Username), Channel.Users(index).Clan, Channel.Users(index).Game, BotVars.Username, Channel.Name, Channel.Users(index).Ping, Access, Flag, Time(), Date(), Channel.Users(index).Stats.Level)
+		For i = 0 to UBound(a)
+			parse = Replace(parse, a(i), b(i))
+		Next
+		convert = parse
+	End Function
+
+	Function getUser(Username)
+		If InStr(Username,"@") Then
+			u1 = Split(Username,"@")
+			user = u1(0)
+		Else
+			user = Username
+		End If
+		getUser = user
+	End Function
+
+	Function getRealm(Username)
+		'AddChat color, pimpPrefix, vbRed, "In getRealm"
+		If InStr(Username,"@") Then
+			'AddChat color, pimpPrefix, vbRed, "user has @"
+			u1 = Split(Username,"@")
+			realm = u1(1)
+		Else
+			'AddChat color, pimpPrefix, vbRed, "user doesnt have @ && BotVars.Product = " & BotVars.Product
+			If BotVars.Product = "3RAW" Then
+				'AddChat color, pimpPrefix, vbRed, "Botvars product = war3"
+				Select Case(LCase(BotVars.Server))
+					Case "useast.battle.net"
+						realm = "Azeroth"
+					Case "uswest.battle.net"
+						realm = "Lordaeron"
+					Case "asia.battle.net"
+						realm = "Kalimdor"
+					Case "europe.battle.net"
+						realm = "Northrend"
+					Case Else
+						realm = "Unknown"
+				End Select
+			Else
+				Select Case(LCase(BotVars.Server))
+					Case "useast.battle.net"
+						realm = "USEast"
+					Case "uswest.battle.net"
+						realm = "USWest"
+					Case "asia.battle.net"
+						realm = "Asia"
+					Case "europe.battle.net"
+						realm = "Europe"
+					Case Else
+						realm = "Unknown"
+				End Select
+			End If
+		End If
+		getRealm = realm
+	End Function
+
+	Function getFull(Username)
+		If InStr(Username,"@") Then
+			user = Username
+		Else
+			If BotVars.Product = "3RAW" Then
+				Select Case(LCase(BotVars.Server))
+					Case "useast.battle.net"
+						realm = "Azeroth"
+					Case "uswest.battle.net"
+						realm = "Lordaeron"
+					Case "asia.battle.net"
+						realm = "Kalimdor"
+					Case "europe.battle.net"
+						realm = "Northrend"
+					Case Else
+						realm = "Unknown"
+				End Select
+			Else
+				Select Case(LCase(BotVars.Server))
+					Case "useast.battle.net"
+						realm = "USEast"
+					Case "uswest.battle.net"
+						realm = "USWest"
+					Case "asia.battle.net"
+						realm = "Asia"
+					Case "europe.battle.net"
+						realm = "Europe"
+					Case Else
+						realm = "Unknown"
+				End Select
+			End If
+			user = Username & "@" & realm
+		End If
+		getFull = user
+	End Function
+
+End Class
+
+Sub SendMsg(User,Msg,Origin)
+	If Origin = 1 Then
+		If BotVars.WhisperCmds = True Then
+			Msg = "/w " & psD2 & User & " " & Msg
+		End If
+		AddQ Msg
+	Else
+		AddChat color, pimpPrefix, vbRed, Msg
+	End If
+End Sub

@@ -1,0 +1,555 @@
+Script("Name")		 = "Want To Buy"
+Script("Author")	 = "Neco"
+Script("Major")		 = 1
+Script("Minor")		 = 1
+Script("Revision") 	 = 8
+Script("Description") 	 = "Allows players to buy and sell items."
+Script("Abbreviation") 	 = "WTB"
+
+' = Adds a message to the "whois" command. If the user has any items, it will add them to the response.
+'	Boolean Value: true or false
+	Private Const WHOIS_ADDON		= False
+
+' = Notifies the seller immediately when someone buys their item.
+'	Boolean Value: true or false
+	Private Const NOTIFY_IMMEDIATE 	= False
+
+' = Notifies the seller on channel join.
+'	Boolean Value: true or false
+	Private Const NOTIFY_ONJOIN		= True
+
+' = Sends a message to the channel saying which items are being sold.
+'	Boolean Value: true or false
+	Private Const NOTIFY_PERIODIC	= True
+' = Interval (in seconds).
+'	Integer Value: Any whole number
+	Private Const NOTIFY_INTERVAL	= 15
+' = Set to "false" to have it not say anything if the list is empty.
+'	Boolean Value: true or false
+	Private Const NOTIFY_NOITEMS	= False
+
+' Only change this if needed
+'	String Value: any string in quotation marks
+	Private Const ITEMS_PATH		= "Items.dat"
+
+' Here's the actual code! Don't edit it if you don't know what you're doing. 
+' If you want any changes, ask me and I'kk be happy to do it for you!
+
+Private Items
+
+Public Sub Event_Load()
+	Set Items = CreateObject("Scripting.Dictionary")
+	Items.CompareMode = 1
+		
+	Call Load_Commands()
+	Call Load_Settings()
+	Call Load_Items()
+	
+	CreateObj "LongTimer", "Periodic"
+	Periodic.Interval = NOTIFY_INTERVAL
+	Periodic.Enabled = NOTIFY_PERIODIC
+	
+	ObserveScript(SSC.InternalScript)
+End Sub
+
+Public Sub Event_Close()
+	Call Save_Items()
+	Set Items = Nothing
+End Sub
+
+Public Sub Event_Command(Command)
+	Dim Username : Username = Command.Username
+	If LenB(Username) = 0 Then Username = BotVars.Username
+	Select Case LCase(Command.Name)
+		Case "wts" 			: Call Command_Sell(Username, Command)
+		Case "wtb" 			: Call Command_Buy(Username, Command)
+		Case "update" 		: Call Command_Update(Username, Command)
+		Case "moreinfo" 	: Call Command_Info(Username, Command)
+		Case "remove" 		: Call Command_Remove(Username, Command)
+		Case "removeall"	: Call Command_RemoveAll(Username, Command)
+		Case "clearitems"	: Call Command_ClearItems(Username, Command)
+		Case "whoami" 		: Call Command_Whoami(Username, Command)
+		Case "whois"		: Call Command_Whois(Username, Command)
+	End Select
+End Sub
+
+Public Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+	If Not NOTIFY_ONJOIN Then Exit Sub
+	For Each Item In Items.Items
+		If LCase(Item.Seller) = LCase(Username) Then
+			Dim Buyers : Buyers = Item.Buyers
+			If UBound(Buyers) = 0 Then
+				AddQ StringFormat("/w {0} {1} is interested in your {2} ({3}).", Username, Buyers(0), Item.Name, Item.Code)
+			Elseif UBound(Buyers) > 0 Then
+				Dim Str
+				For i = 0 To UBound(Buyers)
+					If i = UBound(Buyers) - 1 Then
+						Str = Str & Buyers(i) & " and "
+					Else
+						Str = Str & Buyers(i) & ", "
+					End If
+				Next
+				AddChat vbBlue, Str
+				Str = Left(Str, Len(Str) - 2)
+				AddQ StringFormat("/w {0} {1} are interested in your {2} ({3}).", Username, Str, Item.Name, Item.Code)
+			End If
+			Exit For
+		End If
+	Next 
+End Sub
+
+Public Sub Periodic_Timer()
+	For Each Item In Items.Items
+		Str = Str & "[" & Item.Name & " - " & Item.Description & " (" & Item.Code & ")], "
+	Next
+	If LenB(Str) > 0 Then 
+		Str = Left(Str, Len(Str) - 2)
+		If Len(Str) > 140 Then
+			AddChatEx "Selling string was too long. Removing descriptions from the items..."
+			Str = vbNullString
+			For Each Item In Items.Items
+				Str = Str & "[" & Item.Name & " (" & Item.Code & "), "
+			Next
+		End If
+		AddQ "Items for sale: " & Str
+	Else
+		If NOTIFY_NOITEMS Then AddQ "There are currently no items for sale."
+	End If
+End Sub
+
+Private Sub Command_Sell(Username, Command)
+	Dim Name : Name = Command.Argument("Item")
+	Dim Description : Description = Command.Argument("Description")
+	If LenB(Name) = 0 Then
+		Dim Str
+		For Each Item In GetSellerItems(Username)
+			Str = StringFormat("{0}{1} ({2}), ", Str, Item.Name, Item.Code)
+		Next
+		If LenB(Str) = 0 Then
+			Command.Respond "You are not selling any items right now."
+		Else
+			Str = Left(Str, Len(Str) - 2)
+			Command.Respond StringFormat("You are current selling: {0}.", Str)
+		End If
+	Else
+		Dim ThisItem : Set ThisItem = New Product
+		Dim Code : Code = ThisItem.Create(Name, Username, Description, "")
+		Items.Add Code, ThisItem
+		Command.Respond StringFormat("""{0}"" has been successfully added with the ID of ""{1}""", ThisItem.Name, ThisItem.Code)
+	End If
+End Sub
+
+Private Sub Command_Update(Username, Command)
+	Dim ItemId : ItemId = Command.Argument("Item")
+	Dim Description : Description = Command.Argument("Description")
+	Dim Item
+	Dim ByName : ByName = GetItemIdByName(ItemId)
+	If Items.Exists(ItemId) Then
+		Set Item = Items.Item(ItemId)
+	Elseif LenB(ByName) <> 0 Then
+		If Len(ByName) = 4 Then
+			Set Item = Items.Item(ByName)
+		Else
+			Dim Arr : Arr = Split(ByName, "|")
+			Dim Str
+			For i = 0 To UBound(Arr)
+				Set Item = Items.Item(Arr(i))
+				Str = Str & Item.Name & " (" & Item.Code & "), "
+			Next
+			Str = Left(Str, Len(Str) - 2)
+			Command.Respond "Multiple items were found by that name: " & Str
+			Exit Sub
+		End If	
+	Else
+		Command.Respond "Failed to find the specified item. Please check the code or name again."
+		Exit Sub
+	End If
+	
+	Item.UpdateDescription(Description)
+	If LenB(Description) = 0 Then
+		Command.Respond StringFormat("The description of {0} has been cleared.", Item.Name)
+	Else
+		Command.Respond StringFormat("The description of {0} has been updated to: ""{1}"".", Item.Name, Item.Description)
+	End If
+End Sub
+
+Private Sub Command_Buy(Username, Command)
+	Dim ItemId : ItemId = Command.Argument("Item")
+	Dim Str
+	If LenB(ItemId) <> 0 Then
+		Dim Item
+		Dim ByName : ByName = GetItemIdByName(ItemId)
+		If Items.Exists(ItemId) Then
+			Set Item = Items.Item(ItemId)
+		Elseif LenB(ByName) <> 0 Then
+			If Len(ByName) = 4 Then
+				Set Item = Items.Item(ByName)
+			Else
+				Dim Arr : Arr = Split(ByName, "|")
+				For i = 0 To UBound(Arr)
+					Set Item = Items.Item(Arr(i))
+					Str = Str & Item.Name & " (" & Item.Code & "), "
+				Next
+				Str = Left(Str, Len(Str) - 2)
+				Command.Respond "Multiple items were found by that name: " & Str
+				Exit Sub
+			End If	
+		Else
+			Command.Respond "Failed to find the specified item. Please check the code or name again."
+			Exit Sub
+		End If
+		If LCase(Item.Seller) = LCase(Username) Then
+			Command.Respond "You can't buy your own item!"
+			Exit Sub
+		End If
+		Item.AddBuyer(Username)
+		Command.Respond "Your interest in " & Item.Seller & "'s " & Item.Name & " has been noted."
+		If NOTIFY_IMMEDIATE Then
+			AddQ "/w " & Item.Seller & " " & Username & " is interested in your " & Item.Name & " (" & Item.Code & ")."
+		End If
+	Else
+		For Each Item In Items.Items
+			'If LCase(Item.Seller) <> LCase(Username) Then
+				Str = Str & Item.Name & " (" & Item.Code & "), "
+			'End If
+		Next
+		If LenB(Str) > 0 Then 
+			Str = Left(Str, Len(Str) - 2)
+			Command.Respond "Items for sale: " & Str
+		Else
+			Command.Respond "There are currently no items for sale."
+		End If
+	End If
+End Sub
+
+Private Sub Command_Info(Username, Command)
+	Dim ItemId : ItemId = Command.Argument("Item")
+	Dim Item
+	Dim ByName : ByName = GetItemIdByName(ItemId)
+	If Items.Exists(ItemId) Then
+		Set Item = Items.Item(ItemId)
+	Elseif LenB(ByName) <> 0 Then
+		If Len(ByName) = 4 Then
+			Set Item = Items.Item(ByName)
+		Else
+			Dim Arr : Arr = Split(ByName, "|")
+			Dim Str
+			For i = 0 To UBound(Arr)
+				Set Item = Items.Item(Arr(i))
+				Str = Str & Item.Name & " (" & Item.Code & "), "
+			Next
+			Str = Left(Str, Len(Str) - 2)
+			Command.Respond "Multiple items were found by that name: " & Str
+			Exit Sub
+		End If	
+	Else
+		Command.Respond "No such item was found. Please enter a valid name or code."
+		Exit Sub
+	End If
+	Dim Desc : Desc = vbNullString
+	If LenB(Item.Description) > 0 Then
+		Desc = Item.Description & "."
+	Else
+		Desc = "None."
+	End If
+	
+	Command.Respond StringFormat("""{0}"" was added by {1} and has the item code of {2}. Description: {3}", Item.Name, Item.Seller, Item.Code, Desc)
+End Sub
+
+Private Sub Command_Remove(Username, Command)
+	Dim ItemId : ItemId = Command.Argument("Item")
+	Dim Item
+	Dim ByName : ByName = GetItemIdByName(ItemId)
+	If Items.Exists(ItemId) Then
+		Set Item = Items.Item(ItemId)
+	Elseif LenB(ByName) <> 0 Then
+		If Len(ByName) = 4 Then
+			Set Item = Items.Item(ByName)
+		Else
+			Dim Arr : Arr = Split(ByName, "|")
+			Dim Str
+			For i = 0 To UBound(Arr)
+				Set Item = Items.Item(Arr(i))
+				Str = Str & Item.Name & " (" & Item.Code & "), "
+			Next
+			Str = Left(Str, Len(Str) - 2)
+			Command.Respond "Multiple items were found by that name: " & Str
+			Exit Sub
+		End If	
+	Else
+		Command.Respond "Failed to remove the specified item. Please check the code or name again."
+		Exit Sub
+	End If
+	
+	If LCase(Item.Seller) = LCase(Username) Then
+		Items.Remove Item.Code
+		Command.Respond "Your item has been removed successfully."
+	Elseif Item.CheckBuyer(Username) Then
+		Item.RemoveBuyer(Username)
+		Command.Respond "You are no longer marked as interested in this item."
+	End If
+End Sub
+
+Private Sub Command_RemoveAll(Username, Command)
+	For Each Item In Items.Items
+		If LCase(Item.Seller) = LCase(Username) Then
+			Items.Remove Item.Code
+		End If
+	Next
+	Command.Respond "All of your items have been cleared from the database."
+End Sub
+
+Private Sub Command_ClearItems(Username, Command)
+	Items.RemoveAll
+	WriteConfigEntry "Main", "ItemIds", vbNullString, ITEMS_PATH
+	Command.Respond "All items have been cleared from the database."
+End Sub
+
+Private Sub Command_Whoami(Username, Command)
+	If Not WHOIS_ADDON Then Exit Sub
+	Dim Str
+	For Each Item In GetSellerItems(Username)
+		Str = StringFormat("{0}{1} ({2}), ", Str, Item.Name, Item.Code)
+	Next
+	If LenB(Str) > 0 Then
+		Str = Left(Str, Len(Str) - 2)
+		Command.Respond StringFormat("You are current selling: {0}.", Str)
+	End If
+End Sub
+
+Private Sub Command_Whois(Username, Command)
+	If Not WHOIS_ADDON Then Exit Sub
+	Dim User : User = Command.Argument("username")
+	Dim Str
+	For Each Item In GetSellerItems(User)
+		Str = StringFormat("{0}{1} ({2}), ", Str, Item.Name, Item.Code)
+	Next
+	If LenB(Str) > 0 Then
+		Str = Left(Str, Len(Str) - 2)
+		Command.Respond StringFormat("{0} is current selling: {1}.", User, Str)
+	End If
+End Sub
+
+Class Product
+	Private iItemName, iSeller, iCode, iDescription, iBuyers
+	Private Sub Class_Initialize()
+		Set iBuyers = CreateObject("Scripting.Dictionary")
+		iBuyers.CompareMode = 1
+	End Sub
+		
+	Private Sub Class_Terminate()
+		Set iBuyers = Nothing
+	End Sub
+	
+	Public Function Create(eName, eSeller, eDescription, eCode)
+		iCode = eCode
+		If LenB(iCode) = 0 Then iCode = Generate()
+		iDescription = eDescription
+		iSeller = eSeller
+		iItemName = eName
+		Create = iCode
+	End Function
+	
+	Public Sub AddBuyer(BuyerName)
+		iBuyers.Item(BuyerName) = 0
+	End Sub
+	
+	Public Function Buyers()
+		Buyers = iBuyers.Keys
+	End Function
+	
+	Public Sub RemoveBuyer(BuyerName)
+		If iBuyers.Exists(BuyerName) Then
+			iBuyers.Remove BuyerName
+		End If
+	End Sub
+	
+	Public Function CheckBuyer(BuyerName)
+		CheckBuyer = iBuyers.Exists(BuyerName)
+	End Function
+	
+	Public Sub DumpData()
+		Dim Buyers, Data
+		Dim Keys : Keys = iBuyers.Keys
+		For i = 0 To UBound(Keys)
+			Buyers = Buyers & Keys(i) & ":"
+		Next
+		If LenB(Buyers) > 0 Then Buyers = Left(Buyers, Len(Buyers) - 1)
+		Data = StringFormat("{0}|{1}|{2}|{3}", iItemName, iSeller, iDescription, Buyers)
+		WriteConfigEntry "Items", iCode, Data, ITEMS_PATH
+		
+		WriteConfigEntry "Main", "ItemIds", GetConfigEntry("Main", "ItemIds", ITEMS_PATH) & "|" & iCode, ITEMS_PATH
+	End Sub
+	
+	Public Sub RetrieveData(eCode)
+		Dim Str : Str = GetConfigEntry("Items", eCode, ITEMS_PATH)
+		Dim Data : Data = Split(Str, "|")
+		Me.Create Data(0), Data(1), Data(2), eCode
+		For Each Buyer In Split(Data(3), ":")
+			Me.AddBuyer Buyer
+		Next
+	End Sub
+	
+	Public Function Name()
+		Name = iItemName
+	End Function
+	
+	Public Function Code()
+		Code = iCode
+	End Function
+	
+	Public Function Seller()
+		Seller = iSeller
+	End Function
+	
+	Public Function Description()
+		Description = iDescription
+	End Function
+	
+	Public Function UpdateDescription(Text)
+		iDescription = Text
+	End Function
+	
+	Private Function Generate()
+		Randomize
+		Dim Str : Str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		Dim Value, Result
+
+		For i = 1 to 4
+			Value = (Rnd * (Len(Str) - 1)) + 1
+			Result = Result & Mid(Str, Value, 1)
+		Next
+
+		Generate = Result
+	End Function
+End Class
+
+Private Sub Load_Commands()
+	If OpenCommand("wtb") Is Nothing Then
+		With CreateCommand("wtb")
+				.Description = "If no item is given then it returns with all the items people want to buy."		
+				.Parameters.Add .NewParameter("Item", False, "Word")
+				.RequiredRank = 1
+				.Save
+		End With
+	End If
+	If OpenCommand("wts") Is Nothing Then
+		With CreateCommand("wts")
+				.Description = "Adds the item to the sales list with the provided description."		
+				.Parameters.Add .NewParameter("Item", False, "Word")
+				.Parameters.Add .NewParameter("Description", False, "String")
+				.RequiredRank = 1
+				.Save
+		End With
+	End If
+	If OpenCommand("update") Is Nothing Then
+		With CreateCommand("update")
+				.Description = "Updates an items description. Requires ownership of the item."		
+				.Parameters.Add .NewParameter("Item", False, "Word")
+				.Parameters.Add .NewParameter("Description", False, "String")
+				.RequiredRank = 1
+				.Save
+		End With
+	End If
+	If OpenCommand("moreinfo") Is Nothing Then
+		With CreateCommand("moreinfo")
+				.Description = "Provides you with more information about the specified item."		
+				.Parameters.Add .NewParameter("Item", False, "Word")
+				.RequiredRank = 1
+				.Save
+		End With
+	End If
+	If OpenCommand("remove") Is Nothing Then
+		With CreateCommand("remove")
+				.Description = "Removes the item from the sales list."		
+				.Parameters.Add .NewParameter("Item", False, "Word")
+				.RequiredRank = 1
+				.Save
+		End With
+	End If
+	If OpenCommand("removeall") Is Nothing Then
+		With CreateCommand("removeall")
+				.Description = "Removes all of the items that you are selling from the sales list."		
+				.RequiredRank = 1
+				.Save
+		End With
+	End If
+	If OpenCommand("clearitems") Is Nothing Then
+		With CreateCommand("clearitems")
+				.Description = "Removes all of the items from the sale list. This command is only available from the command console."		
+				.RequiredRank = 200
+				.Save
+		End With
+	End If
+End Sub
+
+Private Sub Save_Items()
+	WriteConfigEntry "Main", "ItemIds", vbNullString, ITEMS_PATH
+	For Each Item In Items.Items
+		Item.DumpData
+	Next
+End Sub
+
+Private Sub Load_Items()
+	Dim Str : Str = GetConfigEntry("Main", "ItemIds", ITEMS_PATH)
+	Dim Products: Products = Split(Str, "|")
+	For i = 1 To UBound(Products)
+		Dim Item : Set Item = New Product
+		Item.RetrieveData(Products(i))
+		' This is to clear the items in order to stop people messing with them manually.
+		WriteConfigEntry "Items", Products(i), vbNullString, ITEMS_PATH
+		Items.Add Item.Code, Item
+	Next
+	AddChatEx Items.Count & " items have been retrieved."
+End Sub
+	
+Private Sub Load_Settings()
+	Dim ThisVersion : ThisVersion = StringFormat("{0}.{1}", Script("Major"), Script("Minor"))
+	Dim Version : Version = GetConfigEntry("Main", "Version", ITEMS_PATH)
+	
+	If LenB(Version) = 0 Then
+		WriteConfigEntry "Main", "Version", ThisVersion, ITEMS_PATH
+		AddChatEx "Thank you for downloading and using the Want to Buy script."
+		AddChatEx "Since this would appear to be your first time using this script, please take a moment to customize the commands via the command manager."
+		AddChatEx "IMPORTANT NOTE: This script collects item information at load time and them dumps it when closing."
+        AddChatEx "This means that you must use the commands provided to manipulate this script instead of preforming tasks manually." & _
+          	      "If you do so the script will just recreate everything as it was at load time."
+	Elseif ThisVersion <> Version Then
+		WriteConfigEntry "Main", "Version", ThisVersion, ITEMS_PATH
+		AddChatEx "It would appear that this is a newer version than specified in the data file."
+	End If
+End Sub
+
+Private Function GetSellerItems(Username)
+	Dim Products : Set Products = CreateObject("Scripting.Dictionary")
+	For Each Item In Items.Items
+		If LCase(Item.Seller) = LCase(Username) Then
+			Products.Add Item.Code, Item
+		End If
+	Next
+	GetSellerItems = Products.Items
+	Set Products = Nothing
+End Function
+
+Private Function GetItemIdByName(Name)
+	Dim Products : Set Products = CreateObject("Scripting.Dictionary")
+	For Each Item In Items.Items
+		If LCase(Item.Name) = LCase(Name) Then
+			Products.Add Item.Code, Item
+		End If
+	Next
+	If Products.Count > 0 Then
+		Dim Str
+		For Each Key In Products.Keys
+			Str = Str & Key & "|"
+		Next
+		GetItemIdByName = Left(Str, Len(Str) - 1)
+	Elseif Products.Count = 0 Then
+		GetItemIdByName = vbNullString
+	End If
+	Set Products = Nothing
+End Function
+
+Private Sub AddChatEx(Text)
+	AddChat 10061943, "[", 16777215, Script("Abbreviation"), 10061943, "] ", 9470064, Text
+End Sub

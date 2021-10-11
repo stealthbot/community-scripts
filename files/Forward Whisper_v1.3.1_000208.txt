@@ -1,0 +1,100 @@
+' FORWARD WHISPER SCRIPT
+' 
+' ::SETTINGS::
+' ForwardFormat
+'   Default value:  Whisper from %u: %m
+'   Description:    Change or create this setting in settings.ini
+'                   to change the format of the "whisper from" message
+'                   for localization and customization reasons.
+'                   Can use the variables %u (username of sender),
+'                   %m (message received), %t (time received), and
+'                   %d (date received).
+'   Example value:  [%t] <%u> %m
+'                   ( StealthBot style :D )
+' ForwardTo
+'   Default value:  %O
+'   Description:    Change this value using the menu system:
+'                   Scripting > Forward Whisper > Set Forward Whisper User
+'                   Read the dialog's description there.
+'   Example value:  Joeuser@Azeroth
+' 
+' ::CHANGELOG::
+' v1.3.1: 2009-11-08 ~Ribose
+' * [ADD] When whispers are going to be forwarded to a friend
+'         (a user on the bot's friend list), it checks if they
+'         are online first (PhiX).
+' * Created changelog in comment due to lack of other places to put it...
+
+Option Explicit
+
+Script("Name") = "Forward Whisper"
+Script("Author") = "Ribose"
+Script("Major") = 1
+Script("Minor") = 3
+Script("Revision") = 1
+Script("Description") = "Forwards whispers sent to this bot to your game account or friends."
+
+Const FWD_OWNER = "%o"
+Const FWD_FRIEND = "%f"
+Const MSGBOX_TITLE = "Forward Whisper Script - StealthBot"
+
+Sub Event_Load()
+    ' create menu item
+    CreateObj "Menu", "mnuSetUser"
+    mnuSetUser.Caption = "Set Forward Whisper User"
+End Sub
+
+Sub mnuSetUser_Click()
+    Dim ForwardTo, InputMsg
+    InputMsg = _
+              "Set the user to forward all whispers to." & vbNewLine & _
+              "Use " & UCase(FWD_OWNER) & " to whisper the bot's current owner." & vbNewLine & _
+              "Use " & UCase(FWD_FRIEND) & " to whisper the bot's current friends." & vbNewLine & _
+              "Leave blank or hit Cancel to cancel."
+    ForwardTo = LCase(Trim(GetSettingsEntry("ForwardTo")))
+    If Len(ForwardTo) = 0 Then ForwardTo = FWD_OWNER
+    ForwardTo = InputBox(InputMsg, MSGBOX_TITLE, ForwardTo)
+    If Len(Trim(ForwardTo)) = 0 Then ForwardTo = FWD_OWNER
+    If ForwardTo <> vbNullString Then WriteSettingsEntry "ForwardTo", ForwardTo
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+    ReceivedWhisper Username, Message
+End Sub
+
+' call this subroutine when a whisper to be forwarded according to this script's settings is received
+Sub ReceivedWhisper(Username, Message)
+    Dim fwduser, fwdmsg, I
+    ' get the user to receive the whisper from setting
+    fwduser = LCase(Trim(GetSettingsEntry("ForwardTo")))
+    ' get the message format from settings, if an advanced user has stored it
+    fwdmsg = GetSettingsEntry("ForwardFormat")
+    ' default format to "Whisper from <name>: <message>"
+    If Len(fwdmsg) = 0 Then fwdmsg = "Whisper from %u: %m"
+    ' replace %u and %m
+    fwdmsg = Replace(fwdmsg, "%u", Username)
+    fwdmsg = Replace(fwdmsg, "%m", Message)
+    fwdmsg = Replace(fwdmsg, "%t", Time())
+    fwdmsg = Replace(fwdmsg, "%d", Date())
+    ' default receiver to owner
+    If Len(fwduser) = 0 Then fwduser = FWD_OWNER
+    ' if user to send to = %O, replace with bot owner
+    If fwduser = FWD_OWNER Then fwduser = BotVars.BotOwner
+    ' if user to send to = %F
+    If fwduser = FWD_FRIEND Then
+        ' send to f l
+        AddQ "/f m " & fwdmsg
+    Else
+        ' user to receive whisper is sending the whisper, don't mimic
+        If fwduser = LCase(Username) Then Exit Sub
+        ' check if receiver is on f l
+        For I = 1 To Friends.Count
+            If LCase(Friends(I).Name) = LCase(fwduser) Then
+                ' yes? check if they are offline, don't send
+                If Not Friends(I).IsOnline Then Exit Sub
+            End If
+        Next
+        ' send it
+        AddQ "/w " & fwduser & " " & fwdmsg
+    End If
+End Sub

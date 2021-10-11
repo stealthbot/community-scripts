@@ -1,0 +1,239 @@
+'// Dota Download Script
+'// Created by AwaKening 10/28/2009
+
+Option Explicit
+
+'***************************
+'// SCRIPT INFO
+
+Script("Name")     = "getdota"
+Script("Author")   = "AwaKening"
+Script("Major")    = 1
+Script("Minor")    = 0
+Script("Revision") = 6
+Script("FileName") = "getdota.txt"
+Script("Commands") = "getdota"
+Script("Description") = "Checks site periodically for an updated dota map"
+
+
+'***************************
+'// CHANGELOGS
+
+' 1.0.6 updated 12/26/2010
+'     - Changed download method to use xmlhttp so the bot won't hang
+' 1.0.5 updated 12/24/2010
+'     - Fixed the ghost auto map config function
+'     - Changed console output to public output when an update is found via timer
+' 1.0.4 updated 07/28/2010
+'     - Added a check for map size after downloading
+'     - Removed an unused function
+'     - Changed the command feedback
+'     - New setting to load new map in ghost
+'     - Updated mirrors
+' 1.0.3 updated 01/27/2009
+'     - Forced script to check next site if it times out
+' 1.0.2 updated 11/1/2009
+'     - Added auto update for dota.cfg in conjunction with ghost++
+' 1.0.1 updated 10/29/2009
+'     - Added additional mirrors
+'     - Added check if file was downloaded before attempting to move it
+
+
+'***************************
+'// GLOBAL VARIABLES
+
+Private Const DotaSite   = "http://www.getdota.com"
+
+Private downloads(6), objXML
+Private attemptCount, attemptFile
+
+'***************************
+'// BOT EVENTS
+
+Sub Event_Load()
+	downloads(1) = "http://static.getdota.com/maps/eng/"
+	downloads(2) = "http://81.223.126.91/eng/"
+	downloads(3) = "http://0v1.org/d0tahost/eng/"
+	downloads(4) = "http://dota.megajesus.com/eng/"
+	downloads(5) = "http://dota.skodaautoklub.cz/eng/"
+	downloads(6) = "http://193.164.133.88/eng/"
+
+	Set objXML = CreateObject("MSXML2.XMLHTTP.6.0")
+	objXML.OnReadyStateChange = GetRef("objXML_OnReadyStateChange")
+
+	Call CreateSettings()
+	Call CreateCommands()
+
+	CreateObj "LongTimer", "checkSite"
+	checkSite.Interval = GetSettingsEntry("checkTime")*60
+	checkSite.Enabled  = True
+End Sub
+
+Sub Event_Command(Command)
+	Select Case objXML.ReadyState
+	Case 1, 2, 3:
+		Command.Respond "A download is already in progress"
+		Exit Sub
+	End Select
+
+	Dim mapName
+
+	If newMapExists(mapName) Then
+		Command.Respond StringFormat("New map found ({0})... Attempting download", mapName)
+
+		Call getNewMap(mapName)
+	Else
+		Command.Respond StringFormat("Already up to date ({0})", mapName)
+		Call UpdateGhost(mapName)
+	End If
+End Sub
+
+
+'***************************
+'// PRIVATE SUBS/FUNCTIONS
+
+Sub checkSite_Timer()
+	Select Case objXML.ReadyState
+		Case 1, 2, 3: Exit Sub
+	End Select
+
+	Dim mapName
+
+	If newMapExists(mapName) Then
+		AddQ "A Dota update was found... Attempting download."
+
+		Call getNewMap(mapName)
+	End If
+End Sub
+
+Private Function newMapExists(ByRef mapName)
+	If SCINet.StillExecuting Then Exit Function
+
+	Dim content, myLoc, fso
+
+	Set fso = CreateObject("Scripting.FileSystemObject")
+
+	content = SCINet.OpenUrl(DotaSite)
+	mapName = Split(Split(content, "file_name"" value=""")(1), Chr(34))(0)
+
+	myLoc = GetSettingsEntry("mapLocation")
+	If Right(myLoc, 1) <> "\" Then myLoc = myLoc & "\"
+
+	If fso.FolderExists(myLoc) Then
+		If NOT(fso.FileExists(myLoc & mapName)) Then
+			newMapExists = True
+			attemptCount = 0
+		End If
+	Else
+		Addchat color.Red, "Your specified map folder does not exist"
+	End If
+
+	Set fso = Nothing
+End Function
+
+Private Sub getNewMap(ByVal mapName)
+	attemptCount = (attemptCount+1)
+
+	If Len(mapName)>0 Then
+		attemptFile = Replace(mapName, " ", "%20")
+	End If
+
+	objXML.Open "Get", downloads(attemptCount) & attemptFile, True
+	objXML.Send
+End Sub
+
+Private Function objXML_onreadystatechange()
+	If Not(objXML.readystate = 4) Then Exit Function
+
+	If ((objXML.Status = 200) And (LenB(objXML.ResponseBody) > 6*10^6)) Then
+
+		Dim oStream: Set oStream = CreateObject("ADODB.Stream")
+		Dim myLoc:   myLoc = GetSettingsEntry("mapLocation")
+		Dim mapName: mapName = Replace(attemptFile, "%20", " ")
+
+		If Right(myLoc, 1) <> "\" Then myLoc = myLoc & "\"
+
+		With oStream
+			.Open
+			.Type = 1
+			.Write objXML.ResponseBody
+			.SaveToFile myLoc & mapName
+			.Close
+		End With
+
+		Set oStream = Nothing
+
+		AddQ "Dota update successful: " &mapName
+
+		Call UpdateGhost(mapName)
+	Else
+		AddChat color.Orange, "Mirror #" &attemptCount& " Failed"
+
+		If attemptCount+1 > UBound(downloads) Then
+			AddQ "Dota Update Failed from all mirrors"
+		Else
+			Call getNewMap("")
+		End If
+	End If
+End Function
+
+Private Sub UpdateGhost(ByVal newMap)
+	Dim ghost, trig
+
+	ghost = CStr(GetSettingsEntry("ghostName"))
+	trig  = CStr(GetSettingsEntry("ghostTrig"))
+
+	If Len(ghost)>0 Then
+		AddQ StringFormat("/w {0} {1}map {2}", ghost, trig, newMap)
+	End If
+End Sub
+
+Private Sub CreateSettings()
+	Dim response, title, version
+
+	version = CStr(StringFormat("{0}.{1}.{2}", Script("Major"), Script("Minor"), Script("Revision")))
+	If (GetSettingsEntry("version") = version) Then Exit Sub
+
+	title = "AwaKening's GetDota"
+	WriteSettingsEntry "version", version
+	AddChat 15612594, StringFormat("{0} updated to {1}", title, version)
+
+	'// Version 1.0.1
+	If Len(GetSettingsEntry("checkTime")) = 0 Then
+		WriteSettingsEntry "checkTime (info)", "How often in minutes to check for a new map"
+		WriteSettingsEntry "checkTime", InputBox("How often in minutes should auto-update check" &_
+		" for an updated map?", title, "30")
+
+		WriteSettingsEntry "mapLocation (info)", "Where to store your downloaded maps"
+		WriteSettingsEntry "mapLocation", InputBox("Where will your maps be saved?", _
+		title, "C:\Program Files\Warcraft III\Maps\Download\")
+	End If
+
+	'// Version 1.0.4
+	If (cInt(Replace(version, ".", "")) <=104) Then
+		response = InputBox("Enter your ghost's Name if you want it updated also." & _
+		"  (Blank if none)", title, "")
+
+		WriteSettingsEntry "ghostName", response
+		If Len(response)>0 Then
+			WriteSettingsEntry "ghostTrig", InputBox("Enter your ghost's trigger", title, "!")
+		End If
+	End If
+End Sub
+
+Private Sub CreateCommands()
+	Dim Command, Parameter
+
+	If NOT(OpenCommand("getdota") Is Nothing) Then Exit Sub
+
+	Set Command = CreateCommand("getdota")
+	With Command
+		.RequiredRank = 70
+		.Description = "downloads newest dota map"
+		.Save
+	End With
+
+	Set Command = Nothing
+	Set Parameter = Nothing
+	AddChat 9118312, "  Command (getdota) successfully created."
+End Sub

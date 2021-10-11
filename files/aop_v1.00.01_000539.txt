@@ -1,0 +1,107 @@
+Script("Name") = "aop"
+Script("Author") = "SierraKomodo, with some help from TheBlackNinja"
+Script("Major") = 1
+Script("Minor") = 00
+Script("Revision") = 01
+Script("Description") = "Automatically gives users OP status based on username, access, or rank."
+
+'// To-Do List:
+'// Provide support for multiple usernames
+'// Provide support for CRS ranks
+
+Sub Event_Load()
+  If GetSettingsEntry("aop_set") = vbNullString Then
+    WriteSettingsEntry "'// Setting to determine how AOP will automatically op users.", vbNullString
+    WriteSettingsEntry "'// 1 - Username, 2 - Access, 3 -  Flags", vbNullString
+    WriteSettingsEntry "aop_set", 1
+    WriteSettingsEntry "'// If aop_set is 1;", vbNullString
+    WriteSettingsEntry "'// Give the username you wish to give OP status to automatically - ONLY LIST ONE", vbNullString
+    WriteSettingsEntry "aop_user", "Sierra.Komodo"
+    WriteSettingsEntry "'// If aop_set is 2;", vbNullString
+    WriteSettingsEntry "'// Give the minimal access level you wish to give OP status to automatically", vbNullString
+    WriteSettingsEntry "'// The bot will attempt to op all users with access equal to or above this value", vbNullString
+    WriteSettingsEntry "aop_access", 200
+    WriteSettingsEntry "'// If aop_set is 3;", vbNullString
+    WriteSettingsEntry "'// Give the flag you wish to give OP status to automatically", vbNullString
+    WriteSettingsEntry "aop_flag", "O"
+    
+    Call CleanINI()
+  End If
+  If GetSettingsEntry("aop_set") > 3 or GetSettingsEntry("aop_set") < 1 Then
+    AddChat vbYellow, "AOP Script: ", vbRed, "Please enter a value between 1 and 3 in 'aop_set' in your scripts.ini file."
+   
+  End If
+
+End Sub
+
+Sub Event_Userjoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+'// If set to Username...
+  If CInt(GetSettingsEntry("aop_set")) = 1 Then
+    If LCase(Username) = LCase(GetSettingsEntry("aop_user")) Then
+      Command BotVars.Username, "/op " & Username, True
+      AddChat vbYellow, "AOP Script: ", vbGreen, Username & " has recieved OP status."
+     Else
+    End If
+   Else
+
+  End If
+  
+'// If set to Access...
+  If CInt(GetSettingsEntry("aop_set")) = 2 Then
+    If CInt(GetDBEntry(Username).Rank) = CInt(GetSettingsEntry("aop_access")) Then
+      Command BotVars.Username, "/op " & Username, True
+      AddChat vbYellow, "AOP Script: ", vbGreen, Username & " has recieved OP status."
+     Else
+    End If
+   Else
+  End If
+
+'// If set to Flag...
+  If CInt(GetSettingsEntry("aop_set")) = 3 Then
+    If GetDBEntry(Username).HasFlag(GetSettingsEntry("aop_flag")) Then
+      Command BotVars.Username, "/op " & Username, True
+      AddChat vbYellow, "AOP Script: ", vbGreen, Username & " has recieved OP status."
+     Else
+    End If
+   Else
+  End If
+
+End Sub
+
+Private Sub CleanINI  '// Removes the " = " after the commented out lines that this script makes
+
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 1, True)
+      data = Split(File.ReadAll, vbNewLine)
+   File.Close
+
+
+   tMatch = False
+   For i = 0 To UBound(data) -1
+      If tMatch Then
+         If Left(data(i), 3) = "'//" Then
+            line = line & Split(data(i), "=")(0) & vbNewLine
+         ElseIf InStr(data(i), "[") > 0 AND InStr(data(i), "]") > 0 Then
+            tMatch = False
+            line = line & data(i) & vbNewLine
+         Else
+            line = line & data(i) & vbNewLine
+         End If
+      Else
+         If data(i) = "[aop]" Then
+            tMatch = True
+            line = line & data(i) & vbNewLine
+         Else
+            line = line & data(i) & vbNewLine
+         End If
+      End If
+   Next
+
+   fso.DeleteFile(BotPath & "scripts\scripts.ini")
+   temp = Split(line, vbNewLine)
+   For i = 0 To Ubound(temp) -1
+      Set File = fso.OpenTextFile(BotPath & "scripts\scripts.ini", 8, True)
+         File.WriteLine temp(i)
+      File.Close
+   Next
+End Sub

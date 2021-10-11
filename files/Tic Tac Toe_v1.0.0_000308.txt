@@ -1,0 +1,374 @@
+Script("Name") = "Tic Tac Toe"
+Script("Author") = "oblivious"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 0
+
+Private DictGrid
+Const Player1 = "x"
+Const Player2 = "o"
+Const NoWinnerYet = "n"
+Private CurrentPlayer
+Private Opponent
+Private Challenger
+Private Player1Ident
+Private Player2Ident
+Private TurnsTaken
+Private Challengee
+
+Sub Event_Load()
+
+	Set DictGrid = CreateObject("Scripting.Dictionary")
+	
+	Opponent = vbNullString
+	Player1Ident = vbNullString
+	Player2Ident = vbNullString
+	TurnsTaken = 0
+	CurrentPlayer = Player1
+	Challenger = vbNullString
+	Challengee = vbNullString
+	
+	AddChat vbYellow, "[TTT] Creating form."
+	CreateObj "Form", "tictactoe"
+	With GetObjByName("tictactoe")
+		.BorderStyle     =   4
+		
+		.Caption = "Tic Tac Toe"
+		
+		
+		'create grid'
+		Dim i
+		Dim objGrid
+		AddChat vbYellow, "[TTT] Creating grid."
+		For i = 0 To 8
+			
+			.CreateObj "Button", "grid" & i
+			
+			DictGrid.Add i, .GetObjByName("grid" & i)
+			With  DictGrid.Item(i)
+				  
+				  .Appearance      =   0  'Flat				  
+				  .Height          =   855
+				  .Left            =   (120 + (i Mod 3) * 855)				  
+				  .Top             =   (120 + Int( i / 3 ) * 855)
+				  .Caption           =  " "
+				  With .Font
+					 .Name            =   "Arial"
+					 .Size            =   41.25
+					 .Charset         =   0
+					 .Weight          =   400
+					 .Underline       =   0   'False
+					 .Italic          =   0   'False
+					 .Strikethrough   =   0   'False
+				  End With
+				  .Width           =   855
+				  
+			End With
+			
+		Next
+		.Height = 3250
+		.Width = 2950
+		
+	End With
+
+	Call CreateScriptCommands()
+	Call Reset(0)
+End Sub
+
+
+Sub CreateScriptCommands()
+	'//add commands.
+	Dim Command, Parameter
+	Set Command = OpenCommand("tictactoe")
+	If Command Is Nothing Then
+		Set Command = CreateCommand("tictactoe")
+		With Command
+			.Description = "Controls the Tic Tac Toe game."
+			.RequiredRank = 200
+			Set Parameter = .NewParameter("Command", False, "word")
+			.Parameters.Add Parameter
+            With Parameter
+                .Description = "Sub command you want to use."
+				.SpecialNotes = "Can be '.reset', '.forfeit' or 'username' to challenge someone, or '.accept' to accept a challenge."
+				
+            End With
+		.Save
+		End With
+	End If
+	
+End Sub
+
+Sub Event_Command(Command)
+	Select Case (Command.Name)
+		Case "tictactoe"
+		If Command.IsValid Then
+			Select Case (LCase(Command.Argument("Command")))
+				Case ".reset"
+					Call Reset(0)
+				Case ".forfeit"
+					Call Forfeit()
+				Case ".accept"
+					Call AcceptChallenge(Challenger)
+				Case Else
+					Call Challenge(Command.Argument("Command"))
+			End Select
+		End If			
+	End Select
+End Sub
+
+Sub Forfeit()
+	AddQ StringFormat("/w {0} TFF", Mid(Opponent,2))
+	Call Reset(0)
+End Sub
+
+Sub Challenge(User)
+	Challengee = User
+	AddQ StringFormat("/w {0} TIC", User)
+	
+End Sub
+
+Sub Event_WhisperFromUser(Username, Flags, Message, Ping)
+	
+	If (Username = Challengee) Then
+		If (Message = "TAC") Then
+			AddChat vbYellow, StringFormat("[TTT] Game starting with {0}. Type /tictactoe .forfeit to forfeit.", Username)
+			Call AcceptedChallenge(Username)
+		End If
+	End If
+	
+	If (Message = "TIC") Then
+		AddChat vbYellow, StringFormat("[TTT] You have been requested by {0} to play a game of Tic Tac Toe. Type /tictactoe .accept to play.", Username)
+		Challenger = Username
+		
+	End If
+	
+	If (Username = Mid(Opponent,2)) Then
+		If (Message = "TFF") Then
+			AddChat vbYellow, "[TTT] You win by default."
+			Call Reset(0)
+		End If
+	
+		If (Left(Message, 2) = "TM") Then
+			Call RemoteGridEvent(Right(Message,1))
+		End If		
+		If (Message = "TRG") Then
+			AddChat vbYellow, "[TTT] Your opponent as reset the game. Type /tictactoe .reset to reset your game."
+		End If
+	End If
+	
+End Sub
+
+Sub AcceptChallenge(C)
+	
+	AddQ StringFormat("/w {0} TAC", C)
+	Call Reset(0)
+	Opponent = Player1 & C
+	Call  NewGame(C, myUsername)
+	Challenger = vbNullString
+End Sub
+
+Sub AcceptedChallenge(C)
+	
+	AddQ StringFormat("/w {0} TOE", C)
+	Call Reset(1)
+	Opponent = Player2 & C
+	Call NewGame(myUsername, C)
+	
+End Sub
+
+
+
+Sub NewGame(P1, P2)
+	Player1Ident = P1
+	Player2Ident = P2
+	GetObjByName("tictactoe").Show
+	
+	
+End Sub
+
+Sub Reset(AmIEnabled)
+	If (Opponent = vbNullString) Then
+	
+	Else
+		AddQ StringFormat("/w {0} TRG", Mid(Opponent,2))
+	End If
+	AddChat vbYellow, "[TTT] Resetting game board..."
+	CurrentPlayer = Player1
+	Opponent = vbNullString
+	Player1Ident = vbNullString
+	Player2Ident = vbNullString
+	TurnsTaken = 0
+	'Challenger = vbNullString
+	Challengee = vbNullString
+	
+		For x = 0 To 8
+			DictGrid.Item(x).Caption = " "	
+			DictGrid.Item(x).Enabled = AmIEnabled ' false
+			
+		Next
+	
+	
+	
+	GetObjByName("tictactoe").Hide
+	
+End Sub
+
+Public Function CheckWinner()
+ 
+    'horizontal
+	
+	Dim sum 'haha, dimsum :P
+	For x = 0 To 2
+			sum = 0
+		For y = 0 to 2
+			sum = sum + Asc(DictGrid.Item(x * 3 + y).Caption)
+		Next
+		If (sum = 3 * Asc(Player1)) Then
+			CheckWinner = Player1
+			Exit Function
+		ElseIf (sum = 3 * Asc(Player2)) Then
+			CheckWinner = Player2
+			Exit Function
+		End If
+				
+	Next
+	
+	'vertical
+	For x = 0 To 2
+			sum = 0
+		For y = 0 To 6 Step 3
+			sum = sum + Asc(DictGrid.Item(x+y).Caption)
+		Next
+		If (sum = 3 * Asc(Player1)) Then
+			CheckWinner = Player1
+			Exit Function
+		ElseIf (sum = 3 * Asc(Player2)) Then
+			CheckWinner = Player2
+			Exit Function
+		End If
+		
+	Next
+		sum = 0
+			''diagnol 1
+			For x = 0 To 2
+				sum = sum + Asc(DictGrid.Item(x*4).Caption)
+			Next
+			
+			If (sum = 3 * Asc(Player1)) Then
+					CheckWinner = Player1
+					Exit Function
+			ElseIf (sum = 3 * Asc(Player2)) Then
+					CheckWinner = Player2
+					Exit Function
+			End If
+				
+				sum = 0
+				
+			''diagnol 2
+		sum = 0
+		
+			For x = 1 To 3
+				sum = sum + Asc(DictGrid.Item(x*2).Caption)
+			Next
+			
+			If (sum = 3 * Asc(Player1)) Then
+					CheckWinner = Player1
+					Exit Function
+			ElseIf (sum = 3 * Asc(Player2)) Then
+					CheckWinner = Player2
+					Exit Function
+			End If
+			
+    CheckWinner = NoWinnerYet
+    
+End Function
+
+Sub LocalGridEvent(GridIndex)
+	
+	If ( (DictGrid.Item(GridIndex).Caption = Player1) OR (DictGrid.Item(GridIndex).Caption = Player2) ) Then
+		AddChat vbYellow, "[TTT] Illegal Move, choose again."
+		Exit Sub
+	End If
+	For x = 0 to 8
+			DictGrid.Item(x).Enabled = 0 ' false
+    Next
+		AddQ StringFormat("/w {0} TM{1}", Mid(Opponent,2), GridIndex)
+		Call GridEvent(GridIndex)
+		
+
+		
+End Sub
+
+Sub GridEvent(GridIndex)
+	
+	DictGrid.Item(CInt(GridIndex)).Caption = CurrentPlayer
+				If CheckWinner <> NoWinnerYet Then
+			If CheckWinner = Player1 Then
+				MsgBox "Player 1: " & Player1Ident & " wins!"
+				Reset(0)
+				Exit Sub
+			Else
+				MsgBox "Player 2: " & Player2Ident & " wins!"		
+				Reset(0)
+				Exit Sub
+			End If
+		End If
+		If CurrentPlayer = Player1 Then
+			CurrentPlayer = Player2
+		Else 
+			CurrentPlayer = Player1
+		End If
+		TurnsTaken = TurnsTaken + 1
+		
+		If (TurnsTaken = 9) Then
+			MsgBox "No player one, this is a draw."
+		End IF
+End Sub
+
+Sub RemoteGridEvent(GridIndex)
+	If CurrentPlayer <> Left(Opponent,1) Then
+		AddChat vbYellow, "[TTT] Your opponent tried to cheat. This may affect the game if your opponent's board is altered."
+		Exit Sub
+	End If
+	For x = 0 to 8
+			DictGrid.Item(x).Enabled = 1 ' true
+	Next
+	Call GridEvent(CInt(GridIndex))
+	
+End Sub
+
+Sub tictactoe_grid0_Click()
+   Call LocalGridEvent(0)
+End Sub
+
+Sub tictactoe_grid1_Click()
+   Call LocalGridEvent(1)
+End Sub
+
+Sub tictactoe_grid2_Click()
+   Call LocalGridEvent(2)
+End Sub
+
+Sub tictactoe_grid3_Click()
+   Call LocalGridEvent(3)
+End Sub
+
+Sub tictactoe_grid4_Click()
+   Call LocalGridEvent(4)
+End Sub
+
+Sub tictactoe_grid5_Click()
+   Call LocalGridEvent(5)
+End Sub
+
+Sub tictactoe_grid6_Click()
+   Call LocalGridEvent(6)
+End Sub
+
+Sub tictactoe_grid7_Click()
+   Call LocalGridEvent(7)
+End Sub
+
+Sub tictactoe_grid8_Click()
+	Call LocalGridEvent(8)
+End Sub

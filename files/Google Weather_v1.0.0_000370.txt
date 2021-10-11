@@ -1,0 +1,132 @@
+Script("Name") = "Google Weather"
+Script("Author") = "oblivious"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 0
+
+Private oHTTP
+
+
+Sub Event_Load()
+Set oHTTP = CreateObject("MSXML2.XMLHTTP.6.0")
+CreateScriptCommands
+End Sub
+
+Sub GetWeather()
+
+	On Error Resume Next
+	If (GetSettingsEntry("city") = vbNullString) Or (GetSettingsEntry("country") = vbNullString) Then
+		AddQ "Set the city and country first, please."
+	End If
+	'// Create our post information
+	
+    If (GetSettingsEntry("temp")="a") Then
+		strURL = StringFormat("http://www.google.com/m?source=mobileproducts&dc=gorganic&q=weather+{0}+{1})", _ 
+	GetSettingsEntry("city"), GetSettingsEntry("country") )
+	
+	Else
+	
+		strURL = StringFormat("http://www.google.com.au/m?source=mobileproducts&dc=gorganic&q=weather+{0}+{1})", _ 
+	GetSettingsEntry("city"), GetSettingsEntry("country") )
+	End If
+
+
+	'// Send the POST request
+	
+	Call oHTTP.Open("GET",strURL, False)
+	Call oHTTP.setRequestHeader("User-agent", "Mozilla/5.0 (Windows; U; Windows NT 6.0; en-GB; rv:1.9.1.7) Gecko/20091221 Firefox/3.5.7 (.NET CLR 3.5.30729) ")	
+	Call oHTTP.Send()
+	
+	
+	strHTML = oHTTP.ResponseText
+	t1 = Split(strHTML, "Weather for")(1)
+    s1 = Replace(Left(t1, InStr(t1, "<") - 1), "&deg;", "°") 'temp
+	pos1 = InStr(t1, "<span>")
+	pos2 = InStr(pos1+1, t1, "<")
+    s2 = Mid(t1, pos1+6, pos2-pos1-6) 'description	
+	t2 = Split(t1, "alt=")
+	s4 = Mid(t2(1), InStr(t2(1), "/") + 9, InStr(t2(1), "</span>")  -1 -(InStr(t2(1), "/") + 9))
+	s5 = Mid(t2(1), 1, InStr(t2(1), "/") - 1)
+	
+	s6 = Mid(t2(2), InStr(t2(2), "/") + 9, InStr(t2(2), "</span>")  -1 -(InStr(t2(2), "/") + 9) )
+
+	s7 = Mid(t2(2), 1, InStr(t2(2), "/") - 1)
+	
+	s8 = Mid(t2(3), InStr(t2(3), "/") + 9, InStr(t2(3), "</span>")  -1 -(InStr(t2(3), "/") + 9))
+
+	s9 = Mid(t2(3), 1, InStr(t2(3), "/") - 1)
+	
+	s10 = Mid(t2(4), InStr(t2(4), "/") + 9, InStr(t2(4), "</span>")  -1 -(InStr(t2(4), "/") + 9))
+
+	s11 = Mid(t2(4), 1, InStr(t2(4), "/") - 1)
+	
+	
+	strWeather = StringFormat("{0}, {1}. Forecast: {2}, {3}. {4}, {5}. {6}, {7}. {8}, {9}.", s1, s2, s4, s5, s6, s7, s8, s9, s10, s11)
+	
+	AddQ strWeather
+	
+	
+	
+End Sub
+
+
+Sub CreateScriptCommands()
+	Dim Command, Parameter
+	
+	Set Command = OpenCommand("gweather")
+    If Command Is Nothing Then
+        '// It does not, lets create the command
+        Set Command = CreateCommand("gweather")
+        With Command
+            '// set a command description
+            .Description = "Finds the weather of a particular city using Google."
+            .RequiredRank = 40
+            
+            
+            Set Parameter = .NewParameter("Location", False, "String")
+            .Parameters.Add Parameter
+            With Parameter
+                .Description = "The sub command. There are three formats, " & vbNewLine & "/gweather <city>, <country>: sets the city and country to look for and looks." & vbNewLine & "/gweather F: Makes it give readings in Fahrenheit." & vbNewLine & "/gweather C: Makes it give readings in Celcius (default)." & vbNewLine & "/gweather: Reports the last set city and country."
+                
+                
+            End With
+         
+            '// save the command
+            .Save
+        End With
+    End If
+
+End Sub
+
+
+Sub Event_Command(cmd)
+
+	
+
+	Select Case LCase(cmd.Name)
+		Case "gweather"
+			If cmd.IsValid Then
+			
+				If (LCase(cmd.Argument("Location")) = "f") Then 
+					WriteSettingsEntry "temp", "a"
+					Exit Sub
+				End If
+				If (LCase(cmd.Argument("Location")) = "c") Then 
+					WriteSettingsEntry "temp", "j"
+					Exit Sub
+				End If
+				WriteSettingsEntry "city" , Replace(Left(cmd.Argument("Location"), InStr(cmd.Argument("Location"), "," ) - 1 ), " ", "+")
+				WriteSettingsEntry "country", Replace(Mid(cmd.Argument("Location"), InStr(cmd.Argument("Location"), "," ) + 2 ), " ", "+")
+				
+				Call GetWeather()
+			Else
+				If (GetSettingsEntry("city") = vbNullString) Then
+					AddQ "Command usage is /gweather <city>, <country>. If you have already entered a city and country, you can just type /gweather. /gweather repeats the latest request."
+				Else
+					GetWeather()
+				End If
+			End if
+			
+	End Select
+
+End Sub

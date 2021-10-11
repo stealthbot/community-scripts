@@ -1,0 +1,215 @@
+Option Explicit
+
+Script("Name")     = "Dynamic-Friends"
+Script("Author")   = "AwaKening"
+Script("Major")    = 1
+Script("Minor")    = 1
+Script("Revision") = 5
+Script("Description") = "Puts online clan members on friend list"
+
+
+' UPDATES
+' ~~~~~~~
+' 1.1.5 updated 06/18/2012
+'   - Added a 30 second wait for DFL upon bnet connection to avoid flooding
+' 1.1.4 updated 02/08/2011
+'   - Added a setting for safeQueue (Changes your botvars.queue values)
+' 1.1.3 updated 12/03/2010
+'   - Fixed users not being added/removed due to logging on then off very quickly
+'     (accomplished by cycling the queue to look for /fadd and /frem)
+' 1.1.2 updated 11/22/2010
+'   - Member leaving clan will now be removed from friends
+' 1.1.1 updated 11/08/2010
+'   - Fixed an issue with users being removed twice on reload
+'   - Fixed an error this script could cause in sharedq
+'   - Initial connect now uses channeljoin since the friend object wasn't updated
+'   - Added friendCount vars to track Friends.Count more accurately
+' 1.1.0 updated 11/07/2010
+'   - Fixed an issue with friends on script reload
+'   - Added a check to remove nonclan friends
+'   - Added a setting for list of people never to add
+
+
+Private overflow     '// Collection of users that won't fit on friend list
+Private loggedOn     '// Boolean to track initial logon
+Private friendCount  '// Integer to tracks Friends.Count
+
+Sub Event_Load()
+        Call CreateSettings()
+        If isTrue("safeQueue") Then
+                Call useSafeQueue()
+        End If
+
+        Set overflow = CreateObject("Scripting.Dictionary")
+        overflow.CompareMode = 1
+End Sub
+
+Sub Event_LoggedOn(Username, Product)
+        loggedOn = True
+        AddChat color.slateblue, "Dynamic-Friends will begin updating in about 30 seconds"
+End Sub
+
+' Fires every 30 seconds
+' Wait 30 seconds upon connection to load 
+Sub Event_ClanMOTD(Message)
+        If loggedOn Then
+                friendCount = Friends.Count
+
+                Call checkFriends()
+                Call checkClan()
+
+                loggedOn    = False
+        End If
+End Sub
+
+Sub Event_ClanMemberUpdate(Username, Rank, Online)
+        If Not(loggedOn) Then
+                friendCount = Friends.Count
+                Call statusUpdate(Username, CBool(Online))
+        End If
+End Sub
+
+Sub Event_ClanMemberLeaves(Username)
+        If Not(loggedOn) Then
+                Call statusUpdate(Username, False)
+        End If
+End Sub
+
+Private Sub checkFriends()
+        Dim user
+
+        For Each user in Friends
+                If (Clan.GetUserIndex(user.Name)=0) Then
+                        friendCount = friendCount-1
+
+                        Command myUsername, "/f r " & user.Name, True
+                End If
+        Next
+End Sub
+
+Private Sub checkClan()
+        Dim user
+
+        For Each user in Clan.Members
+                Call statusUpdate(user.Name, user.IsOnline)
+        Next
+End Sub
+
+Private Sub statusUpdate(Username, Online)
+        Dim i
+
+        '// see if a command is already queued for this User and remove it
+        '// count backwards because if it's removed, the next one would be skipped
+        For i=(Queue.Count-1) to 0 STEP -1
+                Select Case Queue.Item(i).Message
+                Case "/f a "&Username, "/f r "&Username
+                        Queue.RemoveItem(i)
+                End Select
+        Next
+
+        If Not(Online) Then
+                If overflow.Exists(Username) Then overflow.Remove Username
+
+                If isFriend(Username) Then
+                        friendCount = friendCount-1
+
+                        Command myUsername, "/f r " &Username, True
+                        Call addFromOverflow()
+                End If
+        ElseIf Not(Username=myUsername) Then
+                If overflow.Exists(Username) Then overflow.Remove Username
+
+                If (Not(isFriend(Username)) And Not(isIgnored(Username))) Then
+
+                        If (friendCount < 25) Then
+                                friendCount = friendCount+1
+
+                                Command myUsername, "/f a " &Username, True
+                        Else
+                                overflow.Add Username, overflow.Count+1
+                        End If
+                End If
+        End If
+End Sub
+
+Private Sub addFromOverflow()
+        If overflow.Count = 0 Then Exit Sub
+
+        Dim user
+
+        For Each user in overflow.Keys
+                friendCount = friendCount+1
+
+                Command myUsername, "/f a " &user, True
+                overflow.Remove user
+
+                Exit For
+        Next
+End Sub
+
+Private Function isFriend(Username)
+        Dim user
+
+        For Each user in Friends
+                If LCase(Username) = LCase(user.Name) Then
+                        isFriend = True
+                        Exit For
+                End If
+        Next
+End Function
+
+Private Function isIgnored(Username)
+        Dim user, users
+
+        users = GetSettingsEntry("ignored")
+        If Len(users)=0 Then Exit Function
+
+        users = Split(Trim(Replace(users, ",", "")))
+
+        For Each user in users
+                If LCase(Username) = LCase(user) Then
+                        isIgnored = True
+                        Exit For
+                End If
+        Next
+End Function
+
+Private Function isTrue(Setting)
+        Select Case UCase(GetSettingsEntry(Setting))
+                Case "0", "N", "NO", "F", "FALSE", "": isTrue = False
+                Case Else                            : isTrue = True
+        End Select
+End Function
+
+Private Sub useSafeQueue()
+        BotVars.QueueStartingCredits=170
+        BotVars.QueueThreshholdBytes=200
+        BotVars.QueueCostPerByte=8
+        BotVars.QueueCostPerPacket=250
+        BotVars.QueueCostPerByteOverThreshhold=9
+        BotVars.QueueMaxCredits=600
+        BotVars.QueueCreditRate=7
+End Sub
+
+Private Sub CreateSettings()
+        Dim version, myversion
+
+        version = Script("Major")&"."&Script("Minor")&"."&Script("Revision")
+        myversion = GetSettingsEntry("version")
+
+        If myversion = version Then Exit Sub
+
+        AddChat color.Plum, "Dynamic-Friends updated to version " &version
+        WriteSettingsEntry "version", version
+
+        If Len(GetSettingsEntry("safeQueue"))>0 Then Exit Sub
+
+        WriteSettingsEntry "safeQueue (info)", "Use known safe queue values to prevent flooding" & _
+        " (You must Reload Scripts if changing this value)"
+        WriteSettingsEntry "safeQueue", "Y"
+
+        If Len(myversion)>0 Then Exit Sub
+
+        WriteSettingsEntry "ignored (info)", "List users in clan that you don't want added"
+        WriteSettingsEntry "ignored", ""
+End Sub

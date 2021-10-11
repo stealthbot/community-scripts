@@ -1,0 +1,101 @@
+Option Explicit
+
+Script("Name") = "ConvertAccess"
+Script("Author") = "AwaKening"
+Script("Major") = 1
+Script("Minor") = 0
+Script("Revision") = 20090917
+Script("FileName") = "ConvertAccess.txt"
+Script("Commands") = "convertaccess (internal usage only)"
+Script("Notes") = "Converts Stealth 2.6 access settings to the new 2.7 database"
+
+
+Private Const ForReading = 1
+Private cmd_Disable
+
+Sub Event_Load()
+	If Len(GetSettingsEntry("DisableCmd"))=0 Then
+		Dim max
+		max = InputBox("Any command this access or higher will be disabled during" &_
+		      " the conversion process.", "ConvertAccess by AwaKening", "1000")
+
+		WriteSettingsEntry "DisableCmd", CStr(max)
+		WriteSettingsEntry "DisableCmd (info)", "Anything set to this number"&_
+		" or higher will result in the command being disabled completely"
+
+		AddChat 15612594, "ConvertAccess Script Loaded!"
+		AddChat 13447834, "   /convertaccess to transfer your access.ini settings"
+		AddChat 9118312, "   NOTE: Anything set to " &max& " or higher will " &_
+		                      "result in the command being disabled"
+		AddChat 9118312, "   The setting can be changed in scripts.ini"
+	End If
+
+	cmd_Disable = CInt(GetSettingsEntry("DisableCmd"))
+End Sub
+
+Sub Event_PressedEnter(Text)
+	If LCase(Text) <> "/convertaccess" Then Exit Sub
+
+	Dim File, objFSO, line, lines, cmd, rank
+
+	VetoThisMessage
+
+	AddChat color.Yellow, "CONVERTING ACCESS, please be patient.."
+	AddChat color.Yellow, "	-Be Sure to click (Continue) if prompted."
+
+	Set objFSO = CreateObject("Scripting.FileSystemObject")
+	Set File = objFSO.OpenTextFile(BotPath & "access.ini", 1, True)
+	lines = Split(File.ReadAll, vbCrlf)
+	File.Close
+
+	For Each line in Lines
+		If InStr(line, "=")>0 Then
+			cmd = Split(line, "=")(0)
+			rank = Split(line, "=")(1)
+			Call AccessUpdate(cmd, rank)
+		End If
+	Next
+
+	Addchat color.Yellow, "Successfully updated Command Access Levels!"
+
+	Set File = Nothing
+	Set objFSO = Nothing
+End Sub
+
+Private Sub AccessUpdate(command, rank)
+	Dim cmd
+	Set cmd = SSC.OpenCommand(command, vbNullString)
+	If cmd Is Nothing Then
+		Addchat color.Red, command& " could not be found in commands.xml"
+		Exit Sub
+	End If
+
+	If IsNumeric(rank) Then
+		rank = cInt(rank)
+		If rank>=cmd_Disable AND cmd.IsEnabled Then
+			cmd.IsEnabled = False
+			AddChat color.Orange, command& " Disabled"
+		ElseIf cmd.RequiredRank<>rank AND rank<cmd_Disable Then
+			If rank>200 Then rank = 200
+			If cmd.RequiredRank=rank Then
+				AddChat color.Green, "No Change:  " &command
+			Else
+				cmd.IsEnabled = True
+				cmd.RequiredRank = rank
+				Addchat color.LightBlue, "Changed Access: " & command & " = " & rank
+			End If
+		Else
+			AddChat color.Green, "No Change:  " &command
+		End If
+	Else
+		rank = UCase(rank)
+		If UCase(cmd.RequiredFlag) <> rank Then
+			cmd.RequiredFlag = rank
+			Addchat color.Blue, "Changed Flag: " & command & " = " & rank
+		Else
+			AddChat color.Green, "No Change:  " &command
+		End If
+	End If
+	cmd.Save
+	Set cmd = Nothing
+End Sub

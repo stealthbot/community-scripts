@@ -1,0 +1,1755 @@
+Option Explicit
+Script("Name") = "recruit"
+Script("Author") = "The-Black-Ninja"
+Script("Major") = 1
+Script("Minor") = 98
+Script("Revision") = 1
+Script("Description") = "Recruit script: Recruit potential members in a variety of methods."
+Script("UpdateLocation") = vbNullString
+Script("SHelp") = vbNullString
+
+'// Change Log
+'// ** Version 1.98
+'//  --> Fixed minor error with the apply sub. Thanks arms
+'//
+'// ** Version 1.97R1
+'//  --> Fixed error with recCheckLevel and many other issues. Thanks zar
+'//
+'// ** Version 1.92 R1
+'//  --> Fixed error with setting wait time for users who just used the apply command. Thanks werewolf100
+'//  --> Fixed error when auto-inviting users to the clan inside the apply_cmd sub. Thanks Pimp8426
+'//
+'// ** Version 1.8 R1
+'//  --> Changed how script whispers number of recruits to designated users
+'//
+'// ** Version 1.5 R1 - Beta test with ladder user
+'//  --> Declared some previously undelclared variables - Thanks Zoltarian
+'//  --> Fixed issue with users being able to use the apply command while in their waiting period - Thanks Zoltarian
+'//  --> Fixed issue with the tag not being chacked
+'//  --> Reduced the length of the rejection message to save space
+
+
+Private recFSO  '// FileSystemObject
+Private recPath  '// Path where the recruit_settings.ini file is stored
+Private recRequests  '// Dictionary to hold the requests to bnet
+Private recLastRequest  '//  Time and Date (Now)  since the last apply command was used - to prevent spam
+
+
+'// Event Subs
+
+Sub Event_Load()
+
+  '// Define variables
+   recPath = BotPath & "scripts\recruit_settings.ini"  '// Path where settings are stored
+
+   Set recFSO = CreateObject("Scripting.FileSystemObject")  '// FSO
+   
+   Set recRequests = CreateObject("Scripting.Dictionary")  '// Holds the users that are applying
+   
+   recLastRequest = Now -1  '// Set the date to yesturday as a benchmark
+   
+  '// Check if the script is being run for the first time
+   If NOT recFSO.FileExists(recPath) Then
+      AddChat 16759296, "Recruit Script:. ", 10682112, "Creating settings file for first time use at location: ", 7077375, recPath
+      writeSetting "firstrun", 0, 0, 0
+   End If
+   
+  '// Initialize randomization
+   Randomize
+End Sub
+
+
+Sub Event_Userjoins(Username, Flags, Message, Ping, Product, Level, OriginalStatString, Banned)
+
+   Dim recruits, recruitFlag, flagArr, iniVal, iniArr, cCount, tFlag, dbFlags, user, mem
+
+   If IsBeingIgnored(Username) Then Exit Sub
+   
+  '// Check if there are recruits
+   recruits = readSetting("settings", "recruit_list")
+   If recruits <> "n/a" Then
+     '// Check if anyone can recruit
+     If Flags = 2 Then
+         If readSetting("settings", "recruiter_Shams") Then
+            AddQ "/w " & Username & " There are " & Ubound(Split(recruits, "*"))+1 & " recruit(s) on the waiting list. Type " & BotVars.Trigger & "recRead to view their names."
+         End If
+      Else
+         recruitFlag = readSetting("settings", "recruiter_Flag")
+         If recruitFlag <> "n/a" Then
+            dbFlags = GetDBEntry(Username).Flags
+            If InStr(recruitFlag, ",") > 0 Then
+               flagArr = Split(recruitFlag, ",")
+               For Each tFlag In flagArr
+                  If InStr(dbFlags, Ucase(tFlag)) > 0 Then
+                     AddQ "/w " & Username & " There are " & Ubound(Split(recruits, "*"))+1 & " recruit(s) on the waiting list. Type " & BotVars.Trigger & "recRead to view their names."
+                     Exit For
+                  End If
+               Next
+            Else
+               If InStr(dbFlags, Ucase(recruitFlag)) > 0 Then
+                  AddQ "/w " & Username & " There are " & Ubound(Split(recruits, "*"))+1 & " recruit(s) on the waiting list. Type " & BotVars.Trigger & "recRead to view their names."
+               End If               
+            End If
+         End If
+      End If
+   End If
+   
+  '// Check if we need to invite any users automatically
+   If readSetting("settings", "cj_invite") Then
+      iniVal = readSetting("settings", "cj_invite_users")
+      If iniVal <> "n/a" Then
+         iniArr = Split(iniVal, "*")
+         For Each user In iniArr
+            If Lcase(user) = Lcase(Username) Then
+               If GetInternalDataByUsername(BotVars.Username, 1) = 2 Then
+                 '// Check if the clan is full first, before sending the invite request to bnet. This will save some queue/packet space
+                  If Clan.Members.Count < 100 Then  '// Clan isn't full
+                    '// Add a cookie to the dictionary so we can use packets to determine if they accepted the invite or not
+                     recRequests.Item(GetNewCookie) = Username
+                    '// Initiate the invite
+                     Command BotVars.Username, "/invite " & Username, True
+                  End If
+               End If
+            End If
+         Next
+      End If
+   End If     
+End Sub
+
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)  '// Parses the packets recieved from BNet
+
+  '// For the love of God, if you don't know what a packet is or how to parse packets, don't alter any of this.
+  '// BUT!! feel free to addchat the variables to see what the do :)
+
+   Dim pak, i, req, subID, cookie, iconID, records, user, realm, prod, text, raceRecords
+   Dim wins, loss, totalL, totalW, winP, race, totP, sByte, lType, level, xpd, xp, rank
+
+   If Protocol = "BNCS" Then
+      Select Case ID 
+         Case &H44
+            Set pak = DataBufferEx()
+            pak.Data = Data
+            pak.position = 4         
+            subID = pak.GetByte
+            cookie = pak.GetDWORD                       
+            iconID = pak.GetRaw(4)
+            records = pak.GetByte
+            
+            If NOT recRequests.Exists(cookie) Then Exit Sub
+            
+            user = recRequests.Item(cookie)(0)
+            realm = recRequests.Item(cookie)(1)
+            prod = recRequests.Item(cookie)(2)         
+            
+            For i = 0 To records -1
+               lType = pak.GetDWord
+               wins = pak.GetWord
+               loss = pak.GetWord
+               level = pak.GetByte
+               xpd = pak.GetByte
+               xp = pak.GetWord
+               rank = pak.GetDWord
+               
+               Select Case lType
+                  Case 1413824845: lType = "Team"
+                  Case 1397705807: lType = "Solo"
+                  Case 1179009312: lType = "FFA"
+               End Select
+               
+               Select Case i
+                  Case 0: text = "Icon info [" & GetUserIcon(iconID) & "] ~~ " & lType & ": Wins [" & wins & "], Losses [" & loss & "], Level [" & level & "], Hrs. until XP decay [" & xpd & "], Experience [" & xp & "], Rank [" & rank & "]"
+                  Case Else: text = lType & ": Wins [" & wins & "], Losses [" & loss & "], Level [" & level & "], Hrs. until XP decay [" & xpd & "], Experience [" & xp & "], Rank [" & rank & "]"
+               End Select
+            Next
+            
+            text = vbNullString
+            
+            raceRecords = pak.GetByte
+            
+            totalL = 0
+            totalW = 0
+            
+            For i = 0 To raceRecords
+               Select Case raceRecords
+                  Case 6
+                     If i < 5 Then
+                        Select Case i
+                           Case 0: race = "Random"
+                           Case 1: race = "Human"
+                           Case 2: race = "Orc"
+                           Case 3: race = "Undead"
+                           Case 4: race = "Night Elf"
+                        End Select
+                        
+                        wins = pak.GetWord
+                        loss = pak.GetWord
+                        
+                        totalL = totalL + loss
+                        totalW = totalW + wins
+                        
+                        If wins = 0 Then 
+                           winP = "0"
+                        Else
+                           winP = FormatNumber(((wins/(wins+loss))*100), 2)
+                        End If
+                        
+                        text = text & race & "-W:" & wins & "-L:" & loss & "-WP:" & winP & "|"
+                     Else
+                        wins = pak.GetWord
+                        loss = pak.GetWord                     
+                     End If
+                  Case 5
+                     If i < 4 Then
+                        Select Case i
+                           Case 0: race = "Random"
+                           Case 1: race = "Human"
+                           Case 2: race = "Orc"
+                           Case 3: race = "Undead"
+                           Case 4: race = "Night Elf"
+                        End Select
+                        
+                        wins = pak.GetWord
+                        loss = pak.GetWord
+                        
+                        totalL = totalL + loss
+                        totalW = totalW + wins
+                        
+                        If wins = 0 Then 
+                           winP = "0"
+                        Else
+                           winP = FormatNumber(((wins/(wins+loss))*100), 2)
+                        End If
+                        
+                        text = text & race & "-W:" & wins & "-L:" & loss & "-WP:" & winP & "|"
+                     Else
+                        wins = pak.GetWord
+                        loss = pak.GetWord
+                     End If                  
+               End Select
+            Next
+            
+            If totalL = 0 Then
+               totP = "0"
+            Else
+               totP = FormatNumber(((totalW/(totalW+totalL))*100), 2)
+            End If
+            
+            text = text & "=TL:" & totalL & "-TW:" & totalW & "-TP:" & totP
+            
+           '// All the wins and percentages are collected. Proceed to process them all.
+            Call ProcessRequirements(user, realm, prod, text, cookie)
+         
+         Case &H77
+            Set pak = DataBufferEx()
+            pak.Data = Data
+            pak.position = 4
+            cookie = pak.GetDWord
+            sByte = pak.GetByte
+            
+            If recRequests.Exists(cookie) Then
+               Select Case sByte
+                  Case &H00  '// Accepted
+                    '// Remove from the cj_invite_users list
+                     Call writeSetting("settings", "cj_invite_users", recRequests.Item(cookie), "remArr")
+                     recRequests.Remove cookie
+                  Case &H04  '// Declined or ignored
+                  Case &H05  '// Failed to invite
+                  Case &H09  '// Clan Full
+               End Select
+            End If
+      End Select
+   End If
+End Sub
+
+
+Public Sub Event_Command(Command)  '// Detects if a command for this script is being used
+  
+   Select Case LCase(Command.Name)
+      Case "apply":               Call apply_cmd(Command, Command.Username)
+      Case "recautoinvite":       Call autoinvite_cmd(Command)
+      Case "recchecklevel":       Call checklevel_cmd(Command)
+      Case "reccheckpercent":     Call checkpercent_cmd(Command)
+      Case "reccheckracewins":    Call checkracewins_cmd(Command)    
+      Case "reccheckracepercent": Call checkracepercent_cmd(Command)   
+      Case "reccheckreqs":        Call checkreqs_cmd(Command)
+      Case "reccheckwins":        Call checkwins_cmd(Command)
+      Case "recjinvite":          Call joininvite_cmd(Command)
+      Case "recstatus":           Call status_cmd(Command)  
+      Case "recread":             Call recread_cmd(Command, Command.Username)  
+      Case "recrecruit":          Call recrecruit_cmd(Command, Command.Username)
+   End Select
+End Sub
+
+
+'// Custom Subs
+Sub ProcessRequirements(user, realm, prod, stats, cookie)  '// Checks the users stats and determins if they pass or fail
+
+   Dim fail, tempINI, iniArr, statArr, i, j, howMany, wType, sTime, tempSetting
+  
+  '// Set our fail message to nothing
+   fail = vbNullString
+   
+  '// If stuff from BNet was needed
+   If stats <> "none" Then
+     '// If levels are needed
+      If readSetting("settings", "level_req") Then
+         If CInt(Split(StrReverse(GetInternalDataByUsername(user, 5)))(0)) < CInt(readSetting("settings", "level_amount")) Then
+            fail = fail & "level, "
+         End If
+      End If   
+
+     '// If wins are needed      
+      If readSetting("settings", "win_req") Then
+         If CInt((Split(Split(stats, "TL:")(1), "-")(0))) < CInt(readSetting("settings", "win_amount")) Then fail = fail & " cumulative wins, "
+      End If
+      
+     '// If win percents are needed      
+      If readSetting("settings", "winp_req") Then
+         If FormatNumber(Split(Split(stats, "TP:")(1), "-")(0), 2) < FormatNumber((readSetting("settings", "winp_amount")), 2) Then fail = fail & "cumulative win %, "
+      End If      
+      
+     '// If race specific wins are needed      
+      If readSetting("settings", "racewin_req") Then
+         tempINI = readSetting("settings", "racewin_amount")
+        '// Multiple races are needed
+         If InStr(tempINI, "*") > 0 Then
+            iniArr = Split(tempINI, "*")
+            statArr = Split(stats, "|")
+            
+           '// Bubble loop through what the requirements are vs what the user has. Match the appropriate races
+            For i = 0 To UBound(iniArr)
+               For j = 0 To Ubound(statArr) -1
+                  If Split(Lcase(iniArr(i)), chr(154))(0) = Split(LCase(statArr(j)), "-")(0) Then
+                     If CInt(Split(Split(LCase(statArr(j)), "-w:")(1), "-")(0)) < CInt(Split(iniArr(i), Chr(154))(1)) Then
+                        fail = fail & "wins by race, "
+                        Exit For
+                     End If
+                  End If
+               Next
+            Next
+         Else
+           '// Only one race is needed
+            statArr = Split(stats, "|")
+            For i = 0 To Ubound(statArr)
+               If Split(Lcase(tempINI), chr(154))(0) = Split(LCase(statArr(i)), "-")(0) Then
+                  If CInt(Split(Split(LCase(statArr(i)), "-w:")(1), "-")(0)) < CInt(Split(tempINI, Chr(154))(1)) Then
+                     fail = fail & "wins by race, "
+                     Exit For
+                  End If
+               End If            
+            Next
+         End If                  
+      End If            
+      
+     '// If race specific win percentages are needed      
+      If readSetting("settings", "racewinp_req") Then
+         tempINI = readSetting("settings", "racewinp_amount")
+        '// Multiple races are needed
+         If InStr(tempINI, "*") > 0 Then
+            iniArr = Split(tempINI, "*")
+            statArr = Split(stats, "|")
+            
+           '// Bubble loop through results.
+            For i = 0 To UBound(iniArr)
+               For j = 0 To Ubound(statArr) -1
+                  If Split(Lcase(iniArr(i)), chr(154))(0) = Split(LCase(statArr(j)), "-")(0) Then
+                     If CInt(Split(Split(LCase(statArr(j)), "-w:")(1), "-")(0)) < CInt(Split(iniArr(i), Chr(154))(1)) Then
+                        fail = fail & "win % by race, "
+                        Exit For
+                     End If
+                  End If
+               Next
+            Next
+         Else
+            statArr = Split(stats, "|")
+            For i = 0 To Ubound(statArr)
+               If Split(Lcase(tempINI), chr(154))(0) = Split(LCase(statArr(i)), "-")(0) Then
+                  If CInt(Split(Split(LCase(statArr(i)), "-w:")(1), "-")(0)) < CInt(Split(tempINI, Chr(154))(1)) Then
+                     fail = fail & "win % by race, "
+                     Exit For
+                  End If
+               End If            
+            Next
+         End If                  
+      End If
+   Else
+     '// No ladders stats were needed, so check if a level was needed.
+      If readSetting("settings", "level_req") Then
+         If CInt(Split(StrReverse(GetInternalDataByUsername(user, 5)))(1)) < CInt(readSetting("settings", "level_amount")) Then
+            fail = fail & "level, "
+         End If
+      End If
+   End If
+   
+  '// Check for the tag in the name
+   If readSetting("settings", "tag_enabled") Then
+      tempINI = readSetting("settings", "tag")
+      If Left(tempINI, 1) = "*" Then
+         If Right(tempINI, 1) = "*" Then
+            '// Tag can be anywhere
+            If InStr(user, Mid(Left(tempINI, Len(tempINI)-1), 2)) < 1 Then fail = fail & """ " & Mid(Left(tempINI, Len(tempINI)-1), 2) & " "" not in name, "
+         Else
+            If Left(user, len(tempINI)-1) <> Mid(tempINI, 2) Then fail = fail & """ " & Mid(Left(tempINI, Len(tempINI)-1), 2) & " "" not in name, "
+         End If
+      Else
+         If  Right(user, len(tempINI)-1) <> Left(tempINI, len(tempINI)-1) Then fail = fail & """ " & Mid(Left(tempINI, Len(tempINI)-1), 2) & " "" not in name, "
+      End If
+   End If
+            
+      
+      
+  '// If they recieved any fail messages...
+   If (LenB(fail) > 0) Then  
+     '// Get our "cool down" time for the applicant      
+      tempSetting = readSetting("settings", "apply_delay")
+      tempINI = Right(tempSetting, 1)
+      howMany = Left(tempSetting, Len(tempSetting)-1)
+   
+      If tempINI = "m" Then tempINI = "n"
+   
+      Select Case tempINI
+         Case "s" : wType = "second"
+         Case "n" : wType = "minute"
+         Case "h" : wType = "hour"
+         Case "d" : wType = "day"
+      End Select
+      
+      sTime = DateAdd(tempINI, howMany, Now)
+      
+     '// For grammer; seconds vs second
+      If CInt(howMany) > 1 Then      
+         Addq "Application rejected due to: " & Left(fail, Len(fail) -2) & "; check the requirements."
+         Addq "You must wait " & howMany & " " & wType & "s (" & sTime & ") before applying again; apply commands will be ignored until this time."
+      Else
+         Addq "Application rejected due to: " & Left(fail, Len(fail) -2) & "; check the requirements."
+         Addq "You must wait " & howMany & " " & wType & " (" & sTime & ") before applying again; apply commands will be ignored until this time."
+      End If        
+
+     '// Write the time they need to wait until in the ini and remove the cookie from the dictionary
+      Call WriteConfigEntry("settings", user, sTime, recPath)    
+      recRequests.Remove cookie
+   Else
+     '// They passed!!
+      If readSetting("settings", "auto_invite_enabled") Then
+        '// If the bot has ops...
+         If GetInternalDataByUsername(BotVars.Username, 1) = 2 Then                         
+            Addq user & ", your application was accepted. I will attempt to invite you to clan " & readSetting("settings", "clantag") & "."         
+            Command BotVars.Username, "/invite " & user, True
+            
+           '// Set the lastRequest time to the current time for the anti flood
+            recLastRequest = Now
+         Else
+           '// It doesn't...
+            Call writeSetting("settings", "recruit_list", user, "newArr")
+            Addq user & ", your application was accepted, but I do not have the power to invite you at the moment. You will be placed on the clan " & readSetting("settings", "clantag") & "recruit waiting list instead. A Shaman or Chief will be notified."
+            recLastRequest = Now
+         End If
+      Else
+         Call writeSetting("settings", "recruit_list", user, "newArr")
+         Addq user & ", your application was accepted. You have been placed on the clan " & readSetting("settings", "clantag") & "recruit waiting list. A Shaman or Chief will be notified."
+         recLastRequest = Now         
+      End If      
+      
+     '// Remove the cookie
+      recRequests.Remove cookie
+   End If
+End Sub
+
+Private Sub apply_cmd(Command, user)  '// The apply command
+   
+   Dim iniVal, userVal, temp, a, b, i, cookie
+
+  '//  If they whisper the apply command, exit the sub.
+  '//  This is to avoid spam by people outside of the channel.
+  
+   If Command.WasWhispered Then Exit Sub
+   If (LenB(Clan.GetUser(user).Name)>0) Then Exit Sub
+   
+   If Command.IsValid Then
+      If IsBeingIgnored(user) Then Exit Sub   
+      If NOT (Lcase(GetInternalDataByUsername(user, 3)) = "war3" OR Lcase(GetInternalDataByUsername(user, 3)) = "w3xp") Then Exit Sub
+      If GetInternalDataByUsername(user, 0) <> vbNullString Then 
+         Command.Respond user & ", you must leave Clan " & GetInternalDataByUsername(user, 0) & " before applying."
+         recLastRequest = Now
+         Exit Sub
+      End If
+      If InStr(Lcase(readSetting("settings", "recruit_list")), Lcase(user)) > 0 Then
+         temp = DateDiff("s", recLastRequest, Now)
+         If temp > Int(readSetting("settings", "apply_lock")) Then        
+            Call writeSetting("settings", "ignore_list", user, "newArr")
+            Command.Respond user & ", you are already on the recruit list. Be patient. Further "" apply "" commands from you will be ignored."
+            recLastRequest = Now
+            Exit Sub
+         Else
+            Exit Sub
+         End If
+      End If
+      
+      userVal = readSetting("settings", Lcase(user))
+     '// If user has a record in the ini...
+      If userVal <> vbNullString Then
+         iniVal = readSetting("settings", "apply_delay")
+        '// If they're allowed to use the apply command again...
+         If DateDiff("s", Now, Split(userVal, "/")(1) & "/" & Split(userVal, "/")(0) & "/" & Split(userVal, "/", 3)(2)) <= 0 Then
+           '// Anti-flood ; bot will ignore .apply commands for 10 seconds after the last .apply command was used
+            temp = DateDiff("s", recLastRequest, Now)
+            If temp > Int(readSetting("settings", "apply_lock")) Then  
+               If readSetting("settings", "req_check_enabled") Then
+                 '// Requirements are needed
+                  If (readSetting("settings", "win_req") OR readSetting("settings", "winp_req") OR readSetting("settings", "racewin_req") OR readSetting("settings", "racewinp_req")) Then
+                    '// Stats are needed from BNet
+                     If Ubound(recRequests.Keys) > -1 Then
+                        a = recRequests.Keys
+                        b = recRequests.Items
+                        
+                        For i = 0 To UBound(a)
+                           If LCase(a(i)(0)) = Lcase(user) Then Exit Sub
+                        Next
+                        'Command.Respond user & ", I am checking your stats for clan " & readSetting("settings", "clantag") & ". Remain in the channel."
+                        Call requestInfo(user)
+                     Else
+                        'Command.Respond user & ", I am checking your stats for clan " & readSetting("settings", "clantag") & ". Remain in the channel."                  
+                        Call requestInfo(user)
+                     End If
+                  Else
+                    '// No stats are needed, but reqs are still enabled, so check if a level is needed since the statstring can provide it
+                     If readSetting("settings", "level_req") Then
+                        'Command.Respond user & ", I am checking your stats for clan " & readSetting("settings", "clantag") & ". Remain in the channel." 
+                        cookie = GetNewCookie
+                        recRequests.Item(cookie) = user
+                        Call ProcessRequirements(user, readSetting("settings", "realm"), GetInternalDataByUsername(user, 3), "none", cookie, Command)
+                     End If
+                  End If
+               Else
+                 '// No requirements are needed
+                 If readSetting("settings", "auto_invite_enabled") Then
+                     If GetInternalDataByUsername(BotVars.Username, 1) = 2 Then                         
+                        InviteUser user
+                        recLastRequest = Now
+                     Else
+                        Call writeSetting("settings", "recruit_list", user, "newArr")
+                        Command.Respond "Sorry, " & user & ", I do not have the power to invite you at the moment. You will be placed on the clan " & readSetting("settings", "clantag") & "recruit waiting list instead. A Shaman or Chief will be notified."
+                        recLastRequest = Now
+                     End If
+                  Else
+                     Call writeSetting("settings", "recruit_list", user, "newArr")
+                     Command.Respond user & ", you have been placed on the clan " & readSetting("settings", "clantag") & "recruit waiting list. A Shaman or Chief will be notified."
+                     recLastRequest = Now         
+                  End If
+               End If
+            End If
+         End If
+      Else
+         temp = DateDiff("s", recLastRequest, Now)
+         If temp > Int(readSetting("settings", "apply_lock")) Then  
+            If readSetting("settings", "req_check_enabled") Then
+               If (readSetting("settings", "win_req") OR readSetting("settings", "winp_req") OR readSetting("settings", "racewin_req") OR readSetting("settings", "racewinp_req")) Then            
+                  If Ubound(recRequests.Keys) > -1 Then                 
+                     a = recRequests.Keys
+                     b = recRequests.Items
+                     
+                     For i = 0 To UBound(a)
+                        If LCase(b(i)(0)) = Lcase(user) Then Exit Sub
+                     Next
+                     'Command.Respond user & ", I am checking your stats for clan " & readSetting("settings", "clantag") & ", please emain in the channel."                  
+                     recLastRequest = Now
+                     Call requestInfo(user)
+                  Else
+                     'Command.Respond user & ", I am checking your stats for clan " & readSetting("settings", "clantag") & ". Remain in the channel."               
+                     recLastRequest = Now
+                     Call requestInfo(user)
+                  End If      
+               Else
+                  If readSetting("settings", "level_req") Then
+                     'Command.Respond user & ", I am checking your stats for clan " & readSetting("settings", "clantag") & ". Remain in the channel." 
+                     cookie = GetNewCookie
+                     recRequests.Item(cookie) = user
+                     Call ProcessRequirements(user, readSetting("settings", "realm"), GetInternalDataByUsername(user, 3), "none", cookie, Command)
+                  End If
+               End If                  
+            Else
+               If readSetting("settings", "auto_invite_enabled") Then
+                  If GetInternalDataByUsername(BotVars.Username, 1) = 2 Then                         
+                     InviteUser user
+                     recLastRequest = Now
+                  Else
+                     Call writeSetting("settings", "recruit_list", user, "newArr")
+                     Command.Respond "Sorry, " & user & ", I do not have the power to invite you at the moment. You will be placed on the clan " & readSetting("settings", "clantag") & " recruit waiting list instead. A Shaman or Chief will be notified."
+                     recLastRequest = Now
+                  End If
+               Else
+                  Call writeSetting("settings", "recruit_list", user, "newArr")
+                  Command.Respond user & ", you have been placed on the clan " & readSetting("settings", "clantag") & " recruit waiting list. A Shaman or Chief will be notified."
+                  recLastRequest = Now         
+               End If
+            End If
+         End If         
+      End If
+   End If
+End Sub
+
+Private Sub autoinvite_cmd(Command)  '// The recAutoInvite command
+
+  '// If proper syntax
+   If Command.IsValid Then
+     '// Has enough access
+      If Command.HasAccess Then
+        '// Get command arguments
+         Select Case Split(Lcase(Command.Args))(0)
+            Case "on" 
+               writeSetting "settings", "auto_invite_enabled", True, "alterArr"
+               Command.Respond "Recruit Script::  Auto-invite to clan enabled."
+            Case "off"
+               writeSetting "settings", "auto_invite_enabled", False, "alterArr"                  
+               Command.Respond "Recruit Script::  Auto-invite to clan disabled."                                           
+         End Select
+      End If
+   End If
+End Sub
+
+Private Sub checklevel_cmd(Command)  '// The recCheckLevel command
+
+   Dim cmdArgs
+   
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         cmdArgs = Split(Lcase(Command.Args))(0)
+         Select Case cmdArgs
+            Case "on"
+               writeSetting "settings", "level_req", True, "alterArr"
+               Command.Respond "Recruit Script::  Checking of levels enabled."                     
+            Case "off"
+               writeSetting "settings", "level_req", False, "alterArr"
+               Command.Respond "Recruit Script::  Checking of levels disabled."                            
+            Case Else
+               If IsNumeric(cmdArgs) Then
+                  writeSetting "settings", "level_amount", cmdArgs, "alterArr"
+                  Command.Respond "Recruit Script::  Required level set to " & cmdArgs
+               End If
+         End Select
+      End If
+   End If
+End Sub
+
+Private Sub checkpercent_cmd(Command)  '// The recCheckPercent command
+
+   Dim cmdArgs
+   
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         cmdArgs = Split(Lcase(Command.Args))(0)
+         Select Case cmdArgs
+            Case "on"
+               writeSetting "settings", "winp_req", True, "alterArr"
+               Command.Respond "Recruit Script::  Checking of win % enabled."                     
+            Case "off"
+               writeSetting "settings", "winp_req", False, "alterArr"
+               Command.Respond "Recruit Script::  Checking of win % disabled."                            
+            Case Else
+               If IsNumeric(cmdArgs) Then
+                  writeSetting "settings", "winp_amount", FormatNumber(cmdArgs, 2), "alterArr"
+                  Command.Respond "Recruit Script::  Required win % set to " & FormatNumber(cmdArgs, 2) & "%"
+               End If
+         End Select
+      End If
+   End If      
+End Sub
+
+Private Sub checkracewins_cmd(Command)  '// The recCheckRaceWins command
+
+   Dim cmdArgs, iniVal
+   
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         cmdArgs = Split(Lcase(Command.Args))
+         Select Case cmdArgs(0)
+            Case "on"
+               writeSetting "settings", "racewin_req", True, "alterArr"
+               Command.Respond "Recruit Script::  Checking of race specific wins enabled."                     
+            Case "off"
+               writeSetting "settings", "racewin_req", False, "alterArr"
+               Command.Respond "Recruit Script::  Checking of race specific wins disabled."
+            Case "add"
+              '// If they are adding the proper race
+               If cmdArgs(1) = "nightelf" OR cmdArgs(1) = "orc" OR cmdArgs(1) = "human" OR cmdArgs(1) = "random" OR cmdArgs(1) = "undead" Then
+                  Select Case Ubound(cmdArgs)
+                     Case 1
+                       '// User didn't specify a # to start off with
+                        iniVal = readSetting("settings", "racewin_amount")
+                       '// They're trying to add a race that is already being checked
+                        If InStr(iniVal, cmdArgs(1)) Then
+                           Command.Respond "Recruit Script::  " & cmdArgs(1) & " wins are already being checked."
+                        Else
+                       '// They're adding a new race, but didn't specify a #, default to 0
+                           writeSetting "settings", "racewin_amount", cmdArgs(1) & chr(154) & 0, "newArr"
+                           Command.Respond "Recruit Script::  Race " & cmdArgs(1) & " is being checked for 0 wins."
+                        End If
+                     Case 2
+                       '// User specified a number
+                        iniVal = readSetting("settings", "racewin_amount")
+                        If InStr(iniVal, cmdArgs(1)) Then
+                          '// They've tried to add a race that was already being checked, but since they added a number, set the race to the new number
+                           writeSetting "settings", "racewin_amount", cmdArgs(1) & chr(154) & cmdArgs(2), "alterArr"
+                           Command.Respond "Recruit Script::  " & cmdArgs(1) & " wins are already being checked. New value: " & cmdArgs(2)
+                        Else
+                          '// They've added a new race
+                           writeSetting "settings", "racewin_amount", cmdArgs(1) & chr(154) & cmdArgs(2), "newArr"
+                           Command.Respond "Recruit Script::  Race " & cmdArgs(1) & " is being checked for " & cmdArgs(2) & " wins."
+                        End If
+                  End Select
+               End If
+            Case "rem"
+               If cmdArgs(1) = "nightelf" OR cmdArgs(1) = "orc" OR cmdArgs(1) = "human" OR cmdArgs(1) = "random" OR cmdArgs(1) = "undead" Then                  
+                  iniVal = readSetting("settings", "racewin_amount")
+                  If Ubound(cmdArgs) > 0 Then
+                     If InStr(iniVal, cmdArgs(1)) > 0 Then
+                        writeSetting "settings", "racewin_amount", cmdArgs(1), "remArr"
+                        Command.Respond "Recruit Script::  Race " & cmdArgs(1) & " will no longer be checked for wins."                     
+                     End If
+                  End If
+               End If
+            Case Else
+              '// Check if they're specifying a race along with the number
+               If Ubound(cmdArgs) > 0 Then
+                  If cmdArgs(1) = "nightelf" OR cmdArgs(1) = "orc" OR cmdArgs(1) = "human" OR cmdArgs(1) = "random" OR cmdArgs(1) = "undead" Then       
+                     iniVal = readSetting("settings", "racewinp_amount")                           
+                    '// Check if the race is in the INI
+                     If InStr(iniVal, cmdArgs(1)) > 0 Then
+                       '// Check if they're actually specifing a number
+                        If IsNumeric(cmdArgs(0)) Then
+                          '// Set the number to the race
+                           writeSetting "settings", "racewin_amount", cmdArgs(1) & chr(154) & cmdArgs(0), "alterArr"
+                           Command.Respond "Recruit Script::  " & cmdArgs(1) & " wins set to " & cmdArgs(0)
+                        End If
+                     Else
+                       '// The race the specified isn't being checked
+                        Command.Respond "Recruit Script::  " & cmdArgs(1) & " is not listed as being checked."
+                     End If                              
+                  End If
+               End If
+         End Select
+      End If
+   End If      
+End Sub
+
+Private Sub checkracepercent_cmd(Command)  '// The recCheckRacePercent command
+
+   Dim cmdArgs, iniVal
+   
+   If Command.IsValid Then
+      If Command.HasAccess Then       
+         cmdArgs = Split(Lcase(Command.Args))
+         Select Case cmdArgs(0)
+            Case "on"
+               writeSetting "settings", "racewinp_req", True, "alterArr"
+               Command.Respond "Recruit Script::  Checking of race specific win percentages enabled."                     
+            Case "off"
+               writeSetting "settings", "racewinp_req", False, "alterArr"
+               Command.Respond "Recruit Script::  Checking of race specific win percentages disabled."
+            Case "add"
+               If cmdArgs(1) = "nightelf" OR cmdArgs(1) = "orc" OR cmdArgs(1) = "human" OR cmdArgs(1) = "random" OR cmdArgs(1) = "undead" Then
+                  Select Case Ubound(cmdArgs)
+                     Case 1
+                        iniVal = readSetting("settings", "racewinp_amount")
+                        If InStr(iniVal, cmdArgs(1)) Then
+                           Command.Respond "Recruit Script::  " & cmdArgs(1) & " win percentages are already being checked."
+                        Else
+                           writeSetting "settings", "racewinp_amount", cmdArgs(1) & chr(154) & FormatNumber(cmdArgs(2), 2), "newArr"
+                           Command.Respond "Recruit Script::  Race " & cmdArgs(1) & " is being checked for 0 win percent."
+                        End If
+                     Case 2
+                        iniVal = readSetting("settings", "racewinp_amount")
+                        If InStr(iniVal, cmdArgs(1)) Then
+                           writeSetting "settings", "racewinp_amount", cmdArgs(1) & chr(154) & FormatNumber(cmdArgs(2), 2), "alterArr"
+                           Command.Respond "Recruit Script::  " & cmdArgs(1) & " win percentages are already being checked. New value: " & FormatNumber(cmdArgs(2), 2) & "%"
+                        Else
+                           writeSetting "settings", "racewinp_amount", cmdArgs(1) & chr(154) & FormatNumber(cmdArgs(2), 2), "newArr"
+                           Command.Respond "Recruit Script::  Race " & cmdArgs(1) & " is being checked for " & FormatNumber(cmdArgs(2), 2) & " win percent."
+                        End If
+                  End Select
+               End If
+            Case "rem"
+               If cmdArgs(1) = "nightelf" OR cmdArgs(1) = "orc" OR cmdArgs(1) = "human" OR cmdArgs(1) = "random" OR cmdArgs(1) = "undead" Then                  
+                  iniVal = readSetting("settings", "racewinp_amount")
+                  If Ubound(cmdArgs) > 0 Then
+                     If InStr(iniVal, cmdArgs(1)) > 0 Then
+                        writeSetting "settings", "racewinp_amount", cmdArgs(1), "remArr"
+                        Command.Respond "Recruit Script::  Race " & cmdArgs(1) & " will no longer be checked for win percent."                     
+                     End If
+                  End If
+               End If
+            Case Else
+               If Ubound(cmdArgs) > 0 Then
+                  If cmdArgs(1) = "nightelf" OR cmdArgs(1) = "orc" OR cmdArgs(1) = "human" OR cmdArgs(1) = "random" OR cmdArgs(1) = "undead" Then  
+                     iniVal = readSetting("settings", "racewinp_amount")                           
+                     If InStr(iniVal, cmdArgs(1)) > 0 Then                        
+                        If IsNumeric(cmdArgs(0)) Then
+                           writeSetting "settings", "racewinp_amount", cmdArgs(1) & chr(154) & FormatNumber(cmdArgs(0), 2), "alterArr"
+                           Command.Respond "Recruit Script::  " & cmdArgs(1) & " win percentages set to " & cmdArgs(0) & "%"
+                        End If
+                     Else
+                        Command.Respond "Recruit Script::  " & cmdArgs(1) & " is not listed as being checked."
+                     End If
+                  End If
+               End If
+         End Select
+      End If
+   End If         
+End Sub
+
+Private Sub checkreqs_cmd(Command)  '// The recCheckReqs command
+
+   Dim cmdArgs
+   
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         cmdArgs = Split(Lcase(Command.Args))(0)
+         Select Case cmdArgs
+            Case "on"
+               writeSetting "settings", "req_check_enabled", True, "alterArr"
+               Command.Respond "Recruit Script::  Checking of requirements enabled."
+            Case "off"
+               writeSetting "settings", "req_check_enabled", False, "alterArr"
+               Command.Respond "Recruit Script::  Checking of requirements disabled."
+         End Select
+      End If
+   End If      
+End Sub
+
+Private Sub checkwins_cmd(Command)  '// The recCheckWins command
+
+   Dim cmdArgs
+   
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         cmdArgs = Split(Lcase(Command.Args))(0)
+         Select Case cmdArgs
+            Case "on"
+               writeSetting "settings", "win_req", True, "alterArr"
+               Command.Respond "Recruit Script::  Checking of cumulative wins enabled."                     
+            Case "off"
+               writeSetting "settings", "win_req", False, "alterArr"
+               Command.Respond "Recruit Script::  Checking of cumulative wins disabled."                            
+            Case Else
+               If IsNumeric(cmdArgs) Then
+                  writeSetting "settings", "win_amount", cmdArgs, "alterArr"
+                  Command.Respond "Recruit Script::  Required cumulative wins set to " & cmdArgs
+               End If
+         End Select
+      End If
+   End If      
+End Sub
+
+Private Sub joininvite_cmd(Command)  '// The recJoinInvite command
+
+   Dim cmdArgs
+   
+   If Command.IsValid Then
+      If Command.HasAccess Then
+         Select Case Split(Lcase(Command.Args))(0)
+            Case "on" 
+               writeSetting "settings", "cj_invite", True, "alterArr"                  
+               Command.Respond "Recruit Script::  Auto-invite to clan on join enabled."
+            Case "off"
+               writeSetting "settings", "cj_invite", False, "alterArr"                      
+               Command.Respond "Recruit Script::  Auto-invite to clan on join disabled."                                
+            Case "add"
+               cmdArgs = Split(Command.Args)
+               If UBound(cmdArgs) > 0 Then 
+                  writeSetting "settings", "cj_invite_users", cmdArgs(1), "newArr"                     
+                  Command.Respond "Recruit Script::  "" " & cmdArgs(1) & " "" was added; they will be invited next time they join the channel."
+               End If
+            Case "rem"
+               cmdArgs = Split(Command.Args)                  
+               If UBound(cmdArgs) > 0 Then 
+                  writeSetting "settings", "cj_invite_users", cmdArgs(1), "remArr"                            
+                  Command.Respond "Recruit Script::  "" " & cmdArgs(1) & " "" was removed; they will no longer be invited next time they join the channel."       
+               End If
+         End Select   
+      End If
+   End If
+End Sub
+
+Private Sub status_cmd(Command)  '// The recStatus command
+
+   Dim iniVal, text, tempArr, temp, i, j, c, x, iniName, iniArr, iniTempVal, nameMatch
+
+  '// Set the initial text
+   text = "Checking for "
+   
+  '// Check the basic True/False settings
+   If readSetting("settings", "tag_enabled") Then text = text & "tag " & readSetting("settings", "tag") & " in name, "
+   If readSetting("settings", "req_check_enabled") Then 
+      If readSetting("settings", "win_req") Then text = text & readSetting("settings", "win_amount") & " Wins, "
+      If readSetting("settings", "winp_req") Then text = text & readSetting("settings", "winp_amount") & "% Overall, "                
+      If readSetting("settings", "level_req") Then text = text & "Level " & readSetting("settings", "level_amount") & ", "    
+
+     '// Create a temporary dictionary to hold races
+      Set iniArr = CreateObject("Scripting.Dictionary")
+      iniArr.CompareMode = 1
+
+     '// Race specific wins are being checked
+      If readSetting("settings", "racewin_req") Then 
+         iniVal = readSetting("settings", "racewin_amount")
+        '// If the race win amount has a race in there
+         If InStr(iniVal, "n/a") < 1 Then
+           '// If multiple races...
+            If InStr(iniVal, "*") > 0 Then
+               tempArr = Split(iniVal, "*")
+              '// Loop through the races in the INI
+               For i = 0 To Ubound(tempArr)
+                 '// Split the name from the array item
+                  iniName = Split(tempArr(i), chr(154))(0)
+                  
+                  '// If checking for a win % for that race
+                  If readSetting("settings", "racewinp_req") Then
+                     iniTempVal = readSetting("settings", "racewinp_amount")
+                    '// More than one race...
+                     If Ubound(Split(iniTempVal, "*")) > 0 Then
+                        c = Split(iniTempVal, "*")
+                        nameMatch = False
+                       '// Loop through the array
+                       '// If there's a matching race, alter the text to give a % right after the wins and add it to the dictionary so when the script gets to the win percentages, it won't double post a race percent
+                        For j = 0 To Ubound(c)
+                           If NOT iniArr.Exists(iniName) Then
+                              If Split(c(j), chr(154))(0) = iniName Then
+                                 iniArr.Item(iniName) = True
+                                 temp = temp & UCase(Mid(iniName, 1, 1)) & LCase(Mid(iniName, 2)) & ": " & Split(tempArr(i), chr(154))(1) & " wins @ " & Split(c(j), chr(154))(1) & "%, "
+                                 nameMatch = True
+                                 Exit For
+                              End If
+                           End If
+                        Next
+                     Else
+                       '// One race, check if the race is being checked for a percent
+                        If Split(iniTempVal, chr(154))(0) = iniName Then
+                           temp = temp & UCase(Mid(iniName, 1, 1)) & LCase(Mid(iniName, 2)) & ": " & Split(tempArr(i), chr(154))(1) & " wins @ " & Split(iniTempVal, chr(154))(1) & "%, "                           
+                           iniArr.Item(iniName) = True
+                           nameMatch = True
+                        Else
+                           temp = temp & UCase(Mid(iniName, 1, 1)) & LCase(Mid(iniName, 2)) & ": " & Split(tempArr(i), chr(154))(1) & " wins, "
+                        End If
+                     End If
+                     
+                    '// If there's not a match of race wins and percents, just give the wins that are specified
+                     If NOT nameMatch Then
+                        temp = temp & UCase(Mid(iniName, 1, 1)) & LCase(Mid(iniName, 2)) & ": " & Split(tempArr(i), chr(154))(1) & " wins, "
+                     End If
+                  Else
+                     temp = temp & UCase(Mid(iniName, 1, 1)) & LCase(Mid(iniName, 2)) & ": " & Split(tempArr(i), chr(154))(1) & " wins, "                        
+                  End If
+               Next
+               text = text & temp
+            Else
+               iniName = Split(iniVal, chr(154))(0)
+               '// If checking for win % for the race
+               If readSetting("settings", "racewinp_req") Then
+                  iniTempVal = readSetting("settings", "racewinp_amount")
+                  If Ubound(Split(iniTempVal, "*")) > 0 Then
+                     c = Split(iniTempVal, "*")
+                     nameMatch = False
+                     For j = 0 To Ubound(c)
+                        If NOT iniArr.Exists(iniName) Then                             
+                           If Split(c(j), chr(154))(0) = iniName Then
+                              iniArr.Item(iniName) = True
+                              temp = temp & UCase(Mid(iniName, 1, 1)) & LCase(Mid(iniName, 2)) & ": " & Split(iniVal, chr(154))(1) & " wins @ " & Split(c(j), chr(154))(1) & "%, "
+                              nameMatch = True
+                              Exit For
+                           End If
+                        End If
+                     Next
+                  Else
+                     If Split(iniTempVal, chr(154))(0) = iniName Then
+                        temp = temp & UCase(Mid(iniName, 1, 1)) & LCase(Mid(iniName, 2)) & ": " & Split(iniVal, chr(154))(1) & " wins @ " & Split(iniTempVal, chr(154))(1) & "%, "                           
+                        iniArr.Item(iniName) = True
+                        nameMatch = True
+                     End If
+                  End If
+                  
+                  If NOT nameMatch Then
+                     temp = temp & UCase(Mid(iniName, 1, 1)) & LCase(Mid(iniName, 2)) & ": " & Split(iniVal, chr(154))(1) & " wins, "
+                  End If
+               Else            
+                  temp = temp & UCase(Mid(iniName, 1, 1)) & LCase(Mid(iniName, 2)) & ": " & Split(tempArr(i), chr(154))(1) & " wins, "                        
+               End If                  
+               text = text & temp
+            End If
+         End If   
+      End If
+   
+      If readSetting("settings", "racewinp_req") Then 
+         iniVal = readSetting("settings", "racewinp_amount")
+         If InStr(iniVal, "n/a") < 1 Then
+            If InStr(iniVal, "*") > 0 Then
+               tempArr = Split(iniVal, "*")
+               For i = 0 To Ubound(tempArr)
+                 '// Check if the race exists in the dictionary. If not, add the percent required.
+                  If NOT iniArr.Exists(Split(tempArr(i), chr(154))(0)) Then
+                     x = Split(tempArr(i), chr(154))(0)
+                     text = text & UCase(Mid(x, 1, 1)) & LCase(Mid(x, 2)) & ": " & Split(tempArr(i), chr(154))(1) & "%, "
+                  End If
+               Next
+            Else
+               If NOT iniArr.Exists(Split(iniVal, chr(154))(0)) Then
+                  x = Split(iniVal, chr(154))(0)
+                  text = text & UCase(Mid(x, 1, 1)) & LCase(Mid(x, 2)) & ": " & Split(iniVal, chr(154))(1) & "%, "
+               End If
+            End If
+         End If            
+      End If
+      If readSetting("settings", "auto_invite_enabled") Then text = text & ".Auto-inviting users to clan." Else text = text & ".Placing onto the recruit list."                     
+   Else
+      text = text & "no ladder requirements, "         
+      If readSetting("settings", "auto_invite_enabled") Then text = text & ".Auto-inviting users to clan." Else text = text & ".Placing onto the recruit list."                     
+   End If
+   
+  '// Clean up the text variable
+   text = Replace(text, ", .", ". "): text = Replace(text,  chr(154), "-")
+   Command.Respond "Recruit Script:: " & text       
+End Sub
+
+Private Sub recread_cmd(Command, user)  '// The recRead command
+
+   Dim iniLine, userArr, canView
+   
+   If Command.IsValid Then
+      canView = False
+      iniLine = readSetting("settings", "recruiter_list")
+      If iniLine <> "n/a" Then
+         If InStr(iniLine, "*") > 0 Then
+            userArr = Split(iniLine, "*")
+            For i = 0 To Ubound(userArr)
+               If Lcase(userArr(i)) = LCase(user) Then
+                  canView = True
+                  Exit For
+               End If
+            Next
+         Else
+            If LCase(iniLine) = Lcase(user) Then canView = True
+         End If      
+      End If
+      
+      If canView OR Command.HasAccess Then
+         iniLine = readSetting("settings", "recruit_list")
+         If iniLine = "n/a" Then
+            Command.Respond "There are no recruits on the recruit list."
+         Else
+            If InStr(iniLine, "*") > 0 Then
+               Command.Respond "Recruits waiting: " & Replace(iniLine, "*", ", ")
+            Else
+               Command.Respond "Recruits waiting: " & iniLine
+            End If
+         End If
+      End If
+   End If
+End Sub
+
+Private Sub recrecruit_cmd(Command, user)  '// The recRecruit command
+
+   Dim iniLine, userArr, canUse, recName, wildName, wildNameArr, name, text
+   
+   If Command.IsValid Then
+      canUse = False
+      iniLine = readSetting("settings", "recruiter_list")
+      If iniLine <> "n/a" Then
+         If InStr(iniLine, "*") > 0 Then
+            userArr = Split(iniLine, "*")
+            For i = 0 To Ubound(userArr)
+               If Lcase(userArr(i)) = LCase(user) Then
+                  canUse = True
+                  Exit For
+               End If
+            Next
+         Else
+            If LCase(iniLine) = Lcase(user) Then canUse = True
+         End If      
+      End If
+      
+      If canUse OR Command.HasAccess Then
+         Select Case Split(Lcase(Command.Args))(0)
+            Case "add"
+               If Ubound(Split(Command.Args)) < 1 Then Exit Sub
+               iniLine = readSetting("settings", "recruit_list")
+               recName = Split(Lcase(Command.Args))(1)               
+               If iniLine = "n/a" Then
+                  Call writeSetting("settings", "recruit_list", recName, "newArr")
+                  Command.Respond recName & " has been added to the recruit list."
+               Else
+                  If InStr(iniLine, "*") > 0 Then
+                     If InStr(Lcase(iniLine), recName) > 0 Then 
+                        Command.Respond recName & " is already on the recruit list."
+                     Else
+                        Call writeSetting("settings", "recruit_list", recName, "newArr")
+                        Command.Respond recName & " has been added to the recruit list."                        
+                     End If
+                  Else
+                     If Lcase(iniLine) = recName Then 
+                        Command.Respond recName & " is already on the recruit list."
+                     Else
+                        Call writeSetting("settings", "recruit_list", recName, "newArr")
+                        Command.Respond recName & " has been added to the recruit list."                        
+                     End If
+                  End If
+               End If
+               
+            Case "rem"
+               If Ubound(Split(Command.Args)) < 1 Then Exit Sub
+               iniLine = readSetting("settings", "recruit_list")
+               recName = Split(Lcase(Command.Args))(1)
+                  
+               If iniLine = "n/a" Then
+                  Command.Respond "There are no recruits on the recruit waiting list."
+               Else
+                  If InStr(recName, "*") > 0 Then wildName = GetWildCardName(recName, iniLine)                  
+                  If wildName = vbNullString Then                  
+                     If InStr(iniLine, "*") > 0 Then
+                        If InStr(Lcase(iniLine), recName) < 1 Then 
+                           Command.Respond recName & " is not on the recruit list."
+                        Else
+                           Call writeSetting("settings", "recruit_list", recName, "remArr")
+                           Command.Respond recName & " has been removed from the recruit list."                                   
+                        End If
+                     Else
+                        If Lcase(iniLine) <> recName Then 
+                           Command.Respond recName & " is not on the recruit list."
+                        Else
+                           Call writeSetting("settings", "recruit_list", recName, "remArr")
+                           Command.Respond recName & " has been removed from the recruit list."     
+                        End If
+                     End If
+                  Else
+                     If InStr(wildName, "|") Then
+                        wildNameArr = Split(wildName, "|")                        
+                        For Each name In wildNameArr
+                           If InStr(Lcase(iniLine), Lcase(name)) > 0 Then
+                              Call writeSetting("settings", "recruit_list", name, "remArr")
+                              text = text & name & ", "
+                           End If
+                        Next
+                        
+                        If text <> vbNullString Then
+                           Command.Respond "Users: " & text & "were removed from the recruit list."
+                        Else
+                           Command.Respond "No users exist with names starting with " & Split(recName, "*")(0)
+                        End If
+                     Else
+                        If InStr(Lcase(iniLine), Lcase(wildName)) > 0 Then
+                           Call writeSetting("settings", "recruit_list", wildName, "remArr")
+                           Command.Respond wildName & " has been removed from the recruit list."
+                        Else
+                           Command.Respond wildName & " is not on the recruit list."
+                        End If                     
+                     End If                  
+                  End If
+               End If            
+         End Select
+      End If
+   End If
+End Sub
+
+Private Sub requestInfo(user)  '// Adds the cookie to the dictionary and sends it off to the requestladderstats sub
+
+   Dim nCookie, rec, prod
+
+  '// Get the user's product and get a new, unused cookie
+   prod = GetInternalDataByUsername(user, 3)
+   nCookie = GetNewCookie
+
+  '// Add the cookie to the dictionary, along with an array for the user
+   recRequests.Item(nCookie) = Array(user, readSetting("settings", "realm"), prod)
+   
+   RequestLadderStats 4, nCookie, user, StrReverse(prod)
+End Sub
+
+Private Sub RequestLadderStats(ID, cookie, name, product)  '// Prepares and sends the 0x44 packet to BNet
+
+  '// Prepare the packet and send it to BNet
+  
+   DataBuffer.InsertByte ID
+   DataBuffer.InsertDWord cookie
+   DataBuffer.InsertNTString CStr(name)
+   DataBuffer.InsertNonNTString product
+   DataBuffer.SendPacket &H44
+End Sub
+
+Private Sub writeSetting(sType, sSetting, sValue, action)  '// Writes a setting to the ini
+
+   Dim iniFile, iniFileArr, i, text
+
+   Select Case sType
+      Case "settings"
+         Select Case sSetting 
+            Case "racewin_amount", "racewinp_amount", "cj_invite_users", "ignore_list", "recruit_list", "recruiter_list"  '// Basically, anything having to do with multiple names/values for a single entry
+              '// For ignore, recruit, and recruiter lists, there will be no chr(154), so if you have Split("recruit", chr(154))(0), the value will still return the recruit's name, making remArr possible for these cases.
+               Select Case action
+               
+                  Case "newArr" '// Simply adding a new entry to existing entries
+                     iniFile = readSetting(sType, sSetting)
+                     If InStr(iniFile, "n/a") < 1 Then
+                        WriteConfigEntry sType, sSetting, iniFile & "*" & LCase(sValue), recPath
+                     Else
+                        WriteConfigEntry sType, sSetting, LCase(sValue), recPath
+                     End If
+                     
+                  Case "alterArr"  '// Altering the value of one entry in existing entries
+                     iniFile = readSetting(sType, sSetting)
+                    '// If multiple entries for a line...
+                     If InStr(iniFile, "*") > 0 Then
+                        iniFileArr = Split(iniFile, "*")
+                        For i = 0 To Ubound(iniFileArr)
+                          '// If the entry in the INI line matches the entry for the value...
+                           If Split(iniFileArr(i), chr(154))(0) = Split(sValue, chr(154))(0) Then
+                             '// Change the INI line to the new value
+                              text = text & Split(iniFileArr(i), chr(154))(0) & chr(154) & Split(sValue, chr(154))(1) & "*"
+                           Else
+                             '// Not a match, leave the line alone
+                              text = text & iniFileArr(i) & "*"
+                           End If
+                        Next
+                        WriteConfigEntry sType, sSetting, Left(text, Len(text)-1), recPath
+                     Else
+                       '// No multiples, just replace the entry with the new one
+                        WriteConfigEntry sType, sSetting, sValue, recPath
+                     End If
+                     
+                  Case "remArr"  '// Removing the entry from existing entries
+                     iniFile = readSetting(sType, sSetting)
+                    '// Check if the value is actually in the line
+                     If InStr(iniFile, sValue) > 0 Then
+                       '// Multiple entries
+                        If UBound(Split(iniFile, "*")) > 0 Then
+                           iniFileArr = Split(iniFile, "*")
+                          '// Loop through the entries
+                           For i = 0 To Ubound(iniFileArr)
+                             '// If the entry isn't matching the value, write it in
+                             '// This is so that when there is a matching entry to the value, it will not get recorded; it will get "rem'd" out :)
+                              If Split(iniFileArr(i), chr(154))(0) <> Split(sValue, chr(154))(0) Then
+                                 text = text & iniFileArr(i) & "*"
+                              End If
+                           Next
+                        Else
+                          '// No multiples, so we have to make sure that we aren't writing a blank variable to the INI, otherwise the entry will disappear
+                           If InStr(iniFile, chr(154)) > 0 Then
+                             '// If it's got the character for race wins and percents...
+                              If Split(iniFile, chr(154))(0) = Split(sValue, chr(154))(0) Then
+                                '// There was a match, so take the line out and replace it with a "placeholder" value
+                                 text = "n/a" & Chr(154) & "0"
+                              End If
+                           Else
+                             '// Any other lines that contain a value
+                              If iniFile = Lcase(sValue) Then
+                                '// Match was found, write a placeholder to preserve the entry
+                                 text = "n/a"
+                              End If
+                           End If
+                        End If
+
+                       '// If the text doesn't have "n/a", trim the trailing * character separator
+                        If InStr(text, "n/a") < 1 Then text = Left(text, Len(text)-1)
+                        WriteConfigEntry sType, sSetting, text , recPath
+                     End If
+               End Select
+            Case Else
+               WriteConfigEntry sType, sSetting, sValue, recPath
+         End Select
+      Case "firstrun"
+         '// Populate the settings ini for first run
+         Dim File
+         Set File = recFSO.OpenTextFile(recPath, 8, True)
+         With File
+            .WriteLine "[settings]"
+            .WriteLine vbNullString
+            .WriteLine "'// The settings below this line are editable because there are no commands to change these lines. Edit these settings as you see fit."
+            .WriteLine vbNullString
+            .WriteLine "'//   The realm your clan is on, which the bot must also be a part of."
+            .WriteLine "realm=Azeroth"
+            .WriteLine "'//   Your clan's abbreviation."
+            .WriteLine "clantag=abc"
+            .WriteLine "'//   "" apply "" command anti-spam time. This will ignore all apply commands for this many seconds."
+            .WriteLine "apply_lock=10"
+            .WriteLine "'//   Set to True if users are required to have a tag in their name."            
+            .WriteLine "tag_enabled=False"
+            .WriteLine "'//   Use the * to specify where the tag should be."
+            .WriteLine "'//   *xxx means tag will be at the start of their name, *xxx* means tag can be anywhere, xxx* means tag will be at the end of their name"                 
+            .WriteLine "tag=*NiN)*"
+            .WriteLine "'//   Time users must wait before using the apply command again; s=seconds, m=minutes, d=days."
+            .WriteLine "'//   Example: 20m means users need to wait 20 minutes, 1d means users need to wait 1 day."
+            .WriteLine "apply_delay=1d"
+            .WriteLine "'//   These two options will whisper a shaman or a user with the specified flag. To disable the recruit_Flag option, leave as n/a. To disable the recruit_Shams option, set to False."
+            .WriteLine "'//   Add more flags by separating each with a comma; X,Y,Z"
+            .WriteLine "recruiter_Flag=F"
+            .WriteLine "recruiter_Shams=True"
+            .WriteLine "'//   Blocked users that will not be able to use the apply command. Leave as n/a to disable, do NOT leave blank. Add more users by following the format: User1*User2*User3*etc"              
+            .WriteLine "ignore_list=n/a"            
+            .WriteLine vbNullString
+            
+            .WriteLine "'// **** WARNING: These settings should not need to be edited manually unless you are sure of what you are doing. ****"
+            .WriteLine "'// Settings below this line are editable via commands; making the wrong changes manually WILL result in errors."
+            .WriteLine vbNullString
+            
+            .WriteLine "'//   Users that are on the recruit list. This line CAN be edited, but isn't needed because users are added or removed through commands."
+            .WriteLine "recruit_list=n/a"           
+            .WriteLine "'//   If set to True, only the specified users will recieve an invite next time they join the channel."
+            .WriteLine "cj_invite=False"    
+            .WriteLine "'//   Specify which users are to be given an invite upon joining the channel. Users will be automatically removed once in the clan. Add more users by following the format: User1*User2*User3*etc"
+            .WriteLine "cj_invite_users=n/a"
+            .WriteLine "'//   If set to True, users will need to meet the win/level/% requirements before reciving an invite/being placed on the recruit list. False, users will be not be checked for requirements."
+            .WriteLine "req_check_enabled=True"
+            .WriteLine "'//   If set to True, users will be automatically recieve an invite. False, users will be placed on the recruit list."
+            .WriteLine "auto_invite_enabled=False"
+            .WriteLine "'//   If set to True, an overall Win amount is required (to set wins for a specific race, jump to the section "
+            .WriteLine "win_req=False"
+            .WriteLine "'//   How many wins overall are required?"
+            .WriteLine "win_amount=30"
+            .WriteLine "'//   If set to True, a Win % is required."
+            .WriteLine "winp_req=True"
+            .WriteLine "'//   How much Win % is required?"
+            .WriteLine "winp_amount=45"
+            .WriteLine "'//   If set to True, an overall Level is required."
+            .WriteLine "level_req=True"
+            .WriteLine "'//   How high of a Level?"
+            .WriteLine "level_amount=2"
+            .WriteLine "'//   If set to True, users will need to have wins based on race(s)"
+            .WriteLine "racewin_req=True"
+            .WriteLine "'//   How many wins for a race? Add more races and wins by following the format: orcš10*nightelfš5*humanš1*randomš6*undeadš9"
+            .WriteLine "racewin_amount=humanš20"
+            .WriteLine "'//   If set to True, users will need to have a Win % based on race(s)"
+            .WriteLine "racewinp_req=True"
+            .WriteLine "'//   How much Win % for a race? Add more races and wins by following the format: orcš50.13*nightelfš50*humanš10*randomš12.45*undeadš9"
+            .WriteLine "racewinp_amount=humanš20.25"            
+            .WriteLine vbNullString
+            
+            .WriteLine "'//   Users that requested and failed to meet requirements. They will need to wait until their specified before using the apply command again."
+            .WriteLine "***=***"
+            .Close
+         End With
+         
+         AddChat 16759296, "Recruit Script:. ", 10682112, "Settings file created."         
+                 
+        '// Huge thanks to Hdx for having amazing patience in helping me learn the new ways for adding commands
+         AddChat 16759296, "Recruit Script:. ", 10682112, "Creating commands ... This may take a few minutes; ignore the Script-Control pop-up."
+         
+        '// Call the create commands sub
+         Call createCMDs                 
+   End Select
+End Sub
+
+Private Sub createCMDs  '// Creates the commands
+ 
+  '// If you know what you're doing and decide you want to edit these commands, you will need to do so either before you run the script OR
+    '//   you'll need to go into your commands.xml and manually delete the commands that were already created for this script.
+    '// Don't touch the XML if you don't know what you're doing.
+ 
+   Dim cmd, Parameter
+  
+   Set cmd = OpenCommand("recRead")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("recRead")
+		With cmd
+			.Description = "Allows users with enough access or those on the recruiter_list are able to view the recruits on the recruit list."
+			.RequiredRank = 200
+			.Save
+		End With
+	End If    
+   
+   Set cmd = OpenCommand("recRecruit")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("recRecruit")
+		With cmd
+			.Description = "Adds or removes users from the recruit list."
+			.RequiredRank = 200
+         
+			Set Parameter = .NewParameter("add/del", False, "Word")
+			With Parameter
+				.Description = "recrecruit add (username) = Adds a username to the recruit list." & vbNewLine & vbNewLine & _
+               "recrecruit rem (username) = Remves a username from the recruit list."
+				.SpecialNotes = "The rem command can accept wildcards:" & vbNewLine & vbNewLine & "recrecruit rem The_B*"
+			End With
+			.Parameters.Add Parameter         
+         
+			.Save
+		End With
+	End If       
+  
+   Set cmd = OpenCommand("apply")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("apply")
+		With cmd
+			.Description = "Users wishing to join the clan will need to type this command first." & vbNewLine & vbNewLine & _
+            "Only those users with the game products Rign of Chaos (WAR3) or Frozen Throne (W3XP) may use the apply command since BNet does not allow other game products to be part of clans."
+			.RequiredRank = 0   
+			.Save
+		End With
+	End If  
+  
+   Set cmd = OpenCommand("recJInvite")
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("recJInvite")
+		With cmd
+			.Description = "If a specified user joins the channel, they will get an invite automatically."
+			.RequiredRank = 200
+         
+			Set Parameter = .NewParameter("on/off/add/rem", False, "Word")
+			With Parameter
+				.Description = "recjinvite on = Enables the system." & vbNewLine & vbNewLine & _
+               "recjinvite off = Disables the system." & vbNewLine & vbNewLine & _
+               "recjinvite add (username) = Adds a username to the list." & vbNewLine & vbNewLine & _
+               "recjinvite rem (username) = Remves a username from the list."
+				.SpecialNotes = vbNullString
+			End With
+			.Parameters.Add Parameter
+         .Aliases.Add "recji"                  
+			.Save
+		End With
+	End If
+
+   Set cmd = OpenCommand("recCheckReqs")   
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("recCheckReqs")
+		With cmd
+			.Description = "Users will need to have their requirements checked prior to being invited/placed on the recruit list."
+			.RequiredRank = 200
+         
+			Set Parameter = .NewParameter("on/off", False, "Word")
+			With Parameter
+				.Description = "reccheckreqs on = Enables this system; users will be checked for requirements." & vbNewLine & vbNewLine & _
+               "reccheckreqs off = Disables this system; users will not be checked for requirements."
+				.SpecialNotes = vbNullString
+			End With
+			.Parameters.Add Parameter
+                  
+         .Aliases.Add "recreqs"                
+			.Save
+		End With
+	End If
+   
+   Set cmd = OpenCommand("recAutoInvite")   
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("recAutoInvite")
+		With cmd
+			.Description = "Users will be automatically invited into the clan. Used in conjunction with recCheckReqs."
+			.RequiredRank = 200
+         
+			Set Parameter = .NewParameter("on/off", False, "Word")
+			With Parameter
+				.Description = "recautoinvite on = Enables this system; users will be invited to the clan." & vbNewLine & vbNewLine & _
+               "recautoinvite off = Disables this system; users will be placed onto the recruit list."
+				.SpecialNotes = "If recCheckReqs is enabled, users must meet the requirements before being invited/placed on the recruit list."
+			End With
+			.Parameters.Add Parameter
+         
+         .Aliases.Add "recai"                
+			.Save
+		End With
+	End If       
+      
+   Set cmd = OpenCommand("recCheckWins")   
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("recCheckWins")
+		With cmd
+			.Description = "Users will be checked for cumulative wins."
+			.RequiredRank = 200
+         
+			Set Parameter = .NewParameter("on/off/#", False, "Word")
+			With Parameter
+				.Description = "reccheckwins on = Enables this system; users will be checked for cumulative wins." & vbNewLine & vbNewLine & _
+               "reccheckwins off = Disables this system; users will not be checked for cumulative wins." & vbNewLine & vbNewLine & _
+               "reccheckwins # = Sets the amount of cumulative wins users need."
+				.SpecialNotes = vbNullString
+			End With
+			.Parameters.Add Parameter
+                   
+         .Aliases.Add "recwins"                
+			.Save
+		End With
+	End If       
+   
+   Set cmd = OpenCommand("recCheckLevel")   
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("recCheckLevel")
+		With cmd
+			.Description = "Users will be checked for their level."
+			.RequiredRank = 200
+         
+			Set Parameter = .NewParameter("on/off/#", False, "Word")
+			With Parameter
+				.Description = "recchecklevel on = Enables this system; users will be checked for their level." & vbNewLine & vbNewLine & _
+               "recchecklevel off = Disables this system; users will not be checked for their level." & vbNewLine & vbNewLine & _
+               "recchecklevel # = Sets the level users must have."
+				.SpecialNotes = vbNullString
+			End With
+			.Parameters.Add Parameter 
+         
+         .Aliases.Add "reclvl"                
+			.Save
+		End With
+	End If         
+   
+   Set cmd = OpenCommand("recCheckPercent")   
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("recCheckPercent")
+		With cmd
+			.Description = "Users will be checked for their cumulative win percentage."
+			.RequiredRank = 200
+         
+			Set Parameter = .NewParameter("on/off/#", False, "Word")
+			With Parameter
+				.Description = "reccheckpercent on = Enables this system; users will be checked for their cumulative win percentage." & vbNewLine & vbNewLine & _
+               "reccheckpercent off = Disables this system; users will not be checked for their cumulative win percentage." & vbNewLine & vbNewLine & _
+               "reccheckpercent # = Sets the cumulative win percentage users need to have."
+				.SpecialNotes = vbNullString
+			End With
+			.Parameters.Add Parameter
+         
+         .Aliases.Add "recp"                
+			.Save
+		End With
+	End If        
+
+   Set cmd = OpenCommand("recCheckRaceWins")   
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("recCheckRaceWins")
+		With cmd
+			.Description = "Users will be checked for wins for specific races."
+			.RequiredRank = 200
+         
+			Set Parameter = .NewParameter("on/off/add/rem/#", False, "Word")
+			With Parameter
+				.Description = "reccheckracewins on = Enables this system; users will be checked for race specific wins." & vbNewLine & vbNewLine & _
+               "reccheckracewins off = Disables this system; users will not be checked for race specific wins." & vbNewLine & vbNewLine & _
+               "reccheckracewins add (race) {# of wins} = Adds a race to be checked and, optionally, the amount of wins needed." & vbNewLine & vbNewLine & _
+               "reccheckracewins rem (race) = Removes a race to be checked." & vbNewLine & vbNewLine & _
+               "reccheckracewins # (race) = Sets the amount of wins needed to the specified race"
+				.SpecialNotes = "Races are: Human, Orc, NightElf, Undead, Random" & vbCrLf & vbCrLf & "Tournament wins are not checked."
+			End With
+			.Parameters.Add Parameter
+                             
+         .Aliases.Add "reccr"                
+			.Save
+		End With
+	End If          
+
+   Set cmd = OpenCommand("recCheckRacePercent")   
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("recCheckRacePercent")
+		With cmd
+			.Description = "Sets the win percentages needed for a specified race."
+			.RequiredRank = 200
+         
+			Set Parameter = .NewParameter("on/off/add/rem/#", False, "Word")
+			With Parameter
+				.Description = "recCheckRacePercent on = Enables this system; users will be checked for race specific win percentages." & vbNewLine & vbNewLine & _
+               "recCheckRacePercent off = Disables this system; users will not be checked for race specific win percentages." & vbNewLine & vbNewLine & _
+               "recCheckRacePercent add (race) {percent needed} = Adds a race to be checked and, optionally, the percent needed." & vbNewLine & vbNewLine & _
+               "recCheckRacePercent rem (race) = Removes a race to be checked." & vbNewLine & vbNewLine & _
+               "recCheckRacePercent # (race) = Sets the amount of wins needed to the specified race"
+				.SpecialNotes = "Races are: Human, Orc, NightElf, Undead, Random" & vbCrLf & vbCrLf & "Tournament percents are not checked."
+			End With
+			.Parameters.Add Parameter             
+         
+         .Aliases.Add "reccrp"                
+			.Save
+		End With
+	End If         
+
+   Set cmd = OpenCommand("recStatus")   
+   If cmd Is Nothing Then
+		Set cmd = CreateCommand("recStatus")
+		With cmd
+			.Description = "Displays how the script is processing recruit applications."
+			.RequiredRank = 200               
+         .Aliases.Add "recs"                
+			.Save
+		End With
+	End If       
+           
+   AddChat 16759296, "Recruit Script:. ", 10682112, "Commands added - script is ready to use. ", 5731327, "Please view the commands in the Command Manager for descriptions, syntax, and command aliases."  
+End Sub
+
+
+'// Custom Functions
+Private Function readSetting(sType, sSetting)  '// Returns the value in the settings.ini
+
+   Select Case sType
+      Case "settings": readSetting = GetConfigEntry(sType, sSetting, recPath)
+      Case "main": readSetting = GetConfigEntry(sType, sSetting, recPath)  '// Unused
+   End Select
+End Function
+
+
+Private Function IsBeingIgnored(user)  '// Returns True if ignored, False it not
+
+   Dim banned, banArr, bUser
+   
+   banned = readSetting("settings", "ignore_list")
+   
+   If InStr(banned, "n/a") < 1 Then      
+      If InStr(banned, "*") > 0 Then
+         banArr = Split(Banned, "*")
+         
+         For Each bUser In banArr
+            If Lcase(user) = Lcase(bUser) Then
+               IsBeingIgnored = True
+               Exit Function
+            End If
+         Next
+      Else
+         If Lcase(user) = Lcase(banned) Then
+            IsBeingIgnored = True
+            Exit Function
+         End If
+      End If
+   End If
+   
+   IsBeingIgnored = False
+End Function
+
+
+Private Function GetNewCookie  '// Checks the recRequests object and returns an unused cookie
+
+   Dim key, item, num, i, cookieFound, tMatch
+
+   key = recRequests.Keys
+   item = recRequests.Items
+
+   cookieFound = False
+   
+   Do Until cookieFound
+      tMatch = False   
+      num = Int(((50 + 1) - (1)) * Rnd + (1))
+      
+      For i = 0 To Ubound(key)
+         If num = CInt(key(i)) Then
+            tMatch = True
+            Exit For
+         End If
+      Next
+      
+      If NOT tMatch Then cookieFound = True
+   Loop
+   
+   GetNewCookie = num
+End Function
+
+
+Private Function GetUserIcon(icon)  '// Returns the icon name and tier for the icon packet
+
+   Dim a, b
+
+   icon = StrReverse(Lcase(icon))
+   Select Case Left(icon, 1)
+      Case "o": a = "Orc"
+      Case "e": a = "Night Elf"
+      Case "u": a = "Undead"
+      Case "h": a = "Human"
+      Case "n": a = "Random/Tournament"
+   End Select
+   
+   Select Case Mid(icon, 2)
+      Case "peo": b = "Peon"
+   
+     '// Tournament
+      '// W3XP     
+      Case "bal": b = "Doomguard"                
+      Case "inf": b = "Infernal"            
+      Case "fgu": b = "Felguard"
+      Case "plh": b = "Pit Lord"
+      Case "war": b = "Archimonde"
+      '// WAR3      
+      Case "bwm": b = "Deathwing"
+      Case "rdr": b = "Red Dragon"
+      Case "adr": b = "Blue Dragon"
+      Case "grd": b = "Green Dragon Whelp"
+            
+     '// Random
+      Case "myr": b = "Myrmidon"
+      Case "nsw": b = "Siren"      
+      Case "hyc": b = "Dragon Turtle"      
+      Case "vsh": b = "Sea Witch"      
+      Case "evm": b = "Illidan"
+      
+     '// Human
+      '// W3XP     
+      Case "rif": b = "Rifleman"
+      Case "sor": b = "Sorceress"      
+      Case "spt": b = "Spellbreaker"      
+      Case "blm": b = "Blood Mage"
+      Case "jai": b = "Jaina"
+      '// WAR3      
+      Case "foo": b = "Footman"
+      Case "amg": b = "Archmage"
+      Case "med": b = "Medivh"
+      Case "amg": b = "Archmage"
+      
+            
+     '// Night Elf
+      '// W3XP     
+      Case "sen": b = "Huntress"  
+      Case "dot": b = "Druid of the Talon"  
+      Case "dry": b = "Dryad"  
+      Case "kee": b = "Keeper of the Grove"              
+      Case "wrd": b = "Maiev"  
+      '// WAR3      
+      Case "arc": b = "Archer"  
+      Case "doc": b = "Druid of the Claw"  
+      Case "moo": b = "Priestess of the Moon"  
+      Case "fur": b = "Furion Stormrage"  
+      
+                 
+     '// Orc
+      '// W3XP     
+      Case "hun": b = "Troll Headhunter"      
+      Case "shm": b = "Shaman"        
+      Case "spw": b = "Spirit Walker"    
+      Case "shd": b = "Shadow Hunter"    
+      Case "rex": b = "Rexxar"         
+      '// WAR3      
+      Case "thr": b = "Thrall"         
+      Case "tau": b = "Tauren"         
+      Case "gru": b = "Grunt"         
+      Case "amg": b = "Far Seer"         
+      
+     '// Undead
+      '// W3XP
+      Case "cry": b = "Crypt Fiend"          
+      Case "ban": b = "Banshee"                
+      Case "obs": b = "Destroyer"          
+      Case "crl": b = "Crypt Lord"          
+      Case "syl": b = "Sylvanas"          
+      '// WAR3
+      Case "gho": b = "Ghoul"          
+      Case "abo": b = "Abomination"                
+      Case "lic": b = "Lich"               
+      Case "tic": b = "Tichondrius"                
+   End Select
+   
+   GetUserIcon = "Tier: " & a & " - Icon: " & b
+End Function
+
+
+Private Function GetWildCardName(wild, data)  '// Returns the full name or an array of name|name|name that match the wildcard
+
+   Dim wildName, dataArr, name, text
+
+   wildName = Split(wild, "*")(0)
+   
+   If InStr(data, "*") > 0 Then
+      dataArr = Split(data, "*")
+      For Each name In dataArr
+         If Lcase(wildName) = Left(Lcase(name), Len(wildName)) Then text = text & name & "|"
+      Next
+      
+      If text <> vbNullString Then text = Left(text, Len(text) -1)
+   Else
+      If Lcase(wildName) = Left(Lcase(data), Len(wildName)) Then text = data
+   End If
+   
+   If text <> vbNullString Then GetWildCardName = text
+End Function
+
+Private Function InviteUser(user)
+
+   Command BotVars.Username, "/invite " & user, True
+End Function
+

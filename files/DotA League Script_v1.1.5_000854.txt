@@ -1,0 +1,2085 @@
+Option Explicit
+
+Script("Name")           = "DotA League Script"
+Script("Author")         = "RosieSuckedMe"
+Script("Major")          = 1
+Script("Minor")          = 1
+Script("Revision")       = 5 
+Script("Description")    = "DotA League Script"
+
+'// Commands you need to disable before this script will work:
+'////
+'//
+'// demote
+'// find
+'// info
+'// promote
+'// whoami
+'// whois
+'//
+'////
+'//
+'// Commands that you need to disable for the next release:
+'////
+'//
+'// bmail
+'// inbox
+'//
+'////
+'//
+'// Changelog:
+'//// v1.00 -> v1.01:
+'//   You can now choose to use emote on all messages.
+'//   Allowed teams to contain more or less than 5 players.
+'//   Made a new command, "abort" which aborts the current game.
+'//   Sleight adjustments and additions.
+'//
+'//// v1.01 -> v1.02:
+'//   Reworked the way games work - you can now play with uneven teams too.
+'//   Added a new command, "confirm" which confirms the game (used with uneven teams allthough it can be used anytime).
+'//
+'//// v1.02 -> v1.10:
+'//   Added a scoring system and two new commands: "stats" which displays a user's stats and "end" which votes the game as sentinel/scourge.
+'//   Players will receive experience points upon winning and losing games.
+'//   Gamenames will be made based on a new setting followed by a number. The very first game you create will thereby be {PREFIX}1.
+'//   As games are being started, the 1 will change to 2, then 3 and 4 etc, to give each game a unique ID.
+'//
+'//// v1.10 -> v1.11:
+'//   Added two new commands. "top" and "info". top [number] displays the # leading players (experience). info (gamename) displays info -
+'//      on a active/ended game.
+'//   Fixed a few things, mostly bugs, that were introduced in the last version.
+'//   Added multiple settings for hostbot support, emote all messages and more.
+'//
+'//// v1.11 -> v1.12:
+'//   Fixed a few missing bugs from the last version.
+'//   Added the ranking system which includes 11 ranks.
+'//   Added 2 new commands. "promote (user) [rank]" which promotes users, "demote (user) [rank]" which obviously demotes users
+'//
+'//// v1.12 -> v1.13:
+'//   Added 2 new commands. "whoami" and "whois <user>". These commands displays information (not stats) on a user.
+'//   Fixed a small bug from the last version.
+'//   Added an announcement when a user with the rank VIP enters the channel. - This message can be edited in settings.ini.
+'//
+'//// v1.13 -> v1.14:
+'//   Added the 2 VIP (or higher rank) commands. "kickidles" which kicks all afk users and "find <#>" which seaches for users
+'//      who has # in their name.
+'//   Changed the script name to DotA League Script
+'//
+'//// v1.14 -> v1.15:
+'//   Implemented a vouch system.
+'//   Added two new settings (whether to ban unvouched users or not and the reason upon banning unvouched users).
+'//   Added three new commands, "vouch <user>", "unvouch <user>" and "warn <user> <amount> [reason]".
+'//   Added some new settings to work with the vouching system.
+'//   Players will now get banned if they exceed the warning limit of 100%.
+'//   Fixed several bugs from the last versions.
+'//
+'////
+'//
+'// To-Do List:
+'////
+'//   Add the command "submit (game) (result)" which will change the result of a game/result the game without users having to 'vote'.
+'//   Add a warning system (only the .warn command is added), a ban system (timeban included) and a mailing system too
+'//
+'////
+
+Private forbidList '// Dictionary to hold forbidden players
+Private TeamPool   '// Dictionary to hold added players
+Private userQueue  '// Dictionary to hold temporary players - used to merge numerous messages together into one
+Private timeLeft   '// Integer to hold the time
+Private maxPlayers '// Integer to hold slots
+Private msgPrefix  '// String to hold the message prefix
+Private DotAHost   '// Variable to hold the host
+Private obj        '// Variable which holds the database queries
+Private dbConn     '// Variable to hold our database connection
+Private FSO        '// Variable which holds the FileSystemObject
+Private DBPath     '// String which holds the database path
+Private GameName   '// Variable to hold the gamename
+Private rankNames  '// Array to store all the rank names
+
+'// Events
+
+Sub Event_Load()
+
+'// Host: hoster baner
+'// Moderator = .submit
+'// Manager = UVIDST!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+'// Overseer = .timeban .untimeban
+'// Administrator = .leagueban .delete
+'// Head-Administrator = .reset .transfer
+
+     rankNames = Array("Regular","Host","VIP","Inspector","Voucher","Warden","Moderator","Manager","Overseer","Administrator","Head-Administrator")
+     DBPath = BotPath & "dota team arranger.mdb"
+     Set FSO = CreateObject("Scripting.FileSystemObject")
+     If Not FSO.FileExists(DBPath) Then
+          Call CreateDB()
+     End If
+     
+     Call CreateSettings()
+     
+     Set TeamPool = CreateObject("Scripting.Dictionary")
+     TeamPool.CompareMode = 1
+     Set userQueue = CreateObject("Scripting.Dictionary")
+     userQueue.CompareMode = 1
+     Set forbidList = CreateObject("Scripting.Dictionary")
+     forbidList.CompareMode = 1
+     
+     Call CreateObj("LongTimer", "Tick")
+     Tick.Enabled = False
+     Tick.Interval = 1
+     
+     Call CreateObj("LongTimer", "MergePlayers")
+     MergePlayers.Enabled = False
+     MergePlayers.Interval = 4
+     
+     Call CreateCommands()
+     
+     If IsTrue("emote_on") Then
+          msgPrefix = "/emote • "
+     Else
+          msgPrefix = "• "
+     End If
+
+     Randomize
+     dbConnect()
+     AddChat &HFFCC33, Script("Name") & " by " & Script("Author") & " - Version: v" & Script("Major") & "." & Script("Minor") & Script("Revision") & " | Loaded with " & getTotalUsers() & " user" & getString(getTotalUsers()) & " and " & getTotalGames() & " game" & getString(getTotalGames()) & " in the database!"
+End Sub
+
+Sub Event_Command(Command)
+     With Command
+          If Not Exists(.Username) Or getVouched(.Username) = "N" Then Exit Sub
+          If getBanned(.Username) = "Y" Then Exit Sub
+          
+          If .IsValid And .HasAccess Then
+               Select Case LCase(.Name)
+                    Case "createteams"
+                         Call CreateTeams_cmd(.Username, .Argument("number"))
+                    Case "addme"
+                         Call Addme_cmd(.Username)
+                    Case "removeme"
+                         Call Remove_cmd(.Username, .Username)
+                    Case "remove"
+                         Call Remove_cmd(.Username, .Argument("user"))
+                    Case "abort"
+                         Call Abort_cmd(.Username)
+                    Case "confirm"
+                         Call Confirm_cmd(.Username)
+                    Case "stats"
+                         Call Stats_cmd(.Username, .Argument("user"))
+                    Case "end"
+                         Call End_cmd(.Username, .Argument("result"))
+                    Case "players"
+                         Call Players_cmd(.Username)
+                    Case "games"
+                         Call Games_cmd(.Username)
+                    Case "top"
+                         Call Top_cmd(.Username, .Argument("number"))
+                    Case "submit"
+                         Call Submit_cmd(.Username, .Argument("game"), .Argument("result"))
+                    Case "info"
+                         Call Info_cmd(.Username, .Argument("game"))
+                    Case "promote"
+                         Call Promote_cmd(.Username, .Argument("user"), .Argument("rank"))
+                    Case "demote"
+                         Call Demote_cmd(.Username, .Argument("user"), .Argument("rank"))
+                    Case "whoami"
+                         Call Whois_cmd(.Username, .Username)
+                    Case "whois"
+                         Call Whois_cmd(.Username, .Argument("user"))
+                    Case "kickidles"
+                         Call KickIdles_cmd(.Username)
+                    Case "find"
+                         Call Find_cmd(.Username, .Argument("user"))
+                    Case "forbid"
+                         Call Forbid_cmd(.Username, .Argument("user"))
+                    Case "vouch"
+                         Call Vouch_cmd(.Username, .Argument("user"))
+                    Case "unvouch"
+                         Call Unvouch_cmd(.Username, .Argument("user"))
+                    Case "edit"
+                         Call Edit_cmd(.Username, .Argument("entry"), .Argument("value"))
+                    Case "warn"
+                         Call Warn_cmd(.Username, .Argument("user"), .Argument("amount"), .Argument("reason"))
+                    'ADD .WARNDEL, .WARNS & .WARNINFO
+               End Select
+          End If
+     End With
+End Sub
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+     Dim line
+
+     If Not Exists(Username) Then
+          If IsTrue("automatic_vouch") Then
+               Call addPlayer(Username)
+          Else
+               If IsTrue("vouches_only") Then
+                    AddQ StringFormat("/ban {0} {1}", Username, Setting("ban_message"))
+               End If
+          End If
+     Else
+          If getAccess(Username) = 20 Then
+               line = Setting("vip_greet")
+               line = Replace(line, "%0", Username)
+               AddQ StringFormat("{0}{1}", msgPrefix, line)
+          End If
+     End If
+End Sub
+
+
+'// Command subs
+
+Private Sub CreateTeams_cmd(Name, PayLoad)
+     Dim line
+
+     If Tick.Enabled = False Then
+          If Not getCurrentGame(Name) = "N/A" Then Exit Sub
+          TeamPool.Add Name, " "
+          DotAHost = Name
+          GameName = Setting("game_prefix") & getGameID
+          timeLeft = CInt(Setting("abort_time"))
+          Tick.Enabled = True
+          MergePlayers.Enabled = True
+          line = StringFormat("{3}A game is about to start! ({4}) Owner: {0} | Type {1}addme to sign, {1}removeme to leave, {1}abort to abort [{2} seconds]", DotAHost, BotVars.Trigger, timeLeft, msgPrefix, GameName)
+          
+          If Len(PayLoad) = 0 Then
+               maxPlayers = vbNullString
+          Else
+               If Not IsNumeric(PayLoad) Then Exit Sub
+               If PayLoad >= 7 Then PayLoad = 6
+               maxPlayers = PayLoad * 2
+               line = line & StringFormat(" {+{0}}", CInt(maxPlayers - TeamPool.Count))
+          End If
+          
+          AddQ line
+     Else
+          AddQ StringFormat("{1}There already is a game in progress. Type {0}addme to sign!", BotVars.Trigger, msgPrefix)
+     End If
+End Sub
+
+Private Sub Addme_cmd(Name)
+     If Tick.Enabled = True Then
+          If Not TeamPool.Exists(Name) Then
+               If forbidList.Exists(Name) Then Exit Sub
+               If Not maxPlayers = vbNullString Then
+                    If CInt(TeamPool.Count) >= maxPlayers Then Exit Sub
+               Else
+                    If CInt(TeamPool.Count) >= 12 Then Exit Sub
+               End If
+               
+               If Not getCurrentGame(Name) = "N/A" Then Exit Sub
+               TeamPool.Add Name, " "
+               userQueue.Add Name, " "
+               timeLeft = Setting("abort_time")
+          End If
+     Else
+          AddQ StringFormat("{1}There are no game in progress. Type {0}start to create one - requires 50 access!", BotVars.Trigger, msgPrefix)
+     End If
+End Sub
+
+Private Sub Remove_cmd(Name, PayLoad)
+     Dim line
+
+     If TeamPool.Exists(PayLoad) Then
+          If LCase(PayLoad) = LCase(DotAHost) Then Exit Sub
+          TeamPool.Remove PayLoad
+          line = StringFormat("{1}Player {0} signed out!", PayLoad, msgPrefix)
+          If Not maxPlayers = vbNullString Then
+               line = line & StringFormat(" {+{0}}", CInt(maxPlayers - TeamPool.Count))
+          End If
+          
+          AddQ line
+     End If
+End Sub
+
+Private Sub Abort_cmd(Name)
+     If Tick.Enabled = True Then
+          If LCase(Name) = LCase(DotAHost) Or getAccess(Name) >= 30 Then
+               Call Abort(Name)
+          End If
+     End If
+End Sub
+
+Private Sub Confirm_cmd(Name)
+     If Tick.Enabled = True Then
+          If LCase(Name) = LCase(DotAHost) Then
+               If maxPlayers = vbNullString Then
+                    If TeamPool.Count >= 2 Then
+                         Call CreateTeams()
+                    Else
+                         AddQ StringFormat("{0}A player must sign before you can confirm the game!", msgPrefix)
+                    End If
+               Else
+                    If TeamPool.Count >= maxPlayers Then
+                         Call CreateTeams()
+                    Else
+                         AddQ StringFormat("{0}Not enough players have signed! {+{1}}", msgPrefix, CInt(maxPlayers - TeamPool.Count))
+                    End If
+               End If
+          End If
+     End If
+End Sub
+
+Private Sub Stats_cmd(Name, PayLoad)
+     Dim line, winPercent, rank
+
+     If Len(PayLoad) = 0 Then PayLoad = Name
+     If Not Exists(PayLoad) Then
+          AddQ StringFormat("{0}Player {1} hasn't played any games here", msgPrefix, PayLoad)
+     Else
+          If (getWins(PayLoad) + getLosses(PayLoad)) <= 3 Then
+               winPercent = "New! |" 
+          Else
+               winPercent = StringFormat("[% Ratio {0}% - {1}]", getWinPercent(PayLoad), getAlias(PayLoad, getRating(PayLoad)))
+          End If
+          
+          If getRank(PayLoad) <> 0 Then
+               rank = "Ranked " & getRank(PayLoad) & getSuffix(getRank(PayLoad))
+          Else
+               rank = "Unranked"
+          End If
+          
+          line = StringFormat("Stats for [ User#{0} {1} ] : ", getID(PayLoad), getName(PayLoad))
+          line = line & StringFormat("[{0}/{1} {2} EXP] {3} {5} | {4}", getWins(PayLoad), getLosses(PayLoad), getRating(PayLoad), winPercent, rank, getStrk(PayLoad))
+          AddQ StringFormat("{0}{1}", msgPrefix, line)
+     End If
+End Sub
+
+Private Sub End_cmd(Name, PayLoad)
+     If Not getCurrentGame(Name) = "N/A" Then
+          Select Case LCase(PayLoad)
+               Case "1", "sentinel", "sent"
+                    Set obj = dbConn.Execute("UPDATE `games` SET `sentinel_votes` = '" & getVotes(getCurrentGame(Name), "sentinel") + 1 & "' WHERE `game_name` = '" & getCurrentGame(Name)  & "'")
+                    If getEnough(getPlayers(getCurrentGame(Name))) - getVotes(getCurrentGame(Name), "sentinel") >= 1 Then
+                         AddQ StringFormat("{0}{1} voted [Sentinel] in game [{2}] {+{3}}", msgPrefix, Name, getCurrentGame(Name), getEnough(getPlayers(getCurrentGame(Name))) - getVotes(getCurrentGame(Name), "sentinel"))
+                         Set obj = dbConn.Execute("UPDATE `users` SET `current_game` = 'N/A' WHERE `user_name` = '" & Name & "'")
+                    Else
+                         Call SubmitWinner(getCurrentGame(Name), "Sentinel")
+                    End If
+               Case "2", "scourge", "scou"
+                    Set obj = dbConn.Execute("UPDATE `games` SET `scourge_votes` = '" & getVotes(getCurrentGame(Name), "scourge") + 1 & "' WHERE `game_name` = '" & getCurrentGame(Name)  & "'")
+                    If getEnough(getPlayers(getCurrentGame(Name))) - getVotes(getCurrentGame(Name), "scourge") >= 1 Then
+                         AddQ StringFormat("{0}{1} voted [Scourge] in game [{2}] {+{3}}", msgPrefix, Name, getCurrentGame(Name), getEnough(getPlayers(getCurrentGame(Name))) - getVotes(getCurrentGame(Name), "scourge"))
+                         Set obj = dbConn.Execute("UPDATE `users` SET `current_game` = 'N/A' WHERE `user_name` = '" & Name & "'")
+                    Else
+                         Call SubmitWinner(getCurrentGame(Name), "Scourge")
+                    End If
+          End Select
+     End If
+End Sub
+
+Private Sub Players_cmd(Name)
+     Dim line
+
+     If Tick.Enabled = True Then
+          line = StringFormat("{0}Game {1} | {2} secs | players: {3}", msgPrefix, GameName, timeLeft, getPlayerList)
+          If Not maxPlayers = vbNullString Then
+               line = line & StringFormat(" {+{0}}", CInt(maxPlayers - TeamPool.Count))
+          End If
+          
+          AddQ line
+     End If
+End Sub
+
+Private Sub Games_cmd(Name)
+     Dim line
+
+     If Tick.Enabled = True Then
+          If getActiveGames >= 1 Then
+               line = StringFormat("[{0}] active game{1} | [1] open game: < {2} > | {3} [{4} seconds]", getActiveGames, getString(getActiveGames), getGameList, GameName, timeLeft)
+               If Not maxPlayers = vbNullString Then
+                    If TeamPool.Count < maxPlayers Then
+                         line = line & StringFormat(" {+{0}}", CInt(maxPlayers - TeamPool.Count))
+                    End If
+               End If
+          Else
+               line = StringFormat("[0] active games | [1] open game: {0} [{1} seconds]", GameName, timeLeft)
+          End If
+     Else
+          If getActiveGames >= 1 Then
+               line = StringFormat("[{0}] active game{1} | [0] open games: < {2} >", getActiveGames, getString(getActiveGames), getGameList)
+          Else
+               line = "There are no active or open games"
+          End If
+     End If
+     
+     AddQ StringFormat("{0}{1}", msgPrefix, line)
+End Sub
+
+Private Sub Top_cmd(Name, PayLoad)
+     If Len(PayLoad) = 0 Then
+          PayLoad = 10
+     End If
+     
+     If PayLoad >= 11 Then
+          PayLoad = 10
+     End If
+	
+     If getTotalUsers >= PayLoad Then
+          AddQ StringFormat("{0}Current {1} leading players: {2}", msgPrefix, PayLoad, Trim(getLeadingPlayers(PayLoad)))
+     Else
+          AddQ StringFormat("There are not enough ranked players yet!", msgPrefix)
+     End If
+End Sub
+
+Private Sub Submit_cmd(Name, Game, Result)
+     '// Coming soon
+End Sub
+
+Private Sub Info_cmd(Name, PayLoad)
+     If gameExists(PayLoad) Then
+          Call getGameInfo(PayLoad)
+     Else
+          AddQ StringFormat("{0}Game not found! ({1})", msgPrefix, PayLoad)
+     End If
+End Sub
+
+Private Sub Promote_cmd(Name, PayLoad, Rank)
+     Dim TargetRank, CanPromote
+     Dim I, tempAccess, tempRank
+
+     If Not Exists(PayLoad) Then
+          AddQ StringFormat("{0}Player not found! ({1})", msgPrefix, PayLoad)
+     Else
+          If Len(Rank) > 0 Then
+               TargetRank = LCase(Rank)
+               CanPromote = False
+               For I = 0 To 10
+                    If LCase(rankNames(I)) = TargetRank Then
+                         CanPromote = True
+                    End If
+               Next
+                         
+               If CanPromote Then
+                    If getAccess(PayLoad) >= getAccess(Name) Then
+                         AddQ StringFormat("{0}You do not have sufficient access to do that", msgPrefix)
+                         Exit Sub
+                    End If
+               End If
+					
+               tempAccess = getAccessByRank(TargetRank)
+               If tempAccess <= getAccess(PayLoad) Then
+                    AddQ StringFormat("{0}Invalid rank issued!", msgPrefix)
+                    Exit Sub
+               End If
+
+               Set obj = dbConn.Execute("UPDATE `users` SET `access` = '" & tempAccess & "', `patron` = '" & Name & "' WHERE `user_name` = '" & PayLoad & "'")
+               AddQ StringFormat("{0}Player [{1}] has been promoted to {2} [{3} access]", msgPrefix, PayLoad, getHierarchyName(tempAccess), tempAccess)
+               Call AddToDatabase(PayLoad, tempAccess)
+          Else
+               tempRank = getHierarchyName(getAccess(PayLoad))
+               tempAccess = getAccessByRank(LCase(tempRank))
+               TargetRank = tempAccess + 10
+               If TargetRank >= getAccess(Name) Then
+                    AddQ msgPrefix & "You do not have sufficient access to do that"
+                    Exit Sub
+               End If
+          End If
+				
+          Set obj = dbConn.Execute("UPDATE `users` SET `access` = '" & TargetRank & "', `patron` = '" & Name & "' WHERE `user_name` = '" & PayLoad & "'")
+          AddQ StringFormat("{0}Player [{1}] has been promoted to {2} [{3} access]", msgPrefix, PayLoad, getHierarchyName(TargetRank), TargetRank)
+          Call AddToDatabase(PayLoad, TargetRank)
+     End If
+End Sub
+
+Private Sub Demote_cmd(Name, PayLoad, Rank)
+     Dim TargetRank, CanDemote
+     Dim I, tempAccess, tempRank
+
+     If Not Exists(PayLoad) Then
+          AddQ StringFormat("{0}Player not found! ({1})", msgPrefix, PayLoad)
+     Else
+          If Len(Rank) > 0 Then
+               TargetRank = LCase(Rank)
+               CanDemote = False
+               For I = 0 To 10
+                    If LCase(rankNames(I)) = TargetRank Then
+                         CanDemote = True
+                    End If
+               Next
+                         
+               If CanDemote Then
+                    If getAccess(PayLoad) >= getAccess(Name) Then
+                         AddQ StringFormat("{0}You do not have sufficient access to do that", msgPrefix)
+                         Exit Sub
+                    End If
+               End If
+
+               If (getAccess(PayLoad) = 0) Then
+                    AddQ StringFormat("{0}Player [{1}] cannot be further demoted!", msgPrefix, PayLoad)
+                    Exit Sub
+               End If
+               
+               tempAccess = getAccessByRank(TargetRank)
+               If tempAccess >= getAccess(PayLoad) Then
+                    AddQ StringFormat("{0}Invalid rank issued!", msgPrefix)
+                    Exit Sub
+               End If
+               
+               If tempAccess = 0 Then
+                    Set rs = dbConn.Execute("UPDATE `users` SET `access` = '" & tempAccess & "', `patron` = 'N/A' WHERE `user_name` = '" & PayLoad & "'")
+               Else
+                    Set rs = dbConn.Execute("UPDATE `users` SET `access` = '" & tempAccess & "', `patron` = '" & Username & "' WHERE `user_name` = '" & PayLoad & "'")
+               End If
+
+               AddQ StringFormat("{0}Player [{1}] has been demoted to {2} [{3} access]", msgPrefix, PayLoad, getHierarchyName(tempAccess), tempAccess)
+               Call AddToDatabase(PayLoad, tempAccess)
+          Else
+               tempRank = getHierarchyName(getAccess(PayLoad))
+               tempAccess = getAccessByRank(LCase(tempRank))
+               TargetRank = tempAccess - 10
+               If getAccess(PayLoad) >= getAccess(Name) Then
+                    AddQ StringFormat("You do not have sufficient access to do that", msgPrefix)
+                    Exit Sub
+               End If
+                         
+               If (getAccess(PayLoad) = 0) Then
+                    AddQ StringFormat("{0}Player [{1}] cannot be further demoted!", msgPrefix, PayLoad)
+                    Exit Sub
+               End If
+               
+               If TargetRank = 0 Then
+                    Set rs = dbConn.Execute("UPDATE `users` SET `access` = '" & TargetRank & "', `patron` = 'N/A' WHERE `user_name` = '" & PayLoad & "'")
+               Else
+                    Set rs = dbConn.Execute("UPDATE `users` SET `access` = '" & TargetRank & "', `patron` = '" & Username & "' WHERE `user_name` = '" & PayLoad & "'")
+               End If
+					
+               AddQ StringFormat("{0}Player [{1}] has been demoted to {2} [{3} access]", msgPrefix, PayLoad, getHierarchyName(TargetRank), TargetRank)
+               Call AddUser(Command.Argument("user"), TargetRank)
+          End If
+     End If
+End Sub
+
+Private Sub Whois_cmd(Name, PayLoad)
+     Dim line
+
+     If Not Exists(PayLoad) Then
+          AddQ StringFormat("{0}Player not found! ({1})", msgPrefix, PayLoad)
+     Else
+          line = StringFormat("Information on [ User#{0} {1} ] ", getID(PayLoad), getName(PayLoad))
+          If Not getPatron(PayLoad) = "N/A" Then
+               line = line & StringFormat("Position: {0} | Promoted by: {1} | ", getHierarchyName(getAccess(PayLoad)), getPatron(PayLoad))
+          End If
+
+          line = line & StringFormat("Vouched: {0} | Name: {1} | Age: {2} | Sex: {3} | Location: {4}", getVouched(PayLoad), getRealName(PayLoad), getAge(PayLoad), getSex(PayLoad), getLocation(PayLoad))
+          line = Replace(line, "Vouched: Y", "Vouched: Yes")
+          line = Replace(line, "Vouched: N", "Vouched: No")
+          If Not getCurrentGame(PayLoad) = "N/A" Then
+               line = line & StringFormat(" | Currently playing in {0}", getCurrentGame(PayLoad))
+          Else
+               line = line & " | Currently not playing in any game"
+          End If
+          
+          If Not getLastGame(PayLoad) = "N/A" Then
+               If Not getCurrentGame(PayLoad) = getLastGame(PayLoad) Then
+                    line = line & StringFormat(" | Last game was {0}", getLastGame(PayLoad))
+               End If
+          Else
+               line = line & " | No games played here"
+          End If
+     
+          If Not getWarns(PayLoad) = 0 Then
+               line = line & StringFormat(" | Warns: {0}%", getWarns(PayLoad))
+          End If
+     
+          AddQ StringFormat("{0}{1}", msgPrefix, line)
+     End If
+End Sub
+
+Private Sub KickIdles_cmd(Name)
+     Dim afkList, I, user
+     
+     For I = 1 To GetInternalUserCount()
+          user = GetNameByPosition(I)
+          If Not LCase(user) = LCase(Setting("ghost_name")) And Not getAccess(LCase(user)) >= 20 Then
+               If Not isOperator(user) Then
+                    If isAFK(user) Then
+                         afkList = afkList & user & "|"
+                    End If
+               End If
+          End If
+     Next
+               
+     If Not afkList = vbNullString Then
+          AddQ StringFormat("{0}Kicking all AFK users...", msgPrefix), 1
+          afkList = Split(afkList, "|")
+          For I = 0 To UBound(afkList)
+               AddQ "/kick " & afkList(I) & " AFK Kick", 2
+          Next
+     Else
+          AddQ StringFormat("{0}No AFK users found!", msgPrefix)
+     End If
+End Sub
+
+Private Sub Find_cmd(Name, PayLoad)
+     Dim findList, tempFInt, line
+     Dim Key, tempFStr, User
+
+     If Len(PayLoad) <= 2 Then
+          AddQ StringFormat("{0}Please use a longer request", msgPrefix)
+     Else
+          Set findList = CreateObject("Scripting.Dictionary")
+          findList.CompareMode = 1
+          Set obj = dbConn.Execute("SELECT `user_name` FROM `users`")
+          If Not (obj.BOF) And Not (obj.EOF) Then
+               Do Until obj.EOF
+                    User = obj.Fields(0)
+                    If Not findList.Exists(User) Then
+                         findList.Add User, " "
+                    End If
+                    
+                    obj.MoveNext
+               Loop
+
+               tempFInt = 0
+               tempFStr = "- [" & PayLoad & "] Matches found: "
+               For Each Key In findList.Keys
+                    If InStr(LCase(Key), LCase(PayLoad)) Then
+                         tempFStr = tempFStr & Key & " "
+                         tempFInt = tempFInt + 1
+                         If Len(tempFStr) > 170 Then
+                              AddQ StringFormat("{0}[{1} matches]{2} [More...]", msgPrefix, tempFInt, tempFStr)
+                              Exit Sub
+                         End If
+                    End If
+               Next
+					
+               If tempFInt >= 1 Then
+                    line = StringFormat("{0}[{1} match] {2}", msgPrefix, tempFInt, Trim(tempFStr))
+                    If tempFInt >= 2 Then
+                         line = Replace(line, "match", "matches")
+                    End If
+               Else
+                    line = StringFormat("{0}[{1}] No matches found!", msgPrefix, PayLoad)
+               End If
+
+               AddQ line
+               If findList.Count > 0 Then findList.RemoveAll
+               Set findList = Nothing
+          Else
+               AddQ StringFormat("Could not find any users", msgPrefix)
+          End If
+     End If
+End Sub
+
+Private Sub Forbid_cmd(Name, PayLoad)
+     Dim line
+
+     If Tick.Enabled = True Then
+          If LCase(Name) = LCase(DotAHost) Or getAccess(Name) >= 30 Then
+               If LCase(PayLoad) = LCase(DotAHost) Then Exit Sub
+               If forbidList.Exists(PayLoad) Then Exit Sub
+               
+               If ForbidList.Count >= 3 Then
+                    line = StringFormat("You may only forbid a maximum of 3 players per game!", msgPrefix)
+               Else
+                    forbidList.Add PayLoad, " "
+                    If TeamPool.Exists(PayLoad) Then
+                         TeamPool.Remove(PayLoad)
+                    End If
+                                                  
+                    line = StringFormat("{0} has been forbidden for signing into {1}", PayLoad, GameName)
+                    If Not maxPlayers = vbNullString Then
+                         line = line & StringFormat(" {+{0}}", CInt(maxPlayers - TeamPool.Count))
+                    End If
+               End If
+               
+               AddQ StringFormat("{0}{1}", msgPrefix, line)
+          End If
+     End If
+End Sub
+
+Private Sub Vouch_cmd(Name, PayLoad)
+     Dim line
+
+     If Not Exists(PayLoad) Then
+          Call addPlayer(PayLoad)
+          line = StringFormat("{0} has been vouched by {1}", PayLoad, Name)
+     Else
+          If getVouched(PayLoad) = "N" Then
+               Set obj = dbConn.Execute("UPDATE `users` SET `vouched` = 'Y' WHERE `user_name` = '" & PayLoad & "'")
+               line = StringFormat("{0} has been vouched by {1}", PayLoad, Name)
+               Set obj = Nothing
+          Else
+               line = StringFormat("{0} is already vouched", PayLoad)
+          End If
+     End If
+     
+     AddQ StringFormat("{0}{1}", msgPrefix, line)
+End Sub
+
+Private Sub Unvouch_cmd(Name, PayLoad)
+     Dim line
+
+     If Exists(PayLoad) Then
+          If getVouched(PayLoad) = "Y" Then
+               Set obj = dbConn.Execute("UPDATE `users` SET `vouched` = 'N' WHERE `user_name` = '" & PayLoad & "'")
+               line = StringFormat("{0} has been unvouched by {1}", PayLoad, Name)
+               Set obj = Nothing
+          End If
+     End If
+     
+     If line = vbNullString Then
+          line = StringFormat("{0} isn't vouched", PayLoad)
+     End If
+     
+     AddQ StringFormat("{0}{1}", msgPrefix, line)
+End Sub
+
+Private Sub Edit_cmd(Name, Entry, Value)
+     Dim line
+     
+     Select Case LCase(Entry)
+          Case "name"
+               Set obj = dbConn.Execute("UPDATE `users` SET `real_name` = '" & Value & "' WHERE `user_name` = '" & Name & "'")
+               line = StringFormat("Name configured! [{0}]", Value)
+          Case "age"
+               If IsNumeric(Value) Then
+                    Set obj = dbConn.Execute("UPDATE `users` SET `age` = '" & Value & "' WHERE `user_name` = '" & Name & "'")
+                    line = StringFormat("Age configured! [{0}]", Value)
+               Else
+                    line = "That value is not acceptable"
+               End If
+          Case "sex"
+               If LCase(Value) = "male" Or LCase(Value) = "female" Then
+                    Set obj = dbConn.Execute("UPDATE `users` SET `sex` = '" & Value & "' WHERE `user_name` = '" & Name & "'")
+                    line = StringFormat("Sex configured! [{0}]", Value)
+               Else
+                    line = "That value is not acceptable"
+               End If
+          Case "location"
+               If Not Len(Value) >= 40 Then
+                    Set obj = dbConn.Execute("UPDATE `users` SET `location` = '" & Value & "' WHERE `user_name` = '" & Name & "'")
+                    line = StringFormat("Location configured! [{0}]", Value)
+               Else
+                    line = "That value extends the character limit"
+               End If
+          Case Else
+               line = "Please specify what to edit. Name, age, sex or location"
+     End Select
+     
+     AddQ StringFormat("{0}{1}", msgPrefix, line)
+End Sub
+
+Private Sub Warn_cmd(Name, PayLoad, Amount, Reason)
+     If Not Exists(PayLoad) Then
+          AddQ StringFormat("{0}Player not found! ({1})", msgPrefix, PayLoad)
+     Else
+          If getAccess(PayLoad) >= getAccess(Name) Then
+               AddQ StringFormat("{0}You do not have sufficient access to do that", msgPrefix)
+               Exit Sub
+          End If
+          If Not IsNumeric(Amount) Then Exit Sub
+          If Not Len(Reason) = 0 Then
+               If InStr(Reason, "'") Then
+                    Reason = Replace(Reason, "'", "")
+               End If
+                                             
+               If Len(Reason) >= 151 Then
+                    AddQ StringFormat("{0}The reason extends the character limit with {1} characters", msgPrefix, CInt(Len(Reason) - 151))
+                    Exit Sub
+               End If
+          Else
+               Reason = "N/A"
+          End If
+							
+		Set obj = dbConn.Execute("INSERT INTO `warns` (`warn_id`, `user_name`, `warn_date`, `initiator`, `warns_amount`, `warn_reason`, `warns_decayed`) VALUES ('" & getWarnID() & "', '" & PayLoad & "', '" & Now & "', '" & Name & "', '" & Amount & "', '" & Reason & "', '0')")
+		AddQ StringFormat("{0}{1} was warned with {2}% by {3}. Date warned: {4} | Reason: {5}", msgPrefix, PayLoad, Amount, Name, convertDate(Now), Reason)
+	'	Call CheckWarns(Command.Argument("user"))
+     End If
+End Sub
+
+
+'// Functions
+
+Private Function getUserID()
+     Set obj = dbConn.Execute("SELECT COUNT (`user_id`) FROM `users`")
+     If CInt(obj.Fields(0)) = 0 Then
+          getUserID = 1
+     Else
+          getUserID = CInt(obj.Fields(0)) + 1
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getGameID()
+     Set obj = dbConn.Execute("SELECT COUNT (`game_id`) FROM `games`")
+     If CInt(obj.Fields(0)) = 0 Then
+          getGameID = 1
+     Else
+          getGameID = CInt(obj.Fields(0)) + 1
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getWarnID()
+     Set obj = dbConn.Execute("SELECT COUNT (`warn_id`) FROM `warns`")
+     If CInt(obj.Fields(0)) = 0 Then
+          getWarnID = 1
+     Else
+          getWarnID = CInt(obj.Fields(0)) + 1
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getString(Number)
+     Select Case Number
+          Case 1
+               getString = vbNullString
+          Case Else
+               getString = "s"
+     End Select
+End Function
+
+Private Function convertDate(String)
+     Dim j
+
+	j = Left(String, Len(String) - 12)
+	j = Split(j, "/")
+	
+	Select Case j(0)
+          Case "1" : convertDate = "Jan" & j(1)
+          Case "2" : convertDate = "Feb" & j(1)
+          Case "3" : convertDate = "Mar" & j(1)
+          Case "4" : convertDate = "Apr" & j(1)
+          Case "5" : convertDate = "May" & j(1)
+          Case "6" : convertDate = "Jun" & j(1)
+          Case "7" : convertDate = "Jul" & j(1)
+          Case "8" : convertDate = "Aug" & j(1)
+          Case "9" : convertDate = "Sep" & j(1)
+          Case "10" : convertDate = "Oct" & j(1)
+          Case "11" : convertDate = "Nov" & j(1)
+          Case "12" : convertDate = "Dec" & j(1)
+     End Select
+End Function
+
+Private Function getBanned(Name)
+     Set obj = dbConn.Execute("SELECT `banned` FROM `bans` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getBanned = obj.Fields(0)
+     End If
+End Function
+
+Private Function getGameList()
+     Set obj = dbConn.Execute("SELECT `added_on`, `game_name` FROM `games` WHERE CInt(`game_result`) = '1'")
+     obj.MoveFirst
+     Do Until obj.EOF
+          getGameList = getGameList & obj.Fields(1) & "[" & DateDiff("n", obj.Fields(0), Now) & " minute" & getString(DateDiff("n", obj.Fields(0), Now)) & "] "
+          obj.MoveNext
+     Loop
+     
+     Set obj = Nothing
+End Function
+
+Private Function Exists(Name)
+     Set obj = dbConn.Execute("SELECT * FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          Exists = True
+     Else
+          Exists = False
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function gameExists(Game)
+     Set obj = dbConn.Execute("SELECT * FROM `games` WHERE `game_name` = '" & Game & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          gameExists = True
+     Else
+          gameExists = False
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getPlayerList()
+     Dim line, User
+
+     For Each User In TeamPool.Keys
+          If LCase(User) = LCase(DotAHost) Then
+               line = line & "<[C] " & User & "> "
+          Else
+               line = line & User & "[" & getRating(User) & "] "
+          End If
+     Next
+     
+     getPlayerList = Trim(line)
+End Function
+
+Private Function getName(Name)
+     Set obj = dbConn.Execute("SELECT `user_name` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getName = obj.Fields(0)
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getPlayers(Game)
+     Set obj = dbConn.Execute("SELECT `player_amount` FROM `games` WHERE `game_name` = '" & Game & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getPlayers = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getRating(Name)
+     Set obj = dbConn.Execute("SELECT `rating` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getRating = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getWarnDate(Warn)
+AddChat color.Plum, Warn
+     Set obj = dbConn.Execute("SELECT `warn_date` FROM `warns` WHERE `warn` = '" & Warn & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getWarnDate = obj.Fields(0)
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getVouched(Name)
+     getVouched = "N"
+     Set obj = dbConn.Execute("SELECT `vouched` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getVouched = obj.Fields(0)
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getLastRating(Name)
+     Set obj = dbConn.Execute("SELECT `last_rating` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getLastRating = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getWins(Name)
+     Set obj = dbConn.Execute("SELECT `wins` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getWins = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getLosses(Name)
+     Set obj = dbConn.Execute("SELECT `losses` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getLosses = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getStreak(Name)
+     Set obj = dbConn.Execute("SELECT `streak` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getStreak = Replace(CInt(obj.Fields(0)), "-", "")
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getStrk(Name)
+     Set obj = dbConn.Execute("SELECT `streak` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          If Left(CInt(obj.Fields(0)), 1) = "-" Then
+               getStrk = CInt(obj.Fields(0))
+          Else
+               getStrk = "+" & CInt(obj.Fields(0))
+          End If
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getRank(Name)
+     Dim userRank, rank
+
+     userRank = 0
+     Set obj = dbConn.Execute("SELECT COUNT (*) AS TOTAL FROM `users` WHERE `rating` > " & getRating(Name) & " AND (`wins` + `losses`) > 0")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          rank = CInt(obj.Fields(0))
+          If (getWins(Name) + getLosses(Name)) >= 1 Then
+               userRank = rank + 1
+          End If
+     End If
+     
+     getRank = userRank
+     Set obj = Nothing
+End Function
+
+Private Function getSuffix(Number)
+     Select Case Right(Number, 1)
+          Case 1
+               getSuffix = "st"
+          Case 2
+               getSuffix = "nd"
+          Case 3
+               getSuffix = "rd"
+          Case Else
+               getSuffix = "th"
+     End Select
+     
+     If Number >= 11 And Number <= 13 Then
+          getSuffix = "th"
+     End If
+End Function
+
+Private Function getID(Name)
+     Set obj = dbConn.Execute("SELECT `user_id` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getID = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getWinPercent(Name)
+     getWinPercent = getWins(Name) / (getWins(Name) + getLosses(Name)) * 100
+     getWinPercent = FormatNumber(getWinPercent, 2)
+End Function
+
+Private Function getAccess(Name)
+     Set obj = dbConn.Execute("SELECT `access` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getAccess = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getPatron(Name)
+     Set obj = dbConn.Execute("SELECT `patron` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getPatron = obj.Fields(0)
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getWarns(Name)
+     Set obj = dbConn.Execute("SELECT `warns_amount` FROM `warns` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getWarns = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getHierarchyName(Access)
+     Select Case Access
+          Case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9: getHierarchyName = "Regular"
+          Case 10, 11, 12, 13, 14, 15, 16, 17, 18, 19: getHierarchyName = "Host"
+          Case 20, 21, 22, 23, 24, 25, 26, 27, 28, 29: getHierarchyName = "VIP"
+          Case 30, 31, 32, 33, 34, 35, 36, 37, 38, 39: getHierarchyName = "Inspector"
+          Case 40, 41, 42, 43, 44, 45, 46, 47, 48, 49: getHierarchyName = "Voucher"
+          Case 50, 51, 52, 53, 54, 55, 56, 57, 58, 59: getHierarchyName = "Warden"
+          Case 60, 61, 62, 63, 64, 65, 66, 67, 68, 69: getHierarchyName = "Moderator"
+          Case 70, 71, 72, 73, 74, 75, 76, 77, 78, 79: getHierarchyName = "Manager"
+          Case 80, 81, 82 ,83 ,84, 85, 86, 87, 88, 89: getHierarchyName = "Overseer"
+          Case 90, 91, 92, 93, 94, 95, 96, 97, 98, 99: getHierarchyName = "Administrator"
+          Case 100: getHierarchyName = "Head-Administrator"
+     End Select	
+End Function
+
+Private Function getAccessByRank(Rank)
+     Select Case LCase(Rank)
+          Case "regular" : getAccessByRank = 0
+          Case "host" : getAccessByRank = 10
+          Case "vip" : getAccessByRank = 20
+          Case "inspector" : getAccessByRank = 30
+          Case "voucher" : getAccessByRank = 40
+          Case "warden" : getAccessByRank = 50
+          Case "moderator" : getAccessByRank = 60
+          Case "manager" : getAccessByRank = 70
+          Case "overseer" : getAccessByRank = 80
+          Case "administrator" : getAccessByRank = 90
+          Case "head-administrator" : getAccessByRank = 100
+     End Select
+End Function
+
+Private Function getAlias(Name, Rating)
+     If Rating < 700 Then
+          getAlias = "Noob"
+     ElseIf Rating < 900 And Rating > 699 Then
+          getAlias = "Bad"
+     ElseIf Rating < 1100 And Rating > 999 Then
+          If getWins(Name) =< 4 Then
+               getAlias = "New!"
+          Else
+               getAlias = "Rookie"
+          End If
+     ElseIf Rating > 1099 And Rating < 1249 Then
+          If getWins(Name) > getLosses(Name) Then
+               getAlias = "Amateur"
+          Else
+               getAlias = "Experienced"
+          End If
+     ElseIf Rating > 1248 And Rating < 1399 Then
+          If getWins(Name) > getLosses(Name) Then
+               getAlias = "Semi-Pro"
+          Else
+               getAlias = "Enthusiast"
+          End If
+     ElseIf Rating > 1398 And Rating < 1551 Then
+          If getWins(Name) > getLosses(Name) Then
+               getAlias = "Professional"
+          Else
+               getAlias = "Remarkable"
+          End If
+     ElseIf Rating > 1550 And Rating < 1651 Then
+          If getWins(Name) > getLosses(Name) Then
+               getAlias = "Expert"
+          Else
+               getAlias = "Antagonistic"
+          End If
+     ElseIf Rating > 1650 And Rating < 1800 Then
+          If getWins(Name) > getLosses(Name) Then
+               getAlias = "Master"
+          Else
+               getAlias = "Godlike"
+          End If
+     ElseIf Rating > 1799 Then
+          If getWins(Name) > getLosses(Name) Then
+               getAlias = "Grandmaster"
+          Else
+               getAlias = "Legendary"
+          End If
+     Else
+          getAlias = "Poor"		
+     End If
+End Function
+
+Private Function isOperator(Name)
+     If GetInternalDataByUsername(Name, 1) = 2 Then
+          isOperator = True
+	Else
+          isOperator = False
+	End If
+End Function
+
+Private Function isAFK(Name)
+     If GetInternalDataByUsername(Name, 7) > 300 Then
+          isAFK = True
+     Else
+          isAFK = False
+     End If
+End Function
+
+Private Function getCurrentGame(Name)
+     Set obj = dbConn.Execute("SELECT `current_game` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getCurrentGame = obj.Fields(0)
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getLastGame(Name)
+     Set obj = dbConn.Execute("SELECT `last_game` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getLastGame = obj.Fields(0)
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getRealName(Name)
+     Set obj = dbConn.Execute("SELECT `real_name` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getRealName = obj.Fields(0)
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getAge(Name)
+     Set obj = dbConn.Execute("SELECT `age` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          If CInt(obj.Fields(0)) = 0 Then
+               getAge = "N/A"
+          Else
+               getAge = CInt(obj.Fields(0))
+          End If
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getSex(Name)
+     Set obj = dbConn.Execute("SELECT `sex` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getSex = obj.Fields(0)
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getLocation(Name)
+     Set obj = dbConn.Execute("SELECT `location` FROM `users` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getLocation = obj.Fields(0)
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getTotalUsers()
+     getTotalUsers = 0
+     Set obj = dbConn.Execute("SELECT COUNT (`user_id`) FROM `users`")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getTotalUsers = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getVotes(Game, Team)
+     Set obj = dbConn.Execute("SELECT `" & Team & "_votes` FROM `games` WHERE `game_name` = '" & Game & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getVotes = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getActiveGames()
+     Set obj = dbConn.Execute("SELECT COUNT (`game_id`) FROM `games` WHERE CInt(`game_result`) = '1'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getActiveGames = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getTotalGames()
+     Set obj = dbConn.Execute("SELECT COUNT (`game_id`) FROM `games` WHERE (CInt(`game_result`) > 1)")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          getTotalGames = CInt(obj.Fields(0))
+     End If
+     
+     Set obj = Nothing
+End Function
+
+Private Function getGameInfo(Game)
+     Dim m, line, sent, scou
+     Dim n, b, J, I
+
+     m = ""
+     For I = 1 To 12
+          m = m & "`player_" & I & "`, "
+     Next
+     
+     Set obj = dbConn.Execute("SELECT `game_id`, `game_name`, `added_on`, `player_amount`, `resulted_on`, `game_result`, `sentinel_points`, `scourge_points`, `player_one`, `player_two`, `player_three`, `player_four`, `player_five`, `player_six`, `player_seven`, `player_eight`, `player_nine`, `player_ten`, `player_eleven`, `player_twelve`, " & Left(m, Len(m) - 2) & " FROM `games` WHERE `game_name` = '" & Game & "'")
+     sent = obj.Fields(8) & " " & obj.Fields(9) & " " & obj.Fields(10) & " " & obj.Fields(11) & " " & obj.Fields(12) & " " & obj.Fields(13)
+     scou = obj.Fields(14) & " " & obj.Fields(15) & " " & obj.Fields(16) & " " & obj.Fields(17) & " " & obj.Fields(18) & " " & obj.Fields(19)
+     sent = Split(sent, " ")
+     scou = Split(scou, " ")
+     If CInt(obj.Fields(5)) = 1 Then
+          For J = 0 To 5
+               If Not sent(J) = "None" Then
+                    n = n & " " & sent(J)
+               End If
+               
+               If Not scou(J) = "None" Then
+                    b = b & " " & scou(J)
+               End If
+          Next
+
+          line = StringFormat("Game info for {0} : Sentinel <{1} [{5}]> Scourge <{2} [{6}]> {3} minute{4}", obj.Fields(1), n, b, DateDiff("n", obj.Fields(2), Now), getString(DateDiff("n", obj.Fields(2), Now)), obj.Fields(6), obj.Fields(7))
+     Else
+          For J = 0 To 5
+               If CInt(obj.Fields(5)) = 2 Then
+                    If Not sent(J) = "None" Then
+                         n = n & " " & sent(J) & "{+" & obj.Fields(J + 20) & "}"
+                    End If
+                    
+                    If Not scou(J) = "None" Then
+                         b = b & " " & scou(J) & "{-" & obj.Fields(J + 26) & "}"
+                    End If
+               Else
+                    If Not sent(J) = "None" Then
+                         n = n & " " & sent(J) & "{-" & obj.Fields(J + 20) & "}"
+                    End If
+                    
+                    If Not scou(J) = "None" Then
+                         b = b & " " & scou(J) & "{+" & obj.Fields(J + 26) & "}"
+                    End If
+               End If
+          Next
+
+          line = StringFormat("Info on {0} ({1}) : Sentinel <{2} > Scourge <{3} >", obj.Fields(1), convertDate(obj.Fields(4)), n, b)
+          If CInt(obj.Fields(5)) = 2 Then
+               line = line & " Sentinel won"
+          Else
+               line = line & " Scourge won"
+          End If
+     End If
+     
+     AddQ StringFormat("{0}{1}", msgPrefix, line)
+     Set obj = Nothing
+End Function
+
+Private Function getLeadingPlayers(Number)
+     Dim I, line
+
+     Set obj = dbConn.Execute("SELECT `user_name`, `rating` FROM `users` ORDER BY `rating` DESC")
+     I = 0
+     line = ""
+     Do Until I = Number Or obj.EOF
+          line = line & StringFormat("{0}>{1}[{2}] ", I + 1, obj.Fields(0), obj.Fields(1))
+          I = I + 1
+          obj.MoveNext
+     Loop
+
+     getLeadingPlayers = line
+     Set obj = Nothing
+End Function
+
+Private Function ConvertWinner(Result)
+     Select Case LCase(Result)
+          Case "sentinel"
+               ConvertWinner = 2
+          Case "scourge"
+               ConvertWinner = 3
+     End Select
+End Function
+
+Private Function Setting(Entry)
+     Setting = GetSettingsEntry(Entry)
+End Function
+
+Private Function IsTrue(Entry)
+     Select Case UCase(Setting(Entry))
+          Case "Y", "YES", "TRUE", "T", "1"
+               IsTrue = True
+          Case Else
+               IsTrue = False
+        End Select
+End Function
+
+Private Function getEnough(Number)
+     Select Case Number
+          Case 2
+               getEnough = 2
+          Case 3
+               getEnough = 2
+          Case 4
+               getEnough = 3
+          Case 5
+               getEnough = 3
+          Case 6
+               getEnough = 4
+          Case 7
+               getEnough = 4
+          Case 8
+               getEnough = 5
+          Case 9
+               getEnough = 5
+          Case 10
+               getEnough = 6
+          Case 11
+               getEnough = 6
+          Case 12
+               getEnough = 7
+     End Select
+End Function
+
+Private Function IsInChannel(Name)
+     Dim I, n
+
+     IsInChannel = False
+     For I = 1 To GetInternalUserCount()
+          n = GetNameByPosition(I)
+          If LCase(n) = LCase(Name) Then
+               IsInChannel = True
+          End If
+     Next
+End Function
+
+
+'// Timers
+
+Sub Tick_Timer()
+     If timeLeft = 0 Then
+          Call Abort(BotVars.Username)
+     Else
+          timeLeft = timeLeft - 1
+     End If
+     
+     If timeLeft = CInt(Setting("abort_time") / 2) Then
+          AddQ StringFormat("{0}The game will abort in {1} seconds", msgPrefix, timeLeft)
+     End If
+End Sub
+
+Sub MergePlayers_Timer()
+     Dim users, User
+     
+     If userQueue.Count >= 1 Then
+          users = ""
+          For Each User In userQueue.Keys
+               If Len(users) = 0 Then
+                    users = users & User & "[" & getRating(User) & "]"
+               Else
+                    users = users & ", " & User & "[" & getRating(User) & "]"
+               End If
+          Next
+          
+          If Not maxPlayers = vbNullString Then
+               If CInt(TeamPool.Count) >= maxPlayers Then
+                    AddQ StringFormat("{1}{0} signed in! {Full}", users, msgPrefix)
+                    Call CreateTeams()
+               Else
+                    AddQ StringFormat("{2}{0} signed in! {+{1}}", users, CInt(maxPlayers - TeamPool.Count), msgPrefix)
+               End If
+          Else
+               AddQ StringFormat("{1}{0} signed in! {2} can {3}confirm the game", users, msgPrefix, DotAHost, BotVars.Trigger)
+          End If
+          
+          userQueue.RemoveAll
+     End If
+End Sub
+
+
+'// Miscellaneous subs
+
+Private Sub AddToDatabase(Name, Access)
+	Call Command(BotVars.Username, "/add " & Name & " " & Access, True)
+     AddChat &HFFCC33, Script("Name") & " by " & Script("Author") & " - Player [" & Name & "] added with " & Access & " access!"
+End Sub
+
+Private Sub SubmitWinner(Game, Result)
+     Dim line, timeBonus, I, m
+     Dim players, win, loss, J
+     Dim sentRating, scouRating
+
+     line = StringFormat("{0}Experience Change • ", msgPrefix)
+     Set obj = dbConn.Execute("SELECT `added_on`, `sentinel_points`, `scourge_points`, `player_amount`, `player_one`, `player_two`, `player_three`, `player_four`, `player_five`, `player_six`, `player_seven`, `player_eight`, `player_nine`, `player_ten`, `player_eleven`, `player_twelve` FROM `games` WHERE `game_name` = '" & Game & "'")
+     sentRating = obj.Fields(1)
+     scouRating = obj.Fields(2)
+     players = obj.Fields(4) & " " & obj.Fields(5) & " " & obj.Fields(6) & " " & obj.Fields(7) & " " & obj.Fields(8) & " " & obj.Fields(9) & " " & obj.Fields(10) & " " & obj.Fields(11) & " " & obj.Fields(12) & " " & obj.Fields(13) & " " & obj.Fields(14) & " " & obj.Fields(15)
+     players = Split(players, " ")
+     If DateDiff("n", obj.Fields(0), Now) < 20 Then
+          timeBonus = 0.2
+     ElseIf DateDiff("n", obj.Fields(0), Now) > 20 And DateDiff("n", obj.Fields(0), Now) < 31 Then
+          timeBonus = 0.4
+     ElseIf DateDiff("n", obj.Fields(0), Now) > 30 And DateDiff("n", obj.Fields(0), Now) < 46 Then
+          timeBonus = 0.6
+     ElseIf DateDiff("n", obj.Fields(0), Now) > 45 And DateDiff("n", obj.Fields(0), Now) < 61 Then
+          timeBonus = 0.7
+     ElseIf DateDiff("n", obj.Fields(0), Now) > 60 And DateDiff("n", obj.Fields(0), Now) < 76 Then
+          timeBonus = 0.8
+     ElseIf DateDiff("n", obj.Fields(0), Now) > 75 Then
+          timeBonus = 0.6
+     End If
+     
+     dbConn.Execute("UPDATE `games` SET `game_result`= '" & ConvertWinner(Result) & "', `resulted_on` = '" & Now & "' WHERE `game_name` = '" & Game & "'")
+     AddQ StringFormat("{0}The [{1}] has been declared as the winner of {2}!", msgPrefix, Result, Game)
+     If Result = "Sentinel" Then
+          For I = 0 To 11
+               If Not players(I) = "None" Then
+                    If getRating(players(I)) < 1600 Then
+                         win = CInt((17 + CInt((1 + 6) * Rnd)) * (scouRating / sentRating + timeBonus))
+                         loss = CInt((14 + CInt((1 + 6) * Rnd)) * (scouRating / sentRating + timeBonus))
+                    Else
+                         win = CInt((13 + CInt((1 + 6) * Rnd)) * (scouRating / sentRating + timeBonus))
+                         loss = CInt((10 + CInt((1 + 6) * Rnd)) * (scouRating / sentRating + timeBonus))
+                    End If
+                    
+                    If I < 6 Then
+                         dbConn.Execute("UPDATE `users` SET `wins` = '" & getWins(players(I)) + 1 & "', `rating` = '" & getRating(players(I)) + win & "', `current_game` = 'N/A', `last_rating` = '" & win & "', `streak` = '" & getStreak(players(I)) + 1 & "' WHERE `user_name` = '" & players(I) & "'")
+                         line = line & players(I) & "{+" & getLastRating(players(I)) & "} "
+                    Else
+                         dbConn.Execute("UPDATE `users` SET `losses` = '" & getLosses(players(I)) + 1 & "', `rating` = '" & getRating(players(I)) - loss & "', `current_game` = 'N/A', `last_rating` = '" & loss & "' WHERE `user_name` = '" & players(I) & "'")
+                         If InStr(getStrk(players(I)), "-") Then
+                              dbConn.Execute("UPDATE `users` SET `streak` = '-" & getStreak(players(I)) + 1 & "' WHERE `user_name` = '" & players(I) & "'")
+                         Else
+                              dbConn.Execute("UPDATE `users` SET `streak` = '-1' WHERE `user_name` = '" & players(I) & "'")
+                         End If
+                         
+                         line = line & players(I) & "{-" & getLastRating(players(I)) & "} "
+                    End If
+               End If
+          Next
+     Else
+          For I = 0 To 11
+               If Not players(I) = "None" Then
+                    If getRating(players(I)) < 1600 Then
+                         win = CInt((17 + CInt((1 + 6) * Rnd)) * (sentRating / scouRating + timeBonus))
+                         loss = CInt((14 + CInt((1 + 6) * Rnd)) * (sentRating / scouRating + timeBonus))
+                    Else
+                         win = CInt((13 + CInt((1 + 6) * Rnd)) * (sentRating / scouRating + timeBonus))
+                         loss = CInt((10 + CInt((1 + 6) * Rnd)) * (sentRating / scouRating + timeBonus))
+                    End If
+                    
+                    If  I < 6 Then
+                         dbConn.Execute("UPDATE `users` SET `losses` = '" & getLosses(players(I)) + 1 & "', `rating` = '" & getRating(players(I)) - loss & "', `current_game` = 'N/A', `last_rating` = '" & loss & "' WHERE `user_name` = '" & players(I) & "'")
+                         If InStr(getStrk(players(I)), "-") Then
+                              dbConn.Execute("UPDATE `users` SET `streak` = '-" & getStreak(players(I)) + 1 & "' WHERE `user_name` = '" & players(I) & "'")
+                         Else
+                              dbConn.Execute("UPDATE `users` SET `streak` = '-1' WHERE `user_name` = '" & players(I) & "'")
+                         End If
+                         
+                         line = line & players(I) & "{-" & getLastRating(players(I)) & "} "
+                    Else
+                         dbConn.Execute("UPDATE `users` SET `wins` = '" & getWins(players(I)) + 1 & "', `rating` = '" & getRating(players(I)) + win & "', `current_game` = 'N/A', `last_rating` = '" & win & "', `streak` = '" & getStreak(players(I)) + 1 & "' WHERE `user_name` = '" & players(I) & "'")
+                         line = line & players(I) & "{+" & getLastRating(players(I)) & "} "
+                    End If
+               End If
+          Next
+     End If
+     
+     m = ""
+     For J = 0 To 11
+          If Not players(J) = "None" Then
+               m = m & "`player_" & J + 1 & "` = '" & CInt(getLastRating(players(J))) & "', "
+          End If
+     Next
+     
+     Set obj = dbConn.Execute("UPDATE `games` SET " & Left(m, Len(m) - 2) & " WHERE `game_name` = '" & Game & "'")
+     AddQ Trim(line)
+     Set obj = Nothing
+End Sub
+
+Private Sub dbConnect()
+     Dim dbConnStringProperty
+
+	Set dbConn = CreateObject("ADODB.Connection")
+	dbConnStringProperty = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & DBPath
+	dbConn.ConnectionString = dbConnStringProperty
+	dbConn.Open
+End Sub
+
+Private Sub CreateDB()
+     Dim Catalog
+
+	Set Catalog = CreateObject("ADOX.Catalog")
+	Catalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & DBPath   
+	
+	dbConnect()  
+          dbConn.Execute("CREATE TABLE `users` (`user_id` INT, `user_name` varchar(20), `rating` INT, `wins` INT, `losses` INT, `current_game` varchar(20), `last_game` varchar(20), `last_rating` INT, `streak` INT, `access` INT, `patron` varchar(20), `real_name` varchar(20), `age` INT, `sex` varchar(10), `location` varchar(40), `warns` INT, `vouched` varchar(10))")
+          dbConn.Execute("CREATE TABLE `games` (`game_id` INT, `game_name` varchar(20), `added_on` varchar(40), `player_amount` INT, `resulted_on` varchar(40), `game_result` INT, `sentinel_votes` INT, `scourge_votes` INT, `sentinel_points` INT, `scourge_points` INT, `player_one` varchar(20), `player_two` varchar(20), `player_three` varchar(20), `player_four` varchar(20), `player_five` varchar(20), `player_six` varchar(20), `player_seven` varchar(20), `player_eight` varchar(20), `player_nine` varchar(20), `player_ten` varchar(20), `player_eleven` varchar(20), `player_twelve` varchar(20), `player_1` INT, `player_2` INT, `player_3` INT, `player_4` INT, `player_5` INT, `player_6` INT, `player_7` INT, `player_8` INT, `player_9` INT, `player_10` INT, `player_11` INT, `player_12` INT)")	
+          dbConn.Execute("CREATE TABLE `warns` (`warn_id` INT, `user_name` varchar(20), `warn_date` varchar(40), `initiator` varchar(20), `warns_amount` INT, `warn_reason` varchar(150), `warns_decayed` INT)")
+          dbConn.Execute("CREATE TABLE `mails` (`mail_id` varchar(5), `mailed_from` varchar(20), `mailed_to` varchar(20), `date_mailed` varchar(40), `date_read` varchar(40), `mail` varchar(255), `mail_state` INT)")
+          dbConn.Execute("CREATE TABLE `bans` (`user_name` varchar(20), `initiator` varchar(20), `ban_reason` varchar(150), `minutes` INT, `type` varchar(20), `banned` varchar(10))")
+     dbConn.Close
+End Sub
+
+Private Sub checkWarns(Name)
+     Set obj = dbConn.Execute("SELECT `warns_amount` FROM `warns` WHERE `user_name` = '" & Name & "'")
+     If Not (obj.BOF) And Not (obj.EOF) Then
+          If CInt(obj.Fields(0)) >= 100 Then
+               If IsInChannel(Name) Then
+                    AddQ StringFormat("/ban {0} Warn limit exceeded", Name)
+               End If
+               
+               Set obj = dbConn.Execute("UPDATE `bans` SET `banned` = 'Y', `type` = 'Permanent', `initiator` = '" & BotVars.Username & "', `ban_reason` = 'Warn limit exceeded' WHERE `user_name` = '" & Name & "'")
+          ElseIf CInt(obj.Fields(0)) >= 50 And Not CInt(obj.Fields(0)) >= 100 Then
+               
+               '// Add a mail (upcoming mail system) for the user to warn him about his current warn %
+               '// Coming soon...
+          
+          End If
+     End If
+     
+     Set obj = Nothing
+End Sub
+
+Private Sub addPlayer(Name)
+     Set obj = dbConn.Execute("INSERT INTO `users` (`user_id`, `user_name`, `rating`, `wins`, `losses`, `current_game`, `last_game`, `last_rating`, `streak`, `access`, `patron`, `real_name`, `age`, `sex`, `location`, `warns`, `vouched`) VALUES ('" & getUserID & "', '" & Name & "', '1000', '0', '0', 'N/A', 'N/A', '0', '0', '0', 'N/A', 'N/A', '0', 'N/A', 'N/A', '0', 'Y')")
+     Set obj = dbConn.Execute("INSERT INTO `bans` (`user_name`, `initiator`, `ban_reason`, `minutes`, `type`, `banned`) VALUES ('" & Name & "', 'N/A', 'N/A', '0', 'N/A', 'N')")
+     AddChat &HFFCC33, Script("Name") & " by " & Script("Author") & " - Player [" & Name & "] automatically added!"
+     Set obj = Nothing
+End Sub
+
+Private Sub Abort(Name)
+     TeamPool.RemoveAll
+     forbidList.RemoveAll
+     DotAHost = vbNullString
+     MergePlayers.Enabled = False
+     Tick.Enabled = False
+     timeLeft = 0
+     GameName = vbNullString
+
+     If LCase(Name) = LCase(BotVars.Username) Then
+          AddQ StringFormat("{0}The game has been aborted due to inactivity!", msgPrefix)
+     Else
+          AddQ StringFormat("{1}{0} has aborted the game!", Name, msgPrefix)
+     End If
+End Sub
+
+Private Sub CreateTeams()
+     Dim I '// Used to divide the players to team 1 or 2
+     Dim J, sent, scou, m, n
+     Dim Key, Sentinel, Scourge, line
+     Dim sentinelRating, scourgeRating
+
+     I = 1
+     For Each Key In TeamPool.Keys
+          If I = 1 Then
+               If Sentinel = vbNullString Then
+                    Sentinel = Key
+               Else
+                    Sentinel = Sentinel & " " & Key
+               End If
+               
+               sentinelRating = sentinelRating + getRating(Key)
+               I = 2
+          Else
+               If Scourge = vbNullString Then
+                    Scourge = Key
+               Else
+                    Scourge = Scourge & " " & Key
+               End If
+               
+               scourgeRating = scourgeRating + getRating(Key)
+               I = 1
+          End If
+     Next
+     
+     AddQ StringFormat("{1}Sentinel: < {0} [{2}] >", Sentinel, msgPrefix, sentinelRating)
+     AddQ StringFormat("{1}Scourge: < {0} [{2}] >", Scourge, msgPrefix, scourgeRating)
+     If Setting("ghost_name") <> "N/A" Then
+          AddQ StringFormat("/w {0} {1}privby {2} {3}", Setting("ghost_name"), Setting("ghost_trigger"), DotAHost, GameName)
+          AddQ StringFormat("{0}Game {1} has been hosted on {2} | Owner: {3}", msgPrefix, GameName, Setting("ghost_name"), DotAHost)
+     End If
+     
+     sent = Split(Sentinel, " ")
+     scou = Split(Scourge, " ")
+     For J = 0 To CInt(TeamPool.Count)
+          If J > UBound(sent) Then Exit For
+          Set obj = dbConn.Execute("UPDATE `users` SET `current_game` = '" & GameName & "', `last_game` = '" & GameName & "' WHERE `user_name` = '" & sent(J) & "'")
+          If J > UBound(scou) Then Exit For
+          Set obj = dbConn.Execute("UPDATE `users` SET `current_game` = '" & GameName & "', `last_game` = '" & GameName & "' WHERE `user_name` = '" & scou(J) & "'")
+     Next
+     
+     m = ""
+     n = ""
+     For I = 1 To 12
+          n = n & "'0', "
+          m = m & "`player_" & I & "`, "
+     Next
+     
+     Set obj = dbConn.Execute("INSERT INTO `games` (`game_id`, `game_name`, `added_on`, `player_amount`, `resulted_on`, `game_result`, `sentinel_votes`, `scourge_votes`, `sentinel_points`, `scourge_points`, `player_one`, `player_two`, `player_three`, `player_four`, `player_five`, `player_six`, `player_seven`, `player_eight`, `player_nine`, `player_ten`, `player_eleven`, `player_twelve`, " & Left(m, Len(m) - 2) & ") VALUES ('" & getGameID & "', '" & GameName & "', '" & Now & "', '" & TeamPool.Count & "', '" & Now & "', '1', '0', '0', '" & sentinelRating & "', '" & scourgeRating & "', " & getPlayerString(Sentinel, Scourge) & ", " & Left(n, Len(n) - 2) & ")")
+     TeamPool.RemoveAll
+     DotAHost = vbNullString
+     MergePlayers.Enabled = False
+     Tick.Enabled = False
+     timeLeft = 0
+     GameName = vbNullString
+     Set obj = Nothing
+End Sub
+
+Private Function getPlayerString(TeamOne, TeamTwo)
+     If InStr(TeamOne, " ") Then
+          TeamOne = Split(TeamOne, " ")
+     End If
+     
+     If InStr(TeamTwo, " ") Then
+          TeamTwo = Split(TeamTwo, " ")
+     End If
+
+     Select Case CInt(TeamPool.Count)
+          Case 2
+               getPlayerString = "'" & TeamOne & "', 'None', 'None', 'None', 'None', 'None', '" & TeamTwo & "', 'None', 'None', 'None', 'None', 'None'"
+          Case 3
+               getPlayerString = "'" & TeamOne(0) & "', '" & TeamOne(1) & "', 'None', 'None', 'None', 'None', '"  & TeamTwo & "', 'None', 'None', 'None', 'None', 'None'"
+          Case 4
+               getPlayerString = "'" & TeamOne(0) & "', '" & TeamOne(1) & "', 'None', 'None', 'None', 'None', '"  & TeamTwo(0) & "', '" & TeamTwo(1) & "', 'None', 'None', 'None', 'None'"
+          Case 5
+               getPlayerString = "'" & TeamOne(0) & "', '" & TeamOne(1) & "', '" & TeamOne(2) & "', 'None', 'None', 'None', '"  & TeamTwo(0) & "', '" & TeamTwo(1) & "', 'None', 'None', 'None', 'None'"
+          Case 6
+               getPlayerString = "'" & TeamOne(0) & "', '" & TeamOne(1) & "', '" & TeamOne(2) & "', 'None', 'None', 'None', '"  & TeamTwo(0) & "', '" & TeamTwo(1) & "', '" & TeamTwo(2) & "', 'None', 'None', 'None'"
+          Case 7
+               getPlayerString = "'" & TeamOne(0) & "', '" & TeamOne(1) & "', '" & TeamOne(2) & "', '" & TeamOne(3) & "', 'None', 'None', '"  & TeamTwo(0) & "', '" & TeamTwo(1) & "', '" & TeamTwo(2) & "', 'None', 'None', 'None'"
+          Case 8
+               getPlayerString = "'" & TeamOne(0) & "', '" & TeamOne(1) & "', '" & TeamOne(2) & "', '" & TeamOne(3) & "', 'None', 'None', '"  & TeamTwo(0) & "', '" & TeamTwo(1) & "', '" & TeamTwo(2) & "', '" & TeamTwo(3) & "', 'None', 'None'"
+          Case 9
+               getPlayerString = "'" & TeamOne(0) & "', '" & TeamOne(1) & "', '" & TeamOne(2) & "', '" & TeamOne(3) & "', '" & TeamOne(4) & "', 'None', '"  & TeamTwo(0) & "', '" & TeamTwo(1) & "', '" & TeamTwo(2) & "', '" & TeamTwo(3) & "', 'None', 'None'"
+          Case 10
+               getPlayerString = "'" & TeamOne(0) & "', '" & TeamOne(1) & "', '" & TeamOne(2) & "', '" & TeamOne(3) & "', '" & TeamOne(4) & "', 'None', '"  & TeamTwo(0) & "', '" & TeamTwo(1) & "', '" & TeamTwo(2) & "', '" & TeamTwo(3) & "', '" & TeamTwo(4) & "', 'None'"
+          Case 11
+               getPlayerString = "'" & TeamOne(0) & "', '" & TeamOne(1) & "', '" & TeamOne(2) & "', '" & TeamOne(3) & "', '" & TeamOne(4) & "', '" & TeamOne(5) & "', '"  & TeamTwo(0) & "', '" & TeamTwo(1) & "', '" & TeamTwo(2) & "', '" & TeamTwo(3) & "', '" & TeamTwo(4) & "', 'None'"
+          Case 12
+               getPlayerString = "'" & TeamOne(0) & "', '" & TeamOne(1) & "', '" & TeamOne(2) & "', '" & TeamOne(3) & "', '" & TeamOne(4) & "', '" & TeamOne(5) & "', '"  & TeamTwo(0) & "', '" & TeamTwo(1) & "', '" & TeamTwo(2) & "', '" & TeamTwo(3) & "', '" & TeamTwo(4) & "', '" & TeamTwo(5) & "'"
+     End Select
+End Function
+
+Private Sub CreateCommands()
+     Dim Command, Parameter
+     
+     If OpenCommand("createteams") Is Nothing Then
+          With CreateCommand("createteams")
+               .Description = "Creates two teams" 
+               .RequiredRank = 10
+               Set Parameter = .NewParameter("number", True, "Word")
+               Parameter.Description = "The maximum amount of players"
+               .Parameters.Add Parameter
+               .Aliases.Add "start"
+               .Aliases.Add "creategame"
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("addme") Is Nothing Then
+          With CreateCommand("addme")
+               .Description = "Adds the user to one of the two existing teams" 
+               .RequiredRank = 0
+               .Aliases.Add "sign"
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("removeme") Is Nothing Then
+          With CreateCommand("removeme")
+               .Description = "Removes the user if the user is on a team" 
+               .RequiredRank = 0
+               .Aliases.Add "out"
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("remove") Is Nothing Then
+          With CreateCommand("remove")
+               .Description = "Removes a specified user if the user is on a team" 
+               .RequiredRank = 10
+               Set Parameter = .NewParameter("user", False, "Word")
+               Parameter.Description = "The user to remove"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("abort") Is Nothing Then
+          With CreateCommand("abort")
+               .Description = "Aborts the current game" 
+               .RequiredRank = 10
+               .SpecialNotes = "Only available for the host"
+               .Aliases.Add "a"
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("confirm") Is Nothing Then
+          With CreateCommand("confirm")
+               .Description = "Confirms the current game" 
+               .RequiredRank = 50
+               .SpecialNotes = "Only available for the host"
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("stats") Is Nothing Then
+          With CreateCommand("stats")
+               .Description = "Displays the stats of a user" 
+               .RequiredRank = 0
+               Set Parameter = .NewParameter("user", True, "Word")
+               Parameter.Description = "The user whos stats to display"
+               .Parameters.Add Parameter
+               .Aliases.Add "rank"
+               .Aliases.Add "statistics"
+               .Aliases.Add "score"
+               .Save
+          End With
+     End If
+
+     If OpenCommand("end") Is Nothing Then
+          With CreateCommand("end")
+               .Description = "Results the game" 
+               .RequiredRank = 0
+               Set Parameter = .NewParameter("result", False, "Word")
+               Parameter.Description = "The result. Sentinel/Scourge"
+               .Parameters.Add Parameter
+               .Aliases.Add "result"
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("players") Is Nothing Then
+          With CreateCommand("players")
+               .Description = "Displays all signed players" 
+               .RequiredRank = 0
+               .Aliases.Add "listplayers"
+               .Aliases.Add "pool"
+               .Aliases.Add "listpool"
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("games") Is Nothing Then
+          With CreateCommand("games")
+               .Description = "Displays active and open games" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("top") Is Nothing Then
+          With CreateCommand("top")
+               .Description = "Displays the leading players" 
+               .RequiredRank = 0
+               Set Parameter = .NewParameter("number", True, "Word")
+               Parameter.Description = "Number of players to display"
+               .Parameters.Add Parameter
+               .Aliases.Add "leaders"
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("submit") Is Nothing Then
+          With CreateCommand("submit")
+               .Description = "Results a game" 
+               .RequiredRank = 50
+               Set Parameter = .NewParameter("game", False, "Word")
+               Parameter.Description = "The game to result"
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("result", False, "Word")
+               Parameter.Description = "The result. Sentinel/Scourge"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("info") Is Nothing Then
+          With CreateCommand("info")
+               .Description = "Displays information for an already ended game" 
+               .RequiredRank = 0
+               Set Parameter = .NewParameter("game", False, "Word")
+               Parameter.Description = "The game to display"
+               .Parameters.Add Parameter
+               .Aliases.Add "gameinfo"
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("promote") Is Nothing Then
+          With CreateCommand("promote")
+               .Description = "Promotes a user" 
+               .RequiredRank = 40
+               Set Parameter = .NewParameter("user", False, "Word")
+               Parameter.Description = "The user to promote"
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("rank", True, "Word")
+               Parameter.Description = "The rank which the user is promoted to"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("demote") Is Nothing Then
+          With CreateCommand("demote")
+               .Description = "Demotes a user" 
+               .RequiredRank = 40
+               Set Parameter = .NewParameter("user", False, "Word")
+               Parameter.Description = "The user to demote"
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("rank", True, "Word")
+               Parameter.Description = "The rank which the user is demoted to"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("whoami") Is Nothing Then
+          With CreateCommand("whoami")
+               .Description = "Displays information on the user" 
+               .RequiredRank = 0
+               .Aliases.Add "me"
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("whois") Is Nothing Then
+          With CreateCommand("whois")
+               .Description = "Displays information on a user" 
+               .RequiredRank = 0
+               Set Parameter = .NewParameter("user", False, "Word")
+               Parameter.Description = "The user whos information to display"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("kickidles") Is Nothing Then
+          With CreateCommand("kickidles")
+               .Description = "Kicks all afk users from the channel" 
+               .RequiredRank = 20
+               .Aliases.Add "kickafk"
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("find") Is Nothing Then
+          With CreateCommand("find")
+               .Description = "Searches for a user" 
+               .RequiredRank = 20
+               .Aliases.Add "search"
+               Set Parameter = .NewParameter("user", False, "Word")
+               Parameter.Description = "The user to search for"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("forbid") Is Nothing Then
+          With CreateCommand("forbid")
+               .Description = "Forbids a player from signing in" 
+               .RequiredRank = 10
+               Set Parameter = .NewParameter("user", False, "Word")
+               Parameter.Description = "The user to forbid"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("vouch") Is Nothing Then
+          With CreateCommand("vouch")
+               .Description = "Vouches a player" 
+               .RequiredRank = 40
+               Set Parameter = .NewParameter("user", False, "Word")
+               Parameter.Description = "The user to vouch"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("unvouch") Is Nothing Then
+          With CreateCommand("unvouch")
+               .Description = "Unvouches a already vouched player" 
+               .RequiredRank = 40
+               Set Parameter = .NewParameter("user", False, "Word")
+               Parameter.Description = "The user to unvouch"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("edit") Is Nothing Then
+          With CreateCommand("edit")
+               .Description = "Edits name, age, sex or location" 
+               .RequiredRank = 0
+               Set Parameter = .NewParameter("entry", False, "Word")
+               Parameter.Description = "The entry to edit - name, age, sex or location"
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("value", False, "String")
+               Parameter.Description = "The value of the entry"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+        
+     If OpenCommand("warn") Is Nothing Then
+          With CreateCommand("warn")
+               .Description = "Warns a user with a chosen percentage" 
+               .RequiredRank = 40
+               Set Parameter = .NewParameter("user", False, "Word")
+               Parameter.Description = "The user to warn"
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("amount", False, "Word")
+               Parameter.Description = "The amount of percentage"
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("reason", True, "String")
+               Parameter.Description = "The reason for the warning"
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+     
+     Set Command = Nothing
+     Set Parameter = Nothing
+End Sub
+
+Private Sub CreateSettings()
+     Dim response
+     
+     If GetSettingsEntry("game_prefix") = vbNullString Then
+          WriteSettingsEntry "game_prefix", InputBox("Please enter the gamename prefix", Script("Name") & " by " & Script("Author"), "DotA")
+     End If
+
+     If GetSettingsEntry("abort_time") = vbNullString Then
+          WriteSettingsEntry "abort_time", InputBox("Please enter the amount in seconds of which the team creation will be cancelled if no players are being added", Script("Name") & " by " & Script("Author"), "60")
+     End If
+     
+     If GetSettingsEntry("emote_on") = vbNullString Then
+          response = MsgBox("Emote all messages?", vbYesNo, Script("Name") & " by " & Script("Author"))
+          If response = vbYes Then
+               response = "Y"
+          Else
+               response = "N"
+          End If
+
+          WriteSettingsEntry "emote_on", response
+          Set response = Nothing
+     End If
+     
+     If GetSettingsEntry("ghost_name") = vbNullString Then
+          response = MsgBox("Will you use a host bot to host these games?", vbYesNo, Script("Name") & " by " & Script("Author"))
+          If response = vbYes Then
+               WriteSettingsEntry "ghost_name", InputBox("Please enter the name of the hostbot you want the games created on", Script("Name") & " by " & Script("Author"), "")
+               WriteSettingsEntry "ghost_trigger", InputBox("Please type the hostbot's command trigger", Script("Name") & " by " & Script("Author"), "!")
+          Else
+               WriteSettingsEntry "ghost_name", "N/A"
+               WriteSettingsEntry "ghost_trigger", "N/A"
+          End If
+          
+          Set response = Nothing
+     End If
+     
+     If GetSettingsEntry("vip_greet") = vbNullString Then
+          WriteSettingsEntry "vip_greet", InputBox("Please enter the message that will be displayed when a user with the rank VIP enters the channel." & vbNewLine & " %0 : The name of the user", Script("Name") & " by " & Script("Author"), "Player %0[VIP] entered the channel")
+     End If
+     
+     If GetSettingsEntry("automatic_vouch") = vbNullString Then
+          response = MsgBox("Automatically vouch users?", vbYesNo, Script("Name") & " by " & Script("Author"))
+          If response = vbYes Then
+               response = "Y"
+          Else
+               response = "N"
+          End If
+
+          WriteSettingsEntry "automatic_vouch", response
+          If Not IsTrue("automatic_vouch") Then
+               response = MsgBox("Ban unvouched users when they enter the channel?", vbYesNo, Script("Name") & " by " & Script("Author"))
+               If response = vbYes Then
+                    response = "Y"
+               Else
+                    response = "N"
+               End If
+               
+               WriteSettingsEntry "vouches_only", response
+          Else
+               WriteSettingsEntry "vouches_only", "N"
+          End If
+          
+          If IsTrue("vouches_only") Then
+               WriteSettingsEntry "ban_message", InputBox("Please enter the reason as to why the unvouched users are being banned", Script("Name") & " by " & Script("Author"), "You are not safelisted!")
+          Else
+               WriteSettingsEntry "ban_message", "N/A"
+          End If
+          
+          Set response = Nothing
+     End If
+     
+     If GetSettingsEntry("league_leader") = vbNullString Then
+          WriteSettingsEntry "league_leader", InputBox("Please enter the leader of the league", Script("Name") & " by " & Script("Author"), BotVars.BotOwner)
+          Call Command(BotVars.Username, "/add " & Setting("league_leader") & " " & 100, True)
+          AddChat &HFFCC33, Script("Name") & " by " & Script("Author") & " - Player [" & Setting("league_leader") & "] automatically added!"
+          dbConnect()
+               dbConn.Execute("INSERT INTO `users` (`user_id`, `user_name`, `rating`, `wins`, `losses`, `current_game`, `last_game`, `last_rating`, `streak`, `access`, `patron`, `real_name`, `age`, `sex`, `location`, `warns`, `vouched`) VALUES ('" & getUserID & "', '" & Setting("league_leader") & "', '1000', '0', '0', 'N/A', 'N/A', '0', '0', '100', 'N/A', 'N/A', '0', 'N/A', 'N/A', '0', 'Y')")
+               dbConn.Execute("INSERT INTO `bans` (`user_name`, `initiator`, `ban_reason`, `minutes`, `type`, `banned`) VALUES ('" & Setting("league_leader") & "', 'N/A', 'N/A', '0', 'N/A', 'N')")
+          dbConn.Close
+     End If
+End Sub

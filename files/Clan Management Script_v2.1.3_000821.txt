@@ -1,0 +1,3037 @@
+Script("Name")           = "Clan Management Script"
+Script("Author")         = "RosieSuckedMe"
+Script("Major")          = 2
+Script("Minor")          = 1
+Script("Revision")       = 3
+Script("Description")    = "A highly customizeable clan management script which includes an extended mailing system, a vouching system, a request system and much more!"
+
+
+'////////////
+' CHANGELOG
+
+'//////
+'//
+'//// v.1.00
+'//
+'// Made some functions and subs. 
+'// Created commands, settings, folders and files
+'// Started out the basics
+'//
+'//
+'//// v.1.01
+'//
+'// Added the possibility to delete and then restore deleted mails
+'// Made some new functions and subs here as well
+'// Added the command "users" for some general user information
+'// Added the changelog
+'//
+'//
+'//// v.1.02
+'//
+'// Began the vouch requesting system with commands like "vouchrequest", "showrequests", "viewrequest", "approve" & "deny"
+'// Fixed a bug from the newly created deletemail command
+'// Changes some outputs and added some new functions and subs again
+'//
+'//
+'//// v.1.03
+'//
+'// Fixed a bug with the vouch requesting system as well as the command "showrequests"
+'// Added a new command too: "recentusers"
+'//
+'//
+'//// v.1.04
+'//
+'// Fixed a few bugs from the later revisions so the script is now bugfree
+'// Added the command "userinfo"
+'// Changed the vouch request system to work as good as possible
+'//
+'//
+'//// v.1.05 
+'//
+'// Added the warning system
+'// Added functions and custom subs
+'// Added two "in-bot" commands: "settings" and "commands"
+'// These commands are to be used from the bot, e.g: "/settings"
+'//
+'//
+'//// v.1.05b
+'//
+'// Fixed a few bugs, nothing really important
+'//
+'//
+'//// v.2.00
+'//
+'// Added the invitation application system (the "apply" command)
+'// Recreated the vouch system completely to work with the new invitation system as well
+'// Changed the database layout
+'// Added new subs and functions too
+'//
+'//
+'//// v.2.00b
+'//
+'// Fixed a bug where the warn was not deleted when it should be
+'// The script should now be bug-free!
+'//
+'//
+'//// v.2.01
+'//
+'// Added a command named "kickidles"
+'// Started up builting an advanced ranking system as well (access based)
+'//
+'//
+'//// v.2.10
+'//
+'// Added the commands "promote" and "demote" to the ranking system
+'// Now working on a "setaccess" command similar to promote and demote
+'//
+'//
+'//// v.2.11
+'//
+'// Added the command "setaccess"
+'// Finished the ranking system
+'// Fixed a few bugs and errors from the previous release
+'// Look forward for the next release which will include new awesome functions and commands
+'//
+'//
+'//// v.2.12
+'//
+'// Added 4 new commands "changesite", "changevent", "site", "hierarchy"
+'// Fixed the last bugs from the previous versions
+'//
+'//
+'//// v.2.13
+'//
+'// Added the command "go" and the command "staff"
+'// Changed a bit on the "kickidles" command - only effects messaging - nothing really important
+'// Made a small change to the "promote" & "demote" commands - only effects the fact that you cannot demote someone who has the same amount of access
+'//
+'//////
+
+
+'/////////////
+' TO-DO LIST
+
+'//////
+'//
+'// Start up implementing a DotA League System which includings autohosting, hostbots, matchmaking system, truantsystem, challenge system and ALOT more!
+'//
+'//////
+
+
+'/////////////
+' FILE PATHS
+
+Private clanFolder       '// Holds the main folder
+Private clanDataBase     '// Holds the database
+Private clanConfig       '// Holds the config file
+
+clanFolder               = BotPath & "Clan Management Script\"
+clanDataBase             = clanFolder & "database.mdb"
+clanConfig               = clanFolder & "settings.ini"
+
+
+'///////////////
+' MISCELLANEOUS
+
+Private scriptVersion    '// Holds the script version
+Private clanFSO          '// Holds the FSO (File System Object)
+Private dbConn           '// Holds the database connection
+Private clanPrefix       '// Holds the message prefix
+
+scriptVersion            = Script("Major") & "." & Script("Minor") & Script("Revision")
+Set clanFSO              = CreateObject("Scripting.FileSystemObject")
+
+
+'////////////
+' VARIABLES
+
+Private Const nonread = 1
+Private Const read = 2
+Private Const deleted = 3
+
+Private Const unresolved = 1
+Private Const approved = 2
+Private Const denied = 3
+
+Private error_Block      '// Errors if there is a setting mistake
+Private error_disc       '// Holds the mistaken setting
+Private rankNames        '// Holds all the ranks
+
+rankNames = Array("User","Captain","Inspector","Warden","Moderator","Super-Moderator","Manager","Overseer","Administrator","Super-Administrator")
+
+
+'////////////
+' EVENTS
+
+Sub Event_Load()
+     Dim Folder, File
+
+    '// The main folder does not exist
+     If NOT clanFSO.FolderExists(clanFolder) Then
+          AddChat vbRed, "[Clan Management Script] Main folder was not found! Creating now..."
+          Set Folder = clanFSO.CreateFolder(clanFolder)
+          Set Folder = Nothing
+     End If
+ 
+    '// The database does not exist
+     If NOT clanFSO.FileExists(clanDataBase) Then
+          AddChat vbRed, "[Clan Management Script] Database was not found! Creating now..."
+          Call createDB()
+     End If
+     
+    '// The config file does not exist
+     If NOT clanFSO.FileExists(clanConfig) Then
+          AddChat vbRed, "[Clan Management Script] Config was not found! Creating now..."
+          Call createConfig()
+     End If
+     
+    '// Create commands if nessesary
+     Call createCommands
+     
+    '// Create the counter timer
+     Call CreateObj("LongTimer", "counterTimer")
+     counterTimer.Enabled = True
+     counterTimer.Interval = 1
+ 
+    '// Max characters is chosen
+     If GetConfigEntry("Clan Management Script", "max_chars", clanConfig) = vbNullString Then
+          error_disc = "The setting [max_chars] must be set"
+          error_Block = True
+     Else
+          If NOT IsNumeric(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) Then
+               error_disc = "The setting [max_chars] must be numeric"
+               error_Block = True
+          End If
+     End If
+   
+    '// Emoting is enabled
+     If GetConfigEntry("Clan Management Script", "emote_on", clanConfig) = "Y" Then
+          clanPrefix = "/me • "
+     ElseIf GetConfigEntry("Clan Management Script", "emote_on", clanConfig) = "N" Then
+          clanPrefix = "• "
+     Else
+          error_disc = "The setting [emote_on] must be set to either Y or N"
+          error_Block = True
+     End If
+     
+    '// A director is chosen
+     If GetConfigEntry("Clan Management Script", "clan_director", clanConfig) <> vbNullString Then
+          dbConnect
+               Set rs = dbConn.Execute("SELECT * FROM `users` WHERE `user_name` = '" & GetConfigEntry("Clan Management Script", "clan_director", clanConfig) & "'")
+               If rs.BOF AND rs.EOF Then
+                    Set rs = dbConn.Execute("INSERT INTO `counts` (`users_day`, `users_week`, `week_day`, `week_num`, `users_month`, `autovouched_users`) VALUES ('" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "')")
+                    Set rs = dbConn.Execute("UPDATE `counts` SET `users_day` = '1', `users_week` = '1', `week_day` = '1', `week_num` = '1', `users_month` = '1', `autovouched_users` = '1'")
+                    
+                    Set rs = dbConn.Execute("INSERT INTO `users` (`user_id`, `user_name`, `mails_new`, `mails_old`, `mails_trunk`, `mails_total`, `mails_sent`, `mails_received`, `mails_read`, `mails`, `vouch_date`, `send_date`, `vouched_by`, `warns`, `warn_id`, `warn_date`, `warned_by`, `warn_reason`, `vouched`, `edit_name`, `edit_age`, `edit_sex`, `edit_location`, `access`, `patron`, `banned`) VALUES ('" & Get_UserID & "', '" & GetConfigEntry("Clan Management Script", "clan_director", clanConfig) & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & Get_Date & "', '" & "N/A" & "', '" & "Bot Console: Auto Vouch" & "', '" & 0 & "', '" & 0 & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "Y" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & 100 & "', '" & "N/A" & "', '" & "N" & "')")
+               End If
+          dbDisconnect
+     Else
+          error_disc = "The setting [clan_director] must be set"
+          error_Block = True
+     End If
+     
+    '// The setting auto_vouch is properly set
+     If GetConfigEntry("Clan Management Script", "auto_vouch", clanConfig) = "Y" Then
+          AddChat RGB(255, 100, 0), "[Clan Management Script] Auto Vouch: ON"
+     ElseIf GetConfigEntry("Clan Management Script", "auto_vouch", clanConfig) = "N" Then
+          AddChat RGB(255, 100, 0), "[Clan Management Script] Auto Vouch: OFF"
+     Else
+          error_disc = "The setting [auto_vouch] must be set to either Y or N"
+          error_Block = True
+     End If
+     
+    '// The setting warn_vouch is properly set
+     If GetConfigEntry("Clan Management Script", "warn_punish", clanConfig) = "kick" Then
+          '// Do nothing
+     ElseIf GetConfigEntry("Clan Management Script", "warn_punish", clanConfig) = "ban" Then
+          '// Do nothing again
+     ElseIf GetConfigEntry("Clan Management Script", "warn_punish", clanConfig) = "timeban" Then
+          '// Do nothing again
+     Else
+          error_disc = "The setting [warn_punish] must be set to either kick, ban or timeban"
+          error_Block = True
+     End If
+     
+     '// The setting warn_vouch is properly set
+     If GetConfigEntry("Clan Management Script", "ban_nonvouched", clanConfig) = "Y" Then
+          '// Do nothing
+     ElseIf GetConfigEntry("Clan Management Script", "ban_nonvouched", clanConfig) = "N" Then
+          '// Do nothing again
+     Else
+          error_disc = "The setting [ban_nonvouched] must be set to either Y or N"
+          error_Block = True
+     End If
+     
+     If GetConfigEntry("Clan Management Script", "allow_emote", clanConfig) = "Y" Then
+          '// Do nothing again
+     ElseIf GetConfigEntry("Clan Management Script", "allow_emote", clanConfig) = "N" Then
+          '// Do nothing again
+     Else
+          error_disc = "The setting [allow_emote] must be set to either Y or N"
+          error_Block = True
+     End If
+     
+     If error_Block Then
+          AddChat vbRed, "[Clan Management Script] SETTINGS ERROR:  <" & error_disc & ">"
+          Exit Sub
+     End If
+
+     AddChat RGB(51, 204, 255), "[Clan Management Script] Version:  v" & scriptVersion
+End Sub
+
+
+Sub Event_UserJoins(Username, Flags, Message, Ping, Product, Level, OriginalStatstring, Banned)
+     If GetConfigEntry("Clan Management Script", "auto_vouch", clanConfig) = "Y" Then
+          If NOT UserExists(Username) Then
+               dbConnect
+                    Set rs = dbConn.Execute("SELECT `users_day`, `users_week`, `users_month`, `autovouched_users` FROM `counts`")
+                    Set rs = dbConn.Execute("UPDATE `counts` SET `users_day` = '" & rs.Fields(0) + 1 & "', `users_week` = '" & rs.Fields(1) + 1 & "', `users_month` = '" & rs.Fields(2) + 1 & "', `autovouched_users` = '" & rs.Fields(3) + 1 & "'")
+                    
+                    Set rs = dbConn.Execute("INSERT INTO `users` (`user_id`, `user_name`, `mails_new`, `mails_old`, `mails_trunk`, `mails_total`, `mails_sent`, `mails_received`, `mails_read`, `mails`, `vouch_date`, `send_date`, `vouched_by`, `warns`, `warn_id`, `warn_date`, `warned_by`, `warn_reason`, `vouched`, `edit_name`, `edit_age`, `edit_sex`, `edit_location`, `access`, `patron`, `banned`) VALUES ('" & Get_UserID & "', '" & Username & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & Get_Date & "', '" & "N/A" & "', '" & "Auto Vouch" & "', '" & 0 & "', '" & 0 & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "Y" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & 0 & "', '" & "N/A" & "', '" & "N" & "')")
+               dbDisconnect
+          Else
+               dbConnect
+                    If HasNewMail(Username) Then
+                         Set rs = dbConn.Execute("SELECT `mails_new` FROM `users` WHERE `user_name` = '" & Username & "'")
+                         AddQ "/w " & Username & " • You have [" & rs.Fields(0) & " New] mails. Use " & BotVars.Trigger & "readnew"
+                    End If
+                    
+                    If NeedsInvitation(Username) Then
+                         Call Command(BotVars.Username, "/invite " & Username, True)
+                         Set rs = dbConn.Execute("UPDATE `invites` SET `invite_user` = 'N' WHERE `user_name` = '" & Username & "'")
+                    End If
+               dbDisconnect
+          End If
+     Else
+          If NOT UserExists(Username) Then
+               If GetConfigEntry("Clan Management Script", "ban_nonvouched", clanConfig) = "Y" Then
+                    Call Command(BotVars.Username, "/ban " & Username & " " & GetConfigEntry("Clan Management Script", "ban_message", clanConfig), True)
+               End If
+          Else
+               dbConnect
+                    If IsBanned(Username) Then
+                         Call Command(BotVars.Username, "/ban " & Username & " Permanently banned", True)
+                    End If
+               
+                    If HasNewMail(Username) Then
+                         Set rs = dbConn.Execute("SELECT `mails_new` FROM `users` WHERE `user_name` = '" & Username & "'")
+                         AddQ "/w " & Username & " • You have [" & rs.Fields(0) & " New] mails. Use " & BotVars.Trigger & "readnew"
+                    End If
+                    
+                    If NeedsInvitation(Username) Then
+                         Call Command(BotVars.Username, "/invite " & Username, True)
+                         Set rs = dbConn.Execute("UPDATE `invites` SET `invite_user` = 'N' WHERE `user_name` = '" & Username & "'")
+                    End If
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+     If Message = "?trigger" OR Message = "!trigger" OR Message = ".trigger" OR Message = "-trigger" OR Message = BotVars.Trigger & "trigger" OR Message = "trigger" Then
+          AddQ clanPrefix & "Bot command trigger: " & BotVars.Trigger
+     End If
+End Sub
+
+
+Sub Event_UserEmote(Username, Flags, Message)
+     If GetConfigEntry("Clan Management Script", "allow_emote", clanConfig) = "N" Then
+          If LCase(Username) = LCase(BotVars.Username) Then Exit Sub
+          
+          If NOT IsOp(Username) Then
+               Call Command(BotVars.Username, "/kick " & Username & " Emote is prohibited!", True)
+          End If
+     End If
+End Sub
+
+
+Sub Event_Command(Command)
+     Dim Username : Username = Command.Username
+     
+     If error_Block Then
+          AddChat vbRed, "[Clan Management Script] SETTINGS ERROR:  <" & error_disc & ">"
+          Exit Sub
+     End If
+     
+     Select Case LCase(Command.Name)
+          Case "mail"              : Call Mail_cmd(Username, Command)
+          Case "inbox"             : Call Inbox_cmd(Username, Command)
+          Case "readnew"           : Call ReadNew_cmd(Username, Command)
+          Case "readold"           : Call ReadOld_cmd(Username, Command)
+          Case "readtrunk"         : Call ReadTrunk_cmd(Username, Command)
+          Case "read"              : Call Read_cmd(Username, Command)
+          Case "delmail"           : Call DelMail_cmd(Username, Command)
+          Case "restoremail"       : Call RestoreMail_cmd(Username, Command)
+          Case "vouch"             : Call Vouch_cmd(Username, Command)
+          Case "unvouch"           : Call UnVouch_cmd(Username, Command)
+          Case "vouchrequest"      : Call VouchRequest_cmd(Username, Command)
+          Case "apply"             : Call Apply_cmd(Username, Command)
+          Case "showrequests"      : Call ShowRequests_cmd(Username, Command)
+          Case "viewrequest"       : Call ViewRequest_cmd(Username, Command)
+          Case "approve"           : Call Approve_cmd(Username, Command)
+          Case "deny"              : Call Deny_cmd(Username, Command)
+          Case "info"              : Call Info_cmd(Username, Command)
+          Case "users"             : Call Users_cmd(Username, Command)
+          Case "recentusers"       : Call RecentUsers_cmd(Username, Command)
+          Case "warn"              : Call Warn_cmd(Username, Command)
+          Case "warndelete"        : Call WarnDelete_cmd(Username, Command)
+          Case "warns"             : Call Warns_cmd(Username, Command)
+          Case "warninfo"          : Call WarnInfo_cmd(Username, Command)
+          Case "userinfo"          : Call UserInfo_cmd(Username, Command)
+          Case "edit"              : Call Edit_cmd(Username, Command)
+          Case "whoami"            : Call Whoami_cmd(Username, Command)
+          Case "whois"             : Call Whois_cmd(Username, Command)
+          Case "time"              : Call Time_cmd(Username, Command)
+          Case "kickidles"         : Call KickIdles_cmd(Username, Command)
+          Case "promote"           : Call Promote_cmd(Username, Command)
+          Case "demote"            : Call Demote_cmd(Username, Command)
+          Case "setaccess"         : Call SetAccess_cmd(Username, Command)
+          Case "changesite"        : Call ChangeSite_cmd(Username, Command)
+          Case "changevent"        : Call ChangeVent_cmd(Username, Command)
+          Case "site"              : Call Site_cmd(Username, Command)
+          Case "hierarchy"         : Call HierArchy_cmd(Username, Command)
+          Case "go"                : Call Go_cmd(Username, Command)
+          Case "staff"             : Call Staff_cmd(Username, Command)
+     End Select
+End Sub
+
+
+Sub Event_PressedEnter(Text)
+     If Text = "/recreatedb" OR Text = "/recreate" Then
+          Call recreateDB()
+     ElseIf Text = "/commands" OR Text = "/cmds" OR Text = "/help" Then
+          AddChat RGB(255, 100, 0), "[Clan Management Script] Initializing command displays"
+          AddChat RGB(219, 112, 255), "[Clan Management Script] Commands:"
+          AddChat RGB(51, 102, 255), "[Clan Management Script] "
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "mail <user> <message>"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "inbox"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "readnew"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "readold"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "readtrunk"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "read <id>"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "delmail <""all""/id>"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "restoremail <""all""/id>"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "vouch <user>"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "unvouch <user>"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "showrequests"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "viewrequest <user>"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "approve <user>"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "deny <user>"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "info [user]"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "users"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "userinfo"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "recentusers [users]"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "warn <user> <amount> [reason]"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "warndelete <id>"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "warns [user]"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "warninfo <id>"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "edit <""name""/""age""/""sex""/""location""> <entry>"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "whoami"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "whois <user>"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "trigger"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "time"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "kickidles"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "promote <user> [rank]"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "demote <user> [rank]"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "setaccess <user> <access>"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "changesite <website>"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "changevent <ventrilo>"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "site"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "hierarchy"
+          AddChat RGB(102, 255, 127), "[Clan Management Script] " & BotVars.Trigger & "go <channel>"
+          AddChat RGB(102, 255, 204), "[Clan Management Script] " & BotVars.Trigger & "staff"
+          AddChat RGB(51, 102, 255), "[Clan Management Script] "
+     ElseIf Text = "/settings" OR Text = "/config" Then
+          AddChat RGB(255, 100, 0), "[Clan Management Script] Initializing settings displays"
+          AddChat RGB(219, 112, 255), "[Clan Management Script] Settings:"
+          AddChat RGB(51, 102, 255), "[Clan Management Script] "
+          AddChat RGB(102, 255, 204), "[Clan Management Script] emote_on: " & GetConfigEntry("Clan Management Script", "emote_on", clanConfig)
+          AddChat RGB(102, 255, 127), "[Clan Management Script] max_chars: " & GetConfigEntry("Clan Management Script", "max_chars", clanConfig)
+          AddChat RGB(102, 255, 204), "[Clan Management Script] clan_director: " & GetConfigEntry("Clan Management Script", "clan_director", clanConfig)
+          AddChat RGB(102, 255, 127), "[Clan Management Script] auto_vouch: " & GetConfigEntry("Clan Management Script", "auto_vouch", clanConfig)
+          AddChat RGB(102, 255, 204), "[Clan Management Script] warn_punish: " & GetConfigEntry("Clan Management Script", "warn_punish", clanConfig)
+          AddChat RGB(102, 255, 127), "[Clan Management Script] ban_nonvouched: " & GetConfigEntry("Clan Management Script", "ban_nonvouched", clanConfig)
+          AddChat RGB(102, 255, 204), "[Clan Management Script] ban_message: " & GetConfigEntry("Clan Management Script", "ban_message", clanConfig)
+          AddChat RGB(102, 255, 127), "[Clan Management Script] web_site: " & GetConfigEntry("Clan Management Script", "web_site", clanConfig)
+          AddChat RGB(102, 255, 204), "[Clan Management Script] vent_rilo: " & GetConfigEntry("Clan Management Script", "vent_rilo", clanConfig)
+          AddChat RGB(102, 255, 127), "[Clan Management Script] allow_emote: " & GetConfigEntry("Clan Management Script", "allow_emote", clanConfig)
+          AddChat RGB(51, 102, 255), "[Clan Management Script] "
+     End If
+End Sub
+
+
+'////////////
+' FUNCTIONS
+
+Private Function UserExists(Username)
+     dbConnect
+          Set rs = dbConn.Execute("SELECT * FROM `users` WHERE `user_name` = '" & Username & "'")
+          If NOT (rs.BOF) AND NOT (rs.EOF) Then
+               UserExists = True
+          Else
+               UserExists = False
+          End If
+     dbDisconnect
+End Function
+
+
+Private Function Get_MailID
+     Set rs = dbConn.Execute("SELECT COUNT (`mail_id`) FROM `mails`")
+     If rs.Fields(0) = 0 Then
+          Get_MailID = 1
+     Else
+          Get_MailID = rs.Fields(0) + 1
+     End If
+End Function
+
+
+Private Function Get_UserID
+     Set rs = dbConn.Execute("SELECT COUNT (`user_id`) FROM `users`")
+     If rs.Fields(0) = 0 Then
+          Get_UserID = 1
+     Else
+          Get_UserID = rs.Fields(0) + 1
+     End If
+End Function
+
+
+Private Function Get_WarnID
+     Set rs = dbConn.Execute("SELECT COUNT (`warn_id`) FROM `warns`")
+     If rs.Fields(0) = 0 Then
+          Get_WarnID = 1
+     Else
+          Get_WarnID = rs.Fields(0) + 1
+     End If
+End Function
+
+
+Private Function Get_InviteID
+     Set rs = dbConn.Execute("SELECT COUNT (`invite_id`) FROM `invites`")
+     If rs.Fields(0) = 0 Then
+          Get_InviteID = 1
+     Else
+          Get_InviteID = rs.Fields(0) + 1
+     End If
+End Function
+
+
+Private Function IsVouched(Username, IsNumber)
+     dbConnect
+          If IsNumber = "N" Then
+               Set rs = dbConn.Execute("SELECT `vouched` FROM `users` WHERE `user_name` = '" & Username & "'")
+               
+               IsVouched = False
+               If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                    If rs.Fields(0) = "Y" Then
+                         IsVouched = True
+                    End If
+               End If
+          Else
+               Set rs = dbConn.Execute("SELECT `vouched` FROM `users` WHERE `user_id` = '" & Username & "'")
+               
+               IsVouched = False
+               If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                    If rs.Fields(0) = "Y" Then
+                         IsVouched = True
+                    End If
+               End If
+          End If
+     dbDisconnect
+End Function
+
+
+Private Function Get_Date
+     Dim j
+     
+     j = Split(CStr(Date), "/")
+     
+     Select Case j(0)
+          Case "1" : Get_Date = "Jan" & j(1)
+          Case "2" : Get_Date = "Feb" & j(1)
+          Case "3" : Get_Date = "Mar" & j(1)
+          Case "4" : Get_Date = "Apr" & j(1)
+          Case "5" : Get_Date = "May" & j(1)
+          Case "6" : Get_Date = "Jun" & j(1)
+          Case "7" : Get_Date = "Jul" & j(1)
+          Case "8" : Get_Date = "Aug" & j(1)
+          Case "9" : Get_Date = "Sep" & j(1)
+          Case "10" : Get_Date = "Oct" & j(1)
+          Case "11" : Get_Date = "Nov" & j(1)
+          Case "12" : Get_Date = "Dec" & j(1)
+     End Select
+End Function
+
+
+Private Function HasMail(Username)
+     HasMail = False
+     
+     Set rs = dbConn.Execute("SELECT `mails_new`, `mails_old` FROM `users` WHERE `user_name` = '" & Username & "'")
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          If rs.Fields(0) <> 0 AND rs.Fields(1) <> 0 Then
+               HasMail = True
+          End If
+     End If
+End Function
+
+
+Private Function HasNewMail(Username)
+     Set rs = dbConn.Execute("SELECT `mails_new` FROM `users` WHERE `user_name` = '" & Username & "'")
+     If rs.Fields(0) <> 0 Then
+          HasNewMail = True
+     Else
+          HasNewMail = False
+     End If
+End Function
+
+
+Private Function HasOldMail(Username)
+     Set rs = dbConn.Execute("SELECT `mails_old` FROM `users` WHERE `user_name` = '" & Username & "'")
+     If rs.Fields(0) <> 0 Then
+          HasOldMail = True
+     Else
+          HasOldMail = False
+     End If
+End Function
+
+
+Private Function Get_NewMails(Username)
+     Dim id, respond, counter
+
+     Set rs = dbConn.Execute("SELECT `mails` FROM `users` WHERE `user_name` = '" & Username & "'")
+     id = Left(rs.Fields(0), Len(rs.Fields(0)) - 1)
+     id = Split(id, ",")
+     For I = 0 To UBound(id)
+          If counter = 7 Then Exit For
+          
+          Set rs = dbConn.Execute("SELECT `mail_state` FROM `mails` WHERE `mail_id` = '" & id(I) & "'")
+          If rs.Fields(0) = nonread Then
+               Set rs = dbConn.Execute("SELECT `mail_id`, `mailed_from` FROM `mails` WHERE `mail_id` = '" & id(I) & "'")
+               respond = respond & "[" & rs.Fields(1) & " | ID <" & rs.Fields(0) & ">] "
+               
+               counter = counter + 1
+          End If
+     Next
+     
+     Get_NewMails = respond
+End Function
+
+
+Private Function Get_OldMails(Username)
+     Dim id, respond, counter
+
+     Set rs = dbConn.Execute("SELECT `mails` FROM `users` WHERE `user_name` = '" & Username & "'")
+     id = Left(rs.Fields(0), Len(rs.Fields(0)) - 1)
+     id = Split(id, ",")
+     For I = 0 To UBound(id)
+          If counter = 7 Then Exit For
+          
+          Set rs = dbConn.Execute("SELECT `mail_state` FROM `mails` WHERE `mail_id` = '" & id(I) & "'")
+          If rs.Fields(0) = read Then
+               Set rs = dbConn.Execute("SELECT `mail_id`, `mailed_from` FROM `mails` WHERE `mail_id` = '" & id(I) & "'")
+               respond = respond & "[" & rs.Fields(1) & " | ID <" & rs.Fields(0) & ">] "
+               
+               counter = counter + 1
+          End If
+     Next
+     
+     Get_OldMails = respond
+End Function
+
+
+Private Function Get_TrunkMails(Username)
+     Dim id, respond, counter
+
+     Set rs = dbConn.Execute("SELECT `mails` FROM `users` WHERE `user_name` = '" & Username & "'")
+     id = Left(rs.Fields(0), Len(rs.Fields(0)) - 1)
+     id = Split(id, ",")
+     For I = 0 To UBound(id)
+          If counter = 7 Then Exit For
+          
+          Set rs = dbConn.Execute("SELECT `mail_state` FROM `mails` WHERE `mail_id` = '" & id(I) & "'")
+          If rs.Fields(0) = deleted Then
+               Set rs = dbConn.Execute("SELECT `mail_id`, `mailed_from` FROM `mails` WHERE `mail_id` = '" & id(I) & "'")
+               respond = respond & "[" & rs.Fields(1) & " | ID <" & rs.Fields(0) & ">] "
+               
+               counter = counter + 1
+          End If
+     Next
+     
+     Get_TrunkMails = respond
+End Function
+
+
+Private Function HasMailID(Username, ID)
+     Set rs = dbConn.Execute("SELECT `mailed_to` FROM `mails` WHERE `mail_id` = '" & ID & "'")
+     If LCase(rs.Fields(0)) = LCase(Username) Then
+          HasMailID = True
+     Else
+          HasMailID = False
+     End If
+End Function
+
+
+Private Function IsTrunken(Username, ID)
+     IsTrunken = False
+
+     Set rs = dbConn.Execute("SELECT `mailed_to` FROM `mails` WHERE `mail_id` = '" & ID & "'")
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          If LCase(rs.Fields(0)) = LCase(Username) Then
+               Set rs = dbConn.Execute("SELECT `mail_state` FROM `mails` WHERE `mail_id` = '" & ID & "'")
+               If rs.Fields(0) = deleted Then
+                    IsTrunken = True
+               End If
+          End If
+     End If
+End Function
+
+
+Private Function User_HasTrunkedMail(Username)
+     Set rs = dbConn.Execute("SELECT `mails_trunk` FROM `users` WHERE `user_name` = '" & Username & "'")
+     If rs.Fields(0) > 0 Then
+          User_HasTrunkedMail = True
+     Else
+          User_HasTrunkedMail = False
+     End If
+End Function
+
+
+Private Function Get_TrunkedMail(Username)
+     Set rs = dbConn.Execute("SELECT `mails_trunk` FROM `users` WHERE `user_name` = '" & Username & "'")
+     Get_TrunkedMail = rs.Fields(0)
+End Function
+
+
+Private Function Get_RequestID
+     Set rs = dbConn.Execute("SELECT COUNT (`request_id`) FROM `requests`")
+     If rs.Fields(0) = 0 Then
+          Get_RequestID = 1
+     Else
+          Get_RequestID = rs.Fields(0) + 1
+     End If
+End Function
+
+
+Private Function HasRequested(Username)
+     dbConnect
+     Set rs = dbConn.Execute("SELECT * FROM `requests` WHERE `user_name` = '" & Username & "'")
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          HasRequested = True
+     Else
+          HasRequested = False
+     End If
+End Function
+
+
+Private Function HasRequestedInvite(Username)
+     Set rs = dbConn.Execute("SELECT * FROM `invites` WHERE `user_name` = '" & Username & "'")
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          HasRequestedInvite = True
+     Else
+          HasRequestedInvite = False
+     End If
+End Function
+
+
+Private Function HasBeenVouched(Username)
+     Set rs = dbConn.Execute("SELECT `vouch_state` FROM `requests` WHERE `user_name` = '" & Username & "'")
+     If rs.Fields(0) = 2 Then
+          HasBeenVouched = True
+     Else
+          HasBeenVouched = False
+     End If     
+End Function
+
+
+Private Function IsWarned(Username)
+     Set rs = dbConn.Execute("SELECT `warns` FROM `users` WHERE `user_name` = '" & Username & "'")
+     IsWarned = False
+     
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          If rs.Fields(0) > 0 Then
+               IsWarned = True
+          End If
+     End If
+End Function
+
+
+Private Function WarnExists(ID)
+     Set rs = dbConn.Execute("SELECT * FROM `warns` WHERE `warn_id` = '" & ID & "'")
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          WarnExists = True
+     Else
+          WarnExists = False
+     End If
+End Function
+
+
+Private Function Get_Warns(Username)
+     Set rs = dbConn.Execute("SELECT `warns` FROM `users` WHERE `user_name` = '" & Username & "'")
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          Get_Warns = rs.Fields(0)
+     End If
+End Function
+
+
+Private Function Get_IDs(Username)
+     Set rs = dbConn.Execute("SELECT `warn_id` FROM `users` WHERE `user_name` = '" & Username & "'")
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          Get_IDs = rs.Fields(0)
+     End If
+End Function
+
+
+Private Function IsDeleted(ID)
+     Set rs = dbConn.Execute("SELECT `warn_amount` FROM `warns` WHERE `warn_id` = '" & ID & "'")
+     If rs.Fields(0) = "Deleted" Then
+          IsDeleted = True
+     Else
+          IsDeleted = False
+     End If
+End Function
+
+
+Private Function NeedsInvitation(Username)
+     Set rs = dbConn.Execute("SELECT * FROM `invites` WHERE `user_name` = '" & Username & "'")
+     NeedsInvitation = False
+     
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          If rs.Fields(7) = "Y" Then
+               NeedsInvitation = True
+          End If
+     End If
+End Function
+
+
+Private Function IsOp(Username)
+     If GetInternalDataByUsername(Username, 1)=2 then
+          IsOp = True
+	Else
+          IsOp = False
+	End If
+End Function
+
+
+Private Function isInChannel(Username)
+     isInChannel = False
+     For I = 1 To GetInternalUserCount()
+          n = GetNameByPosition(I)
+          If LCase(n) = LCase(Username) Then isInChannel = True
+     Next
+End Function	
+	
+     
+Private Function isAFK(Username)
+     If GetInternalDataByUsername(Username, 7) > 300 Then
+          isAfk = True
+     Else
+          isAfk = False
+     End If
+End Function
+
+
+Private Function isBanned(Username)
+     IsBanned = False
+     Set rs = dbConn.Execute("SELECT `banned` FROM `users` WHERE `user_name` = '" & Username & "'")
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          If rs.Fields(0) = "Y" Then
+               IsBanned = True
+          End If
+     End If
+     
+     Set rs = Nothing
+End Function
+
+
+Private Function GetAccess(Username)
+     GetAccess = 0
+     Set rs = dbConn.Execute("SELECT `access` FROM `users` WHERE `user_name` = '" & Username & "'")
+     If NOT (rs.BOF) AND NOT (rs.EOF) Then
+          GetAccess = rs.Fields(0)
+     End If
+End Function
+
+
+Private Function GetHierarchyName(Access)
+     Select Case Access
+          Case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9: GetHierarchyName = "User"
+          Case 10, 11, 12, 13, 14, 15, 16, 17, 18, 19: GetHierarchyName = "Captain"
+          Case 20, 21, 22, 23, 24, 25, 26, 27, 28, 29: GetHierarchyName = "Inspector"
+          Case 30, 31, 32, 33, 34, 35, 36, 37, 38, 39: GetHierarchyName = "Warden"
+          Case 40, 41, 42, 43, 44, 45, 46, 47, 48, 49: GetHierarchyName = "Moderator"
+          Case 50, 51, 52, 53, 54, 55, 56, 57, 58, 59: GetHierarchyName = "Super-Moderator"
+          Case 60, 61, 62, 63, 64, 65, 66, 67, 68, 69: GetHierarchyName = "Manager"
+          Case 70, 71, 72, 73, 74, 75, 76, 77, 78, 79: GetHierarchyName = "Overseer"
+          Case 80, 81, 82 ,83 ,84, 85, 86, 87, 88, 89: GetHierarchyName = "Administrator"
+          Case 90, 91, 92, 93, 94, 95, 96, 97, 98, 99: GetHierarchyName = "Super-Administrator"
+          Case 100: GetHierarchyName = "Head-Administrator"
+     End Select	
+End Function
+
+
+Private Function GetAccessByRank(Rank)
+     GetAccessByRank = 0
+     Select Case Rank
+          Case "user" : GetAccessByRank = 0
+          Case "captain" : GetAccessByRank = 10
+          Case "inspector" : GetAccessByRank = 20
+          Case "warden" : GetAccessByRank = 30
+          Case "moderator" : GetAccessByRank = 40
+          Case "super-moderator" : GetAccessByRank = 50
+          Case "manager" : GetAccessByRank = 60
+          Case "overseer" : GetAccessByRank = 70
+          Case "administrator" : GetAccessByRank = 80
+          Case "super-administrator" : GetAccessByRank = 90
+     End Select
+End Function
+
+
+'///////////
+' COMMANDS
+
+Private Sub Mail_cmd(Username, Command)
+     Dim error
+     
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If NOT UserExists(Command.Argument("user")) Then
+          AddQ clanPrefix & "Player not found! (" & Command.Argument("user") & ")"
+          Exit Sub
+     End If
+     
+     If Command.Argument("user") <> "" Then
+          If Command.Argument("message") <> "" Then
+          
+              '// The user has enough access
+               If Command.HasAccess Then
+                    dbConnect
+                              
+                        '// The mail contains atleast one ' which doesn't work in SQL databases - therefore remove it!
+                         If InStr(Command.Argument("message"), "'") Then
+                              error = Replace(Command.Argument("message"), "'", "")
+                         Else
+                              error = Command.Argument("message")
+                         End If
+
+                        '// The mail is longer than allowed
+                         If Len(Command.Argument("message")) > CInt(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) Then
+                              AddQ clanPrefix & "The mail is (" & Len(Command.Argument("message")) - CInt(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) & " characters) too long. The max is (" & CInt(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) & " characters)"
+                         Else
+                              Set rs = dbConn.Execute("SELECT `mails_new`, `mails_total`, `mails_received`, `mails` FROM `users` WHERE `user_name` = '" & Command.Argument("user") & "'")
+
+                             '// The user has been mailed before
+                              If rs.Fields(1) > 0 Then
+                                   Set rs = dbConn.Execute("UPDATE `users` SET `mails_new` = '" & rs.Fields(0) + 1 & "', `mails_total` = '" & rs.Fields(1) + 1 & "', `mails_received` = '" & rs.Fields(2) + 1 & "', `mails` = '" & rs.Fields(3) & Get_MailID & ",' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                              Else
+                                   Set rs = dbConn.Execute("UPDATE `users` SET `mails_new` = '1', `mails_total` = '1', `mails_received` = '1', `mails` = '" & Get_MailID & ",' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                              End If     
+                          
+                              Set rs = dbConn.Execute("SELECT `mails_sent` FROM `users` WHERE `user_name` = '" & Username & "'")
+                              If rs.Fields(0) > 0 Then
+                                   Set rs = dbConn.Execute("UPDATE `users` SET `mails_sent` = '" & rs.Fields(0) + 1 & "' WHERE `user_name` = '" & Username & "'")
+                              Else
+                                   Set rs = dbConn.Execute("UPDATE `users` SET `mails_sent` = '1' WHERE `user_name` = '" & Username & "'")
+                              End If
+                                        
+                              Set rs = dbConn.Execute("INSERT INTO `mails` (`mail_id`, `mailed_from`, `mailed_to`, `date_mailed`, `date_read`, `mail`, `mail_state`) VALUES ('" & Get_MailID & "', '" & Username & "', '" & Command.Argument("user") & "', '" & Get_Date & "', '" & "Not Read" & "', '" & error & "', '" & 1 & "')") 
+                              AddQ "/w " & Username & " • Mail sent to: [" & Command.Argument("user") & "]. (" & Len(error) & " characters)"
+                         End If
+                    dbDisconnect
+               End If
+          Else
+               AddQ "/w " & Username & " • Please supply the text message"
+          End If
+     Else
+          AddQ "/w " & Username & " • Please specify a user"
+     End If
+End Sub
+
+
+Private Sub Inbox_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    If HasMail(Username) Then
+                         Set rs = dbConn.Execute("SELECT `mails_new`, `mails_old`, `mails_trunk` FROM `users` WHERE `user_name` = '" & Username & "'")
+                         If rs.Fields(2) > 0 Then
+                              AddQ "/w " & Username & " • You have [" & rs.Fields(0) & " New] [" & rs.Fields(1) & " Old] [" & rs.Fields(2) & " Trunk] mails. Use " & BotVars.Trigger & "readnew/" & BotVars.Trigger & "readold/" & BotVars.Trigger & "restoremail"
+                         Else
+                              AddQ "/w " & Username & " • You have [" & rs.Fields(0) & " New] [" & rs.Fields(1) & " Old] mails. Use " & BotVars.Trigger & "readnew/" & BotVars.Trigger & "readold"
+                         End If
+                    Else
+                         If User_HasTrunkedMail(Username) Then
+                              AddQ "/w " & Username & " • You have [" & Get_TrunkedMail(Username) & " Trunk] mails but no mail in your inbox - use " & BotVars.Trigger & "restoremail"
+                         Else
+                              AddQ "/w " & Username & " • You have no mail in your inbox nor any trunken mails"
+                         End If
+                    End If
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Private Sub ReadNew_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    If HasMail(Username) Then
+                         If HasNewMail(Username) Then
+                              AddQ "/w " & Username & " • " & Get_NewMails(Username) & "- Use " & BotVars.Trigger & "read"
+                         Else
+                              AddQ "/w " & Username & " • You have no new mail in your inbox"
+                         End If
+                    Else
+                         AddQ "/w " & Username & " • You have no new mail in your inbox"
+                    End If
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Private Sub ReadOld_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    If HasMail(Username) Then
+                         If HasOldMail(Username) Then
+                              AddQ "/w " & Username & " • " & Get_OldMails(Username) & "- Use " & BotVars.Trigger & "read"
+                         Else
+                              AddQ "/w " & Username & " • You have no old mail in your inbox"
+                         End If
+                    Else
+                         AddQ "/w " & Username & " • You have no old mail in your inbox"
+                    End If
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Private Sub ReadTrunk_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    If User_HasTrunkedMail(Username) Then
+                         AddQ "/w " & Username & " • " & Get_TrunkMails(Username) & "- Use " & BotVars.Trigger & "restoremail"
+                    Else
+                         AddQ "/w " & Username & " • You have no trunken mails"
+                    End If
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Private Sub Read_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+
+     If NOT Command.IsValid Then
+          AddQ "/w " & Username & " • Please specify a numerical mail ID"
+     Else
+          If Command.HasAccess Then
+               dbConnect
+                    If IsTrunken(Username, Command.Argument("id")) Then
+                         AddQ "/w " & Username & " • Mail #" & Command.Argument("id") & " : Deleted - Use " & BotVars.Trigger & "restoremail"
+                         Exit Sub
+                    End If
+                    
+                    If HasMail(Username) Then
+                         If NOT HasMailID(Username, Command.Argument("id")) Then
+                              AddQ "/w " & Username & " • Mail not found! (" & Command.Argument("id") & ")"
+                         Else
+                              Set rs = dbConn.Execute("SELECT `mails_read` FROM `users` WHERE `user_name` = '" & Username & "'")
+                              If rs.Fields(0) > 1 Then
+                                   Set rs = dbConn.Execute("UPDATE `users` SET `mails_read` = '" & rs.Fields(0) + 1 & "' WHERE `user_name` = '" & Username & "'")
+                              Else
+                                   Set rs = dbConn.Execute("UPDATE `users` SET `mails_read` = '1' WHERE `user_name` = '" & Username & "'")
+                              End If
+                              
+                              Set rs = dbConn.Execute("SELECT `mailed_from`, `date_mailed`, `mail`, `mail_state` FROM `mails` WHERE `mail_id` = '" & Command.Argument("id") & "'")
+                              AddQ "/w " & Username & " • Mail #" & Command.Argument("id") & " : From " & rs.Fields(0) & " (" & rs.Fields(1) & ") - " & rs.Fields(2)
+                              
+                              If rs.Fields(3) = nonread Then
+                                   Set rs = dbConn.Execute("UPDATE `mails` SET `mail_state` = '" & read & "', `date_read` = '" & Get_Date & "' WHERE `mail_id` = '" & Command.Argument("id") & "'")
+                                   Set rs = dbConn.Execute("SELECT `mails_new`, `mails_old` FROM `users` WHERE `user_name` = '" & Username & "'")
+                                   
+                                   If rs.Fields(0) > 1 Then
+                                        Set rs = dbConn.Execute("UPDATE `users` SET `mails_new` = '" & rs.Fields(0) - 1 & "', `mails_old` = '" & rs.Fields(1) + 1 & "' WHERE `user_name` = '" & Username & "'")
+                                   Else
+                                        Set rs = dbConn.Execute("UPDATE `users` SET `mails_new` = '0', `mails_old` = '" & rs.Fields(1) + 1 & "' WHERE `user_name` = '" & Username & "'")
+                                   End If
+                              End If
+                         End If
+                    Else
+                         AddQ "/w " & Username & " • Mail not found! (" & Command.Argument("id") & ")"
+                    End If
+               dbDisconnect
+          End If
+     End If     
+End Sub
+
+
+Private Sub DelMail_cmd(Username, Command)
+     Dim cmdArgs
+     
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    If HasMail(Username) Then
+                         cmdArgs = Split(LCase(Command.Args))(0)
+                         Select Case cmdArgs
+                              Case "all"
+                                   Call DelMailAll(Username)
+                              Case Else
+                                   If IsNumeric(cmdArgs) Then
+                                        If HasMailID(Username, cmdArgs) Then
+                                             Call DelMail(Username, cmdArgs)
+                                        Else
+                                             AddQ "/w " & Username & " • Mail not found! (" & cmdArgs & ")"
+                                        End If
+                                   Else
+                                        AddQ "/w " & Username & " • Please specify a numerical mail ID"
+                                   End If
+                         End Select
+                    Else
+                         AddQ "/w " & Username & " • You have no mail in your inbox"
+                    End If
+               dbDisconnect
+          End If
+     Else
+          AddQ "/w " & Username & " • Please specify a numerical mail ID"
+     End If
+End Sub
+
+
+Private Sub RestoreMail_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    If User_HasTrunkedMail(Username) Then
+                         cmdArgs = Split(LCase(Command.Args))(0)
+                         Select Case cmdArgs
+                              Case "all"
+                                   Call RestoreMailAll(Username)
+                              Case Else
+                                   If IsNumeric(cmdArgs) Then
+                                        If HasMailID(Username, cmdArgs) Then
+                                             If IsTrunken(Username, cmdArgs) Then
+                                                  Call RestoreMail(Username, cmdArgs)
+                                             Else
+                                                  AddQ "/w " & Username & " • Mail #" & cmdArgs & " is not located in your trunk"
+                                             End If
+                                        Else
+                                             AddQ "/w " & Username & " • Mail not found! (" & cmdArgs & ")"
+                                        End If
+                                   Else
+                                        AddQ "/w " & Username & " • Please specify a numerical mail ID"
+                                   End If
+                         End Select
+                    Else
+                         AddQ "/w " & Username & " • You have no mails in your trunk"
+                    End If
+               dbDisconnect
+          End If
+     Else
+          AddQ "/w " & Username & " • Please specify a numerical mail ID"
+     End If
+End Sub
+
+
+Private Sub Vouch_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+
+     If NOT UserExists(Command.Argument("user")) Then
+          If Command.IsValid Then
+               If Command.HasAccess Then
+                    dbConnect
+                         Set rs = dbConn.Execute("SELECT `users_day`, `users_week`, `users_month`, `autovouched_users` FROM `counts`")
+                         Set rs = dbConn.Execute("UPDATE `counts` SET `users_day` = '" & rs.Fields(0) + 1 & "', `users_week` = '" & rs.Fields(1) + 1 & "', `users_month` = '" & rs.Fields(2) + 1 & "', `autovouched_users` = '" & rs.Fields(3) + 1 & "'")
+                    
+                         Set rs = dbConn.Execute("INSERT INTO `users` (`user_id`, `user_name`, `mails_new`, `mails_old`, `mails_trunk`, `mails_total`, `mails_sent`, `mails_received`, `mails_read`, `mails`, `vouch_date`, `send_date`, `vouched_by`, `warns`, `warn_id`, `warn_date`, `warned_by`, `warn_reason`, `vouched`, `edit_name`, `edit_age`, `edit_sex`, `edit_location`, `access`, `patron`, `banned`) VALUES ('" & Get_UserID & "', '" & Command.Argument("user") & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & Get_Date & "', '" & "N/A" & "', '" & Username & "', '" & 0 & "', '" & 0 & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "Y" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & 0 & "', '" & "N/A" & "', '" & "N" & "')")
+                         AddQ clanPrefix & "Player [" & Command.Argument("user") & "] has been vouched by [" & Username & "]"
+                    dbDisconnect
+               End If
+          Else
+               AddQ clanPrefix & "Please specify a user"
+          End If
+     Else
+          If IsVouched(Command.Argument("user"), "N") Then
+               AddQ clanPrefix & "Player [" & Command.Argument("user") & "] is already vouched!"
+          Else
+               dbConnect
+                    Set rs = dbConn.Execute("UPDATE `users` SET `vouched` = 'Y' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                    AddQ clanPrefix & "Player [" & Command.Argument("user") & "] has been vouched by [" & Username & "]"
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Private Sub UnVouch_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+
+     If IsVouched(Command.Argument("user"), "N") Then
+          If Command.IsValid Then
+               If Command.HasAccess Then
+                    dbConnect
+                         Set rs = dbConn.Execute("UPDATE `users` SET `vouched` = 'N' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                         AddQ clanPrefix & "Player [" & Command.Argument("user") & "] has been unvouched by [" & Username & "]"
+                    dbDisconnect
+               End If
+          Else
+               AddQ clanPrefix & "Please specify a user"
+          End If
+     Else
+          AddQ clanPrefix & "Player not found! (" & Command.Argument("user") & ")"
+     End If
+End Sub
+
+
+Private Sub VouchRequest_cmd(Username, Command)
+     Dim request
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               If IsVouched(Username, "N") Then
+                    AddQ "/w " & Username & " • You are already vouched!"
+                    Exit Sub
+               End If
+               
+               dbConnect
+                    If HasRequested(Username) Then
+                         If HasBeenVouched(Username) Then
+                              AddQ "/w " & Username & " • You are already vouched!"
+                         Else
+                              AddQ "/w " & Username & " • You have made a request recently! Please be patient"
+                         End If
+                    Else
+                         If Len(Command.Argument("message")) > CInt(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) Then
+                              AddQ clanPrefix & "The vouch request is (" & Len(Command.Argument("message")) - CInt(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) & " characters) too long. The max is (" & CInt(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) & " characters)"
+                         Else
+                              If InStr(Command.Argument("message"), "'") Then
+                                   request = Replace(Command.Argument("message"), "'", "")
+                              Else
+                                   request = Command.Argument("message")
+                              End If
+                              
+                              Set rs = dbConn.Execute("INSERT INTO `requests` (`request_id`, `user_name`, `vouch_message`, `send_date`, `vouch_date`, `vouch_state`) VALUES ('" & Get_RequestID & "', '" & Username & "', '" & request & "', '" & Get_Date & "', '" & "N/A" & "', '" & unresolved & "')")
+                              AddQ "/w " & Username & " • Thank you for writing a vouch application! A staff member will look at it as soon as possible!"
+                         End If
+                    End If
+               dbDisconnect
+          End If
+     Else
+          AddQ clanPrefix & "Please specify a vouch message as to why you should be vouched"
+     End If
+End Sub
+
+
+Private Sub Apply_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If Channel.GetUser(Username).Clan = vbNullString Then
+          If Command.IsValid Then
+               If Command.HasAccess Then
+                    dbConnect
+                         If HasRequestedInvite(Username) Then
+                              AddQ "/w " & Username & " • You are already on the invite list! Please be patient"
+                         Else
+                              If Len(Command.Argument("message")) > 0 Then
+                                   If Len(Command.Argument("message")) > CInt(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) Then
+                                        AddQ clanPrefix & "The invite request is (" & Len(Command.Argument("message")) - CInt(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) & " characters) too long. The max is (" & CInt(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) & " characters)"
+                                   Else
+                                        If InStr(Command.Argument("message"), "'") Then
+                                             request = Replace(Command.Argument("message"), "'", "")
+                                        Else
+                                             request = Command.Argument("message")
+                                        End If
+                                        
+                                        Set rs = dbConn.Execute("INSERT INTO `invites` (`invite_id`, `user_name`, `invite_message`, `send_date`, `invite_date`, `invite_state`, `invited_by`, `invite_user`) VALUES ('" & Get_InviteID & "', '" & Username & "', '" & request & "', '" & Get_Date & "', '" & "N/A" & "', '" & unresolved & "', '" & "N/A" & "', '" & "N" & "')")
+                                        AddQ "/w " & Username & " • Thank you for writing an invitation application! A staff member will look at it as soon as possible!"
+                                   End If
+                              Else
+                                   AddQ clanPrefix & "Please specify a message as to why you should be invited"
+                              End If
+                         End If
+                    dbDisconnect
+               End If
+          End If
+     Else
+          AddQ "/w " & Username & " • You are already in a clan - you must leave Clan " & Channel.GetUser(Username).Clan & " before applying!"
+     End If
+End Sub
+
+
+Private Sub ShowRequests_cmd(Username, Command)
+     Dim listVouch, listInvite, vouchCount, inviteCount, vouches, invites
+
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    Set rs = dbConn.Execute("SELECT `user_name` FROM `requests` WHERE `vouch_state` = '" & unresolved & "'")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         Do Until rs.EOF
+                              Set rs2 = dbConn.Execute("SELECT `send_date` FROM `requests` WHERE `user_name` = '" & rs.Fields(0) & "'")
+                              listVouch = listVouch & "<" & rs.Fields(0) & "[" & rs2.Fields(0) & "]>, "
+                              vouchCount = vouchCount + 1
+                              rs.MoveNext
+                         Loop
+                         
+                         vouches = "Vouch requests: (" & vouchCount & ") " & Left(listVouch, Len(listVouch) - 2) & " | "
+                    Else
+                         vouches = ""
+                    End If
+                    
+                    Set rs = dbConn.Execute("SELECT `user_name` FROM `invites` WHERE `invite_state` = '" & unresolved & "'")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         Do Until rs.EOF
+                              Set rs2 = dbConn.Execute("SELECT `send_date` FROM `invites` WHERE `user_name` = '" & rs.Fields(0) & "'")
+                              listInvite = listInvite & "<" & rs.Fields(0) & "[" & rs2.Fields(0) & "]>, "
+                              inviteCount = inviteCount + 1
+                              rs.MoveNext
+                         Loop
+                         
+                         invites = "Invite applications: (" & inviteCount & ") " & Left(listInvite, Len(listInvite) - 2)
+                    Else
+                         invites = ""
+                    End If
+                    
+                    If vouches = "" AND invites = "" Then
+                         AddQ clanPrefix & "There are no requests to list"
+                    Else
+                         AddQ clanPrefix & vouches & invites
+                    End If
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Private Sub ViewRequest_cmd(Username, Command)
+     Dim count, vouchRequest, inviteRequest
+
+     If NOT UserExists(Username) Then Exit Sub
+
+     If NOT Command.IsValid Then
+          AddQ clanPrefix & "Please specify a user"
+     Else
+          dbConnect
+               If HasRequested(Command.Argument("user")) Then
+                    Set rs = dbConn.Execute("SELECT * FROM `requests` WHERE `user_name` = '" & Command.Argument("user") & "'")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         If NOT rs.Fields(5) = 2 Then
+                              AddQ clanPrefix & "Vouch request ID #" & rs.Fields(0) & " for player [" & rs.Fields(1) & "] at (" & rs.Fields(3) & ") - [" & rs.Fields(2) & "]"
+                              count = count + 1
+                         End If
+                    End If
+               End If
+               
+               If HasRequestedInvite(Command.Argument("user")) Then
+                    Set rs = dbConn.Execute("SELECT * FROM `invites` WHERE `user_name` = '" & Command.Argument("user") & "'")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         If NOT rs.Fields(5) = 2 Then
+                              AddQ clanPrefix & "Invitation application ID #" & rs.Fields(0) & " for player [" & rs.Fields(1) & "] at (" & rs.Fields(3) & ") - [" & rs.Fields(2) & "]"
+                              count = count + 1
+                         End If
+                    End If
+               End If
+               
+               If NOT count > 0 Then
+                    AddQ clanPrefix & "There is no request for player [" & Command.Argument("user") & "]"
+               End If
+          dbDisconnect
+     End If
+End Sub
+
+
+Private Sub Approve_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    If HasRequested(Command.Argument("user")) Then
+                         Set rs = dbConn.Execute("UPDATE `requests` SET `vouch_date` = '" & Get_Date & "', `vouch_state` = '" & approved & "', `vouched_by` = '" & Username & "' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                         Set rs = dbConn.Execute("SELECT `send_date` FROM `requests` WHERE `user_name` = '" & Command.Argument("user") & "'")
+                         Set rs = dbConn.Execute("INSERT INTO `users` (`user_id`, `user_name`, `mails_new`, `mails_old`, `mails_trunk`, `mails_total`, `mails_sent`, `mails_received`, `mails_read`, `mails`, `vouch_date`, `send_date`, `vouched_by`, `warns`, `warn_id`, `warn_date`, `warned_by`, `warn_reason`, `vouched`, `edit_name`, `edit_age`, `edit_sex`, `edit_location`, `access`, `patron`, `banned`) VALUES ('" & Get_UserID & "', '" & Command.Argument("user") & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & Get_Date & "', '" & rs.Fields(0) & "', '" & Username & "', '" & 0 & "', '" & 0 & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "Y" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & 0 & "', '" & "N/A" & "', '" & "N" & "')")
+                         
+                         Set rs = dbConn.Execute("SELECT `users_day`, `users_week`, `users_month` FROM `counts`")
+                         Set rs = dbConn.Execute("UPDATE `counts` SET `users_day` = '" & rs.Fields(0) + 1 & "', `users_week` = '" & rs.Fields(1) + 1 & "', `users_month` = '" & rs.Fields(2) + 1 & "'")
+                     
+                         Set rs = dbConn.Execute("SELECT COUNT (`vouch_state`) FROM `requests` WHERE `vouch_state` = '" & approved & "'")
+                         If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                              AddQ clanPrefix & "The vouch request of player [" & Command.Argument("user") & "] has been vouched by [" & Username & "] - This is vouch #" & rs.Fields(0) & " to be approved!"
+                         End If
+                    ElseIf HasRequestedInvite(Command.Argument("user")) Then
+                         Set rs = dbConn.Execute("UPDATE `invites` SET `invite_date` = '" & Get_Date & "', `invite_state` = '" & approved & "', `invited_by` = '" & Username & "', `invite_user` = 'Y' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                         
+                         Set rs = dbConn.Execute("SELECT COUNT (`invite_state`) FROM `invites` WHERE `invite_state` = '" & approved & "'")
+                         If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                              AddQ clanPrefix & "The invitation application for player [" & Command.Argument("user") & "] has been approved by [" & Username & "] - This is application #" & rs.Fields(0) & " to be approved!"
+                         End If
+                    Else
+                         AddQ "/w " & Username & " • Unable to locate a vouch request of player [" & Command.Argument("user") & "]"
+                    End If
+               dbDisconnect
+          End If
+     Else
+          AddQ clanPrefix & "Please specify a user"
+     End If
+End Sub
+                    
+
+Private Sub Deny_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    If HasRequested(Command.Argument("user")) Then
+                         Set rs = dbConn.Execute("DELETE * FROM `requests` WHERE `user_name` = '" & Command.Argument("user") & "'")
+                         AddQ clanPrefix & "The vouch request of player [" & Command.Argument("user") & "] has been denied!"
+                    ElseIf HasRequestedInvite(Command.Argument("user")) Then
+                         Set rs = dbConn.Execute("DELETE * FROM `invites` WHERE `user_name` = '" & Command.Argument("user") & "'")
+                         AddQ clanPrefix & "The invitation application for player [" & Command.Argument("user") & "] has been denied!"
+                    Else
+                         AddQ "/w " & Username & " • Unable to locate any request of player [" & Command.Argument("user") & "]"
+                    End If
+               dbDisconnect
+          End If
+     Else
+          AddQ clanPrefix & "Please specify a user"
+     End If
+End Sub
+
+
+Private Sub Info_cmd(Username, Command)
+     Dim User
+     
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               If Len(Command.Argument("user")) > 0 Then
+                    User = Command.Argument("user")
+               Else
+                    User = Username
+               End If
+               
+               If NOT IsVouched(User, "N") Then
+                    If IsNumeric(User) Then
+                         If NOT IsVouched(User, "Y") Then
+                              AddQ clanPrefix & "User ID not found! (#" & User & ")"
+                              Exit Sub
+                         End If
+                    Else
+                         AddQ clanPrefix & "Player not found! (" & User & ")"
+                         Exit Sub
+                    End If
+               End If
+               
+               dbConnect
+                    If IsNumeric(User) Then
+                         Set rs = dbConn.Execute("SELECT `user_id`, `mails_received`, `mails_sent`, `mails_read`, `vouch_date`, `send_date`, `vouched_by`, `user_name` FROM `users` WHERE `user_id` = '" & User & "'")
+                         If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                              AddQ clanPrefix & "Info on player [ #" & rs.Fields(0) & " | " & rs.Fields(7) & " ]: Requested vouch at (" & rs.Fields(5) & ") and vouched at (" & rs.Fields(4) & ") by [" & rs.Fields(6) & "]. Mails Sent/Mails Received/Mails Read: (" & rs.Fields(2) & "/" & rs.Fields(1) & "/" & rs.Fields(3) & ")"
+                              dbDisconnect
+                              Exit Sub
+                         End If
+                    Else
+                         Set rs = dbConn.Execute("SELECT `user_id`, `mails_received`, `mails_sent`, `mails_read`, `vouch_date`, `send_date`, `vouched_by` FROM `users` WHERE `user_name` = '" & User & "'")
+                         If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                              AddQ clanPrefix & "Info on player [ #" & rs.Fields(0) & " | " & User & " ]: Requested vouch at (" & rs.Fields(5) & ") and vouched at (" & rs.Fields(4) & ") by [" & rs.Fields(6) & "]. Mails Sent/Mails Received/Mails Read: (" & rs.Fields(2) & "/" & rs.Fields(1) & "/" & rs.Fields(3) & ")"
+                              dbDisconnect
+                              Exit Sub
+                         End If
+                    End If
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Private Sub Users_cmd(Username, Command)
+     Dim userCount, firstUserName, firstUserDate
+     Dim lastUser, autoVouchedUsers, autoVouchedUsersPercent
+     
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    Set rs = dbConn.Execute("SELECT COUNT (`user_id`) FROM `users` WHERE `vouched` = 'Y'")
+                    userCount = rs.Fields(0)
+                    
+                    Set rs = dbConn.Execute("SELECT `user_name` FROM `users` WHERE `user_id` = '1'")
+                    firstUserName = rs.Fields(0)
+                    Set rs = dbConn.Execute("SELECT `vouch_date` FROM `users` WHERE `user_name` = '" & firstUserName & "'")
+                    firstUserDate = rs.Fields(0)
+                    
+                    Set rs = dbConn.Execute("SELECT `autovouched_users` FROM `counts`")
+                    autoVouchedUsers = rs.Fields(0)
+                    autoVouchedUsersPercent = FormatNumber(autoVouchedUsers/userCount*100,2)
+                    
+                    Set rs = dbConn.Execute("SELECT `user_name`, `vouch_date` FROM `users` WHERE `user_id` = '" & userCount & "'")
+                    lastUser = "<" & rs.Fields(0) & "(" & rs.Fields(1) & ")>"
+                    
+                    AddQ clanPrefix & "There are in total [" & userCount & "] vouched users. First user: <" & firstUserName & "(" & firstUserDate & ")>. Newest user: " & lastUser & ". Users who have been automatically vouched: " & autoVouchedUsers & " (" & autoVouchedUsersPercent & "%)"
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Private Sub UserInfo_cmd(Username, Command)
+     Dim totalUsers, usersToday, usersWeek, usersMonth
+     Dim usersTodayPercent, usersWeekPercent, usersMonthPercent
+
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    Set rs = dbConn.Execute("SELECT COUNT (`user_id`) FROM `users` WHERE `vouched` = 'Y'")
+                    totalUsers = rs.Fields(0)
+               
+                    Set rs = dbConn.Execute("SELECT `users_day`, `users_week`, `users_month` FROM `counts`")
+                    usersToday = rs.Fields(0)
+                    usersWeek = rs.Fields(1)
+                    usersMonth = rs.Fields(2)
+                    usersTodayPercent = FormatNumber(usersToday/totalUsers*100,2)
+                    usersWeekPercent = FormatNumber(usersWeek/totalUsers*100,2)
+                    usersMonthPercent = FormatNumber(usersMonth/totalUsers*100,2)
+                    
+                    AddQ clanPrefix & "There are in total [" & totalUsers & "] vouched users. New users today: " & usersToday & " (" & usersTodayPercent & "%). New users this week: " & usersWeek & " (" & usersWeekPercent & "%). New users this month: " & usersMonth & " (" & usersMonthPercent & "%)"
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Private Sub RecentUsers_cmd(Username, Command)
+     Dim users, I, userList, userCount
+     
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    If Len(Command.Argument("users")) > 0 Then
+                         users = CInt(Command.Argument("users"))
+                    Else
+                         users = 3
+                    End If
+                    
+                   '// To prevent mass output
+                    If users > 5 Then users = 5
+                    
+                    Set rs = dbConn.Execute("SELECT COUNT (`user_id`) FROM `users` WHERE `vouched` = 'Y'")
+                    userCount = rs.Fields(0)
+                    
+                    If userCount >= 3 Then
+                         Do Until rs.EOF OR I = users
+                              Set rs = dbConn.Execute("SELECT `vouched` FROM `users` WHERE `user_id` = '" & userCount & "'")
+                              If rs.Fields(0) = "Y" Then
+                                   Set rs = dbConn.Execute("SELECT `user_name`, `vouch_date` FROM `users` WHERE `user_id` = '" & userCount & "'")
+                                   userList = userList & "<" & rs.Fields(0) & "(" & rs.Fields(1) & ")>, "
+                                   I = I + 1
+                              End If
+                              
+                              userCount = userCount - 1
+                         Loop
+                         
+                         AddQ clanPrefix & "Last (" & I & ") vouched users: " & Left(userList, Len(userList) - 2)
+                    Else
+                         AddQ clanPrefix & "There are not enough users to create a list"
+                    End If
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Private Sub Warn_cmd(Username, Command)
+     Dim warn_reason
+     
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.HasAccess Then
+     
+         '// A user was specified
+          If Len(Command.Argument("user")) > 0 Then
+          
+              '// The specified user UserExists
+               If IsVouched(Command.Argument("user"), "N") Then
+               
+                   '// An amount was specified
+                    If Len(Command.Argument("amount")) > 0 Then
+                    
+                        '// The amount is not numeric
+                         If NOT IsNumeric(Command.Argument("amount")) Then
+                              AddQ clanPrefix & "The amount must be numeric"
+                         Else
+                         
+                             '// A reason was supplied
+                              If Len(Command.Argument("reason")) > 0 Then
+                              
+                                  '// The reason is less than maximum characters
+                                   If NOT Len(Command.Argument("reason")) > 120 Then
+                                        warn_reason = Command.Argument("reason")
+                                   Else
+                                        AddQ clanPrefix & "The warning reason is (" & Len(Command.Argument("message")) - CInt(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) & " characters) too long. The max is (" & CInt(GetConfigEntry("Clan Management Script", "max_chars", clanConfig)) & " characters)"
+                                   End If
+                              Else
+                                   warn_reason = "Not specified"
+                              End If
+                              
+                              dbConnect
+                                   If IsWarned(Command.Argument("user")) Then
+                                        Set rs = dbConn.Execute("UPDATE `users` SET `warns` = '" & CInt(Get_Warns(Command.Argument("user"))) + CInt(Command.Argument("amount")) & "', `warn_id` = '" & Get_IDs(Command.Argument("user")) & Get_WarnID & ",', `warn_date` = '" & Get_Date & "', `warned_by` = '" & Username & "', `warn_reason` = '" & warn_reason & "' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                                   Else
+                                        Set rs = dbConn.Execute("UPDATE `users` SET `warns` = '" & Command.Argument("amount") & "', `warn_id` = '" & Get_WarnID & ",', `warn_date` = '" & Get_Date & "', `warned_by` = '" & Username & "', `warn_reason` = '" & warn_reason & "' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                                   End If
+                                   
+                                   Set rs = dbConn.Execute("INSERT INTO `warns` (`warn_id`, `user_name`, `warn_date`, `warn_user`, `warn_amount`, `warn_reason`) VALUES ('" & Get_WarnID & "', '" & Command.Argument("user") & "', '" & Get_Date & "', '" & Username & "', '" & Command.Argument("amount") & "', '" & warn_reason & "')")
+
+                                   AddQ clanPrefix & "Player [" & Command.Argument("user") & "] has been warned by [" & Username & "] at (" & Get_Date & "). Amount, Reason, Total:  <[" & Command.Argument("amount") & "%] : [" & warn_reason & "] : [" & Get_Warns(Command.Argument("user")) & "%]>"
+                              dbDisconnect
+                         End If
+                    Else
+                         AddQ clanPrefix & "Please specify an amount"
+                    End If
+               Else
+                    AddQ clanPrefix & "Player not found! (" & Command.Argument("user") & ")"
+               End If
+          Else
+               AddQ clanPrefix & "Please specify a user"
+          End If
+          
+          Call CheckWarns(Command.Argument("user"))
+     End If
+End Sub
+
+
+Private Sub WarnDelete_cmd(Username, Command)
+     
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.HasAccess Then
+     
+         '// A warn id was specified
+          If Len(Command.Argument("id")) > 0 Then
+               dbConnect
+                    If WarnExists(Command.Argument("id")) Then
+                         If NOT IsDeleted(Command.Argument("id")) Then
+                              Call RemoveID(Username, Command.Argument("id"))
+                         Else
+                              AddQ clanPrefix & "Warn id (" & Command.Argument("id") & ") has already been deleted!"
+                         End If
+                    Else
+                         AddQ clanPrefix & "Warn not found! (" & Command.Argument("id") & ")"
+                    End If
+               dbDisconnect
+          Else
+               AddQ clanPrefix & "Please specify a warning id"
+          End If
+     End If
+End Sub        
+
+
+Private Sub Warns_cmd(Username, Command)
+     Dim User, warnids
+     
+     If NOT UserExists(Username) Then Exit Sub
+     
+    '// There was a user defined
+     If Len(Command.Argument("user")) > 0 Then
+          User = Command.Argument("user")
+     Else
+          User = Username
+     End If
+     
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               If IsVouched(User, "N") Then
+                    dbConnect
+                         If IsWarned(User) Then
+                              Set rs = dbConn.Execute("SELECT `warns`, `warn_id`, `warn_date`, `user_id`, `warned_by`, `warn_reason` FROM `users` WHERE `user_name` = '" & User & "'")
+                              warnids = Left(rs.Fields(1), Len(rs.Fields(1)) - 1)
+                              
+                              AddQ clanPrefix & "Warninfo on player [ #" & rs.Fields(3) & " | " & User & " ]. Warns: [" & rs.Fields(0) & "%]. Last warned at (" & rs.Fields(2) & ") by [" & rs.Fields(4) & "] with reason [" & rs.Fields(5) & "]. ID's: [" & warnids & "]"
+                         Else     
+                              AddQ clanPrefix & "Player [" & User & "] has not been warned yet"
+                         End If
+                    dbDisconnect
+               Else
+                    AddQ clanPrefix & "Player not found! (" & User & ")"
+               End If
+          End If
+     End If
+End Sub
+
+
+Private Sub WarnInfo_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    If WarnExists(Command.Argument("id")) Then
+                         If IsDeleted(Command.Argument("id")) Then
+                              AddQ clanPrefix & "Warn id (" & Command.Argument("id") & ") has existed but it has been deleted!"
+                         Else
+                              Set rs = dbConn.Execute("SELECT `warn_amount`, `warn_reason`, `user_name`, `warn_user`, `warn_date` FROM `warns` WHERE `warn_id` = '" & Command.Argument("id") & "'")
+                              AddQ clanPrefix & "Warninfo on warn id [#" & Command.Argument("id") & "]. Amount: [" & rs.Fields(0) & "%]. User [" & rs.Fields(2) & "] was warned at (" & rs.Fields(4) & ") by [" & rs.Fields(3) & "] with reason [" & rs.Fields(1) & "]"
+                         End If
+                    Else
+                         AddQ clanPrefix & "Warn id not found! (" & Command.Argument("id") & ")"
+                    End If
+               dbDisconnect
+          End If
+     Else
+          AddQ clanPrefix & "Please specify a warning id"
+     End If
+End Sub
+
+
+Private Sub Edit_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If Len(Command.Argument("entry")) > 0 Then
+          If Command.HasAccess Then
+               dbConnect
+                    Select Case Command.Argument("entry")
+                         Case "name"
+                              If Len(Command.Argument("value")) > 0 Then
+                                   Set rs = dbConn.Execute("UPDATE `users` SET `edit_name` = '" & Command.Argument("value") & "' WHERE `user_name` = '" & Username & "'")
+                                   AddQ clanPrefix & "Name configured! [" & Command.Argument("value") & "]"
+                              End If
+                         Case "age"
+                              If Len(Command.Argument("value")) > 0 Then
+                                   If IsNumeric(Command.Argument("value")) Then
+                                        Set rs = dbConn.Execute("UPDATE `users` SET `edit_age` = '" & Command.Argument("value") & "' WHERE `user_name` = '" & Username & "'")
+                                        AddQ clanPrefix & "Age configured! [" & Command.Argument("value") & "]"
+                                   Else
+                                        AddQ clanPrefix & "That value is not acceptable"
+                                   End If
+                              End If
+                         Case "sex"
+                              If Len(Command.Argument("value")) > 0 Then
+                                   If LCase(Command.Argument("value")) = "male" OR LCase(Command.Argument("value")) = "female" Then
+                                        Set rs = dbConn.Execute("UPDATE `users` SET `edit_sex` = '" & Command.Argument("value") & "' WHERE `user_name` = '" & Username & "'")
+                                        AddQ clanPrefix & "Sex configured! [" & Command.Argument("value") & "]"
+                                   Else
+                                        AddQ clanPrefix & "That value is not acceptable"
+                                   End If
+                              End If
+                         Case "location"
+                              If Len(Command.Argument("value")) > 0 Then
+                                   Set rs = dbConn.Execute("UPDATE `users` SET `edit_location` = '" & Command.Argument("value") & "' WHERE `user_name` = '" & Username & "'")
+                                   AddQ clanPrefix & "Location configured! [" & Command.Argument("value") & "]"
+                              End If
+                    End Select
+               dbDisconnect
+          End If
+     Else
+          AddQ clanPrefix & "Please specify what to edit! E.g Name or Age or Sex or Location"
+     End If
+End Sub
+
+
+Private Sub Whoami_cmd(Username, Command)
+     Dim cLan, misc
+
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect
+                    If Channel.GetUser(Username).Clan = "" Then
+                         cLan = "None"
+                    Else
+                         cLan = Channel.GetUser(Username).Clan
+                    End If
+               
+                    Set rs = dbConn.Execute("SELECT `user_id`, `edit_name`, `edit_age`, `edit_sex`, `edit_location`, `access`, `patron` FROM `users` WHERE `user_name` = '" & Username & "'")
+                    If rs.Fields(6) = "N/A" Then
+                         misc = "Rank : " & GetHierarchyName(rs.Fields(5))
+                    Else
+                         misc = "Promoted By : " & rs.Fields(6) & " | Rank : " & GetHierarchyName(rs.Fields(5))
+                    End If
+                    
+                    AddQ clanPrefix & "Personal information for user [ #" & rs.Fields(0) & " | " & Username & " ] " & misc & " | Name : " & rs.Fields(1) & " | Age : " & rs.Fields(2) & " | Sex : " & rs.Fields(3) & " | Location : " & rs.Fields(4) & " | Clan : " & cLan
+               dbDisconnect
+          End If
+     End If
+End Sub
+
+
+Private Sub Whois_cmd(Username, Command)
+     Dim cLan, misc
+
+     If NOT UserExists(Username) Then Exit Sub
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               If UserExists(Command.Argument("user")) Then
+                    dbConnect
+                         If isInChannel(Command.Argument("user")) Then
+                              If Channel.GetUser(Command.Argument("user")).Clan = "" Then
+                                   cLan = "None"
+                              Else
+                                   cLan = Channel.GetUser(Command.Argument("user")).Clan
+                              End If
+                         Else
+                              cLan = "N/A"
+                         End If
+                         
+                         Set rs = dbConn.Execute("SELECT `user_id`, `edit_name`, `edit_age`, `edit_sex`, `edit_location`, `user_name`, `access`, `patron` FROM `users` WHERE `user_name` = '" & Command.Argument("user") & "'")
+                         If rs.Fields(7) = "N/A" Then
+                              misc = "Rank : " & GetHierarchyName(rs.Fields(6))
+                         Else
+                              misc = "Promoted By : " & rs.Fields(7) & " | Rank : " & GetHierarchyName(rs.Fields(6))
+                         End If
+                         
+                         AddQ clanPrefix & "Personal information for user [ #" & rs.Fields(0) & " | " & rs.Fields(5) & " ] " & misc & " | Name : " & rs.Fields(1) & " | Age : " & rs.Fields(2) & " | Sex : " & rs.Fields(3) & " | Location : " & rs.Fields(4) & " | Clan : " & cLan
+                    dbDisconnect
+               Else
+                    AddQ clanPrefix & "Player not found! (" & Command.Argument("user") & ")"
+               End If
+          End If
+     Else
+          AddQ clanPrefix & "Please specify a user"
+     End If
+End Sub
+
+
+Private Sub Time_cmd(Username, Command)
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               AddQ clanPrefix & "Current time: [" & CStr(Time) & "] Date: [" & Get_Date & "]"
+          End If
+     End If
+End Sub
+
+
+Private Sub KickIdles_cmd(Username, Command)
+     Dim afkPlayers, players
+
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               afkPlayers = 0
+               For I = 1 To GetInternalUserCount()
+                    n = GetNameByPosition(I)
+                    If NOT LCase(n) = LCase(Username) AND LCase(n) <> LCase(BotVars.Username) AND LCase(n) <> LCase(GetConfigEntry("Clan Management Script", "clan_director", clanConfig)) Then
+                         If isAFK(n) Then
+                              afkPlayers = afkPlayers + 1
+                              players = players & n & ", "
+                         End If
+                    End If
+               Next
+               
+               If afkPlayers > 1 Then
+                    AddQ clanPrefix & afkPlayers & " AFK players found! [" & Left(players, Len(players) - 2) & "]"
+               ElseIf afkPlayers = 1 Then
+                    AddQ clanPrefix & "1 AFK player found! [" & Left(players, Len(players) - 2) & "]"
+               Else
+                    AddQ clanPrefix & "No AFK players found!"
+               End If
+              
+               If afkPlayers > 0 Then
+                    AddQ clanPrefix & "Kicking all AFK players...", 1
+                    players = Split(players, ", ")
+                    For I = 0 To UBound(players)
+                         AddQ "/kick " & players(I) & " AFK Kick"
+                    Next
+               End If
+          End If
+     End If
+End Sub
+
+
+Private Sub Promote_cmd(Username, Command)
+     Dim TargetRank, CanPromote, tempAccess, tempRank
+
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If Command.HasAccess Then
+          If Len(Command.Argument("user")) > 0 Then
+               If NOT UserExists(Command.Argument("user")) Then
+                    AddQ clanPrefix & "Player not found! (" & Command.Argument("user") & ")"
+                    Exit Sub
+               End If
+                    
+               dbConnect
+                    If IsBanned(Command.Argument("user")) Then
+                         AddQ clanPrefix & "Player [" & Command.Argument("user") & "] cannot be promoted!"
+                         Exit Sub
+                    End If
+                         
+                    If Len(Command.Argument("rank")) > 0 Then
+                         TargetRank = LCase(Command.Argument("rank"))
+                         CanPromote = False
+                         For I = 0 To 9
+                              If LCase(rankNames(I)) = TargetRank Then
+                                   CanPromote = True
+                              End If
+                         Next
+                         
+                         If CanPromote Then
+                              tempAccess = GetAccessByRank(TargetRank)
+                              If tempAccess <= GetAccess(Command.Argument("user")) Then
+                                   AddQ clanPrefix & "Invalid rank issued!"
+                                   Exit Sub
+                              End If
+
+                              If GetAccess(Command.Argument("user")) >= GetAccess(Username) Then
+                                   AddQ clanPrefix & "You do not have enough access to do that"
+                                   Exit Sub
+                              End If
+
+                              Set rs = dbConn.Execute("UPDATE `users` SET `access` = '" & tempAccess & "', `patron` = '" & Username & "' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                              AddQ clanPrefix & "Player [" & Command.Argument("user") & "] has been promoted to " & GetHierarchyName(tempAccess) & " [" & tempAccess & " access]"
+                              Call AddUser(Command.Argument("user"), tempAccess)
+                         Else
+                              AddQ clanPrefix & "Invalid rank issued!"
+                         End If
+                    Else
+                         tempRank = GetHierarchyName(GetAccess(Command.Argument("user")))
+                         tempAccess = GetAccessByRank(LCase(tempRank))
+                         TargetRank = tempAccess + 10
+                         If TargetRank >= GetAccess(Username) Then
+                              AddQ clanPrefix & "You do not have enough access to do that"
+                              Exit Sub
+                         End If
+                              
+                         Set rs = dbConn.Execute("SELECT `access`, `patron` FROM `users` WHERE `user_name` = '" & Command.Argument("user") & "'")
+                         If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                              Set rs = dbConn.Execute("UPDATE `users` SET `access` = '" & TargetRank & "', `patron` = '" & Username & "' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                              AddQ clanPrefix & "Player [" & Command.Argument("user") & "] has been promoted to " & GetHierarchyName(TargetRank) & " [" & TargetRank & " access]"
+                              Call AddUser(Command.Argument("user"), TargetRank)
+                         End If
+                    End If
+               dbDisconnect
+          Else
+               AddQ clanPrefix & "Please specify a user"
+          End If
+     End If
+End Sub
+
+
+Private Sub Demote_cmd(Username, Command)
+     Dim TargetRank, CanDemote, tempAccess, tempRank, setPatron
+
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If Command.HasAccess Then
+          If Len(Command.Argument("user")) > 0 Then
+               If NOT UserExists(Command.Argument("user")) Then
+                    AddQ clanPrefix & "Player not found! (" & Command.Argument("user") & ")"
+                    Exit Sub
+               End If
+                    
+               dbConnect
+                    If Len(Command.Argument("rank")) > 0 Then
+                         TargetRank = LCase(Command.Argument("rank"))
+                         CanDemote = False
+                         For I = 0 To 9
+                              If LCase(rankNames(I)) = TargetRank Then
+                                   CanDemote = True
+                              End If
+                         Next
+                              
+                         If CanDemote Then
+                              tempAccess = GetAccessByRank(TargetRank)
+                              If tempAccess >= GetAccess(Command.Argument("user")) Then
+                                   AddQ clanPrefix & "Invalid rank issued!"
+                                   Exit Sub
+                              End If
+                              
+                              If GetAccess(Command.Argument("user")) >= GetAccess(Username) Then
+                                   AddQ clanPrefix & "You do not have enough access to do that"
+                                   Exit Sub
+                              End If
+                              
+                              If (GetAccess(Command.Argument("user")) = 0) Then
+                                   AddQ clanPrefix & "Player [" & Command.Argument("user") & "] cannot be further demoted!"
+                                   Exit Sub
+                              End If
+                              
+                              Set rs = dbConn.Execute("SELECT `access`, `patron` FROM `users` WHERE `user_name` = '" & Command.Argument("user") & "'")
+                              If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                                   If tempAccess = 0 Then
+                                        Set rs = dbConn.Execute("UPDATE `users` SET `access` = '" & tempAccess & "', `patron` = 'N/A' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                                   Else
+                                        Set rs = dbConn.Execute("UPDATE `users` SET `access` = '" & tempAccess & "', `patron` = '" & Username & "' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                                   End If
+                                   
+                                   AddQ clanPrefix & "Player [" & Command.Argument("user") & "] has been demoted to " & GetHierarchyName(tempAccess) & " [" & tempAccess & " access]"
+                                   Call AddUser(Command.Argument("user"), tempAccess)
+                              End If
+                         Else
+                              AddQ clanPrefix & "Invalid rank issued!"
+                         End If
+                    Else
+                         tempRank = GetHierarchyName(GetAccess(Command.Argument("user")))
+                         tempAccess = GetAccessByRank(LCase(tempRank))
+                         TargetRank = tempAccess - 10
+                         If GetAccess(Command.Argument("user")) >= GetAccess(Username) Then
+                              AddQ clanPrefix & "You do not have enough access to do that"
+                              Exit Sub
+                         End If
+                         
+                         If (GetAccess(Command.Argument("user")) = 0) Then
+                              AddQ clanPrefix & "Player [" & Command.Argument("user") & "] cannot be further demoted!"
+                              Exit Sub
+                         End If
+              
+                         Set rs = dbConn.Execute("SELECT `access`, `patron` FROM `users` WHERE `user_name` = '" & Command.Argument("user") & "'")
+                         If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                              If TargetRank = 0 Then
+                                   Set rs = dbConn.Execute("UPDATE `users` SET `access` = '" & TargetRank & "', `patron` = 'N/A' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                              Else
+                                   Set rs = dbConn.Execute("UPDATE `users` SET `access` = '" & TargetRank & "', `patron` = '" & Username & "' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                              End If
+                              AddQ clanPrefix & "Player [" & Command.Argument("user") & "] has been demoted to " & GetHierarchyName(TargetRank) & " [" & TargetRank & " access]"
+                              Call AddUser(Command.Argument("user"), TargetRank)
+                         End If
+                    End If
+               dbDisconnect
+          Else
+               AddQ clanPrefix & "Please specify a user"
+          End If
+     End If
+End Sub
+
+
+Private Sub SetAccess_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If Command.HasAccess Then
+          If Len(Command.Argument("user")) > 0 Then
+               If Len(Command.Argument("access")) > 0 Then
+                    If IsNumeric(Command.Argument("access")) Then
+                         If NOT UserExists(Command.Argument("user")) Then
+                              AddQ clanPrefix & "Player not found! (" & Command.Argument("user") & ")"
+                              Exit Sub
+                         End If
+                         
+                         dbConnect
+                              If IsBanned(Command.Argument("user")) Then
+                                   AddQ clanPrefix & "Player [" & Command.Argument("user") & "] cannot be given access!"
+                                   Exit Sub
+                              End If
+                              
+                              If CInt(Command.Argument("access")) >= CInt(GetAccess(Username)) Then
+                                   AddQ clanPrefix & "The desired access exceeds your own"
+                                   Exit Sub
+                              End If
+                              
+                              If CInt(Command.Argument("access")) = CInt(GetAccess(Command.Argument("user"))) Then
+                                   AddQ clanPrefix & "Invalid access issued!"
+                                   Exit Sub
+                              End If
+                              
+                              If GetAccess(Command.Argument("user")) >= GetAccess(Username) Then
+                                   AddQ clanPrefix & "You do not have enough access to do that"
+                                   Exit Sub
+                              End If
+                              
+                              Set rs = dbConn.Execute("SELECT `access`, `patron` FROM `users` WHERE `user_name` = '" & Command.Argument("user") & "'")
+                              If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                                   Set rs = dbConn.Execute("UPDATE `users` SET `access` = '" & Command.Argument("access") & "', `patron` = '" & Username & "' WHERE `user_name` = '" & Command.Argument("user") & "'")
+                                   AddQ clanPrefix & "Player [" & Command.Argument("user") & "] now has " & Command.Argument("access") & " access and " & GetHierarchyName(Command.Argument("access")) & " privileges"
+                                   Call AddUser(Username, Command.Argument("access"))
+                              End If
+                         dbDisconnect
+                    Else
+                         AddQ clanPrefix & "Invalid request! The amount must be numeric"
+                    End If
+               Else
+                    AddQ clanPrefix & "Please specify an amount"
+               End If
+          Else
+               AddQ clanPrefix & "Please specify a user"
+          End If
+     End If
+End Sub
+
+
+Private Sub ChangeSite_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               If LCase(Command.Argument("web_site")) = "none" Then
+                    WriteConfigEntry "Clan Management Script", "web_site", "None", clanConfig
+                    AddQ clanPrefix & Username & " has changed the site to: None"
+                    Exit Sub
+               End If
+               
+               WriteConfigEntry "Clan Management Script", "web_site", Command.Argument("site"), clanConfig
+               AddQ clanPrefix & Username & " has changed the site to: " & Command.Argument("site")
+          End If
+     Else
+          AddQ clanPrefix & "Please specify a website"
+     End If
+End Sub
+
+
+Private Sub ChangeVent_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If LCase(Command.Argument("address")) = "none" Then
+          WriteConfigEntry "Clan Management Script", "vent_rilo", "None", clanConfig
+          AddQ clanPrefix & Username & " has changed the ventrilo to: None"
+          Exit Sub
+     End If
+     
+     If Len(Command.Argument("address")) > 0 Then
+          If Len(Command.Argument("port")) > 0 Then
+               If Command.HasAccess Then
+                    If IsNumeric(Command.Argument("address")) Then
+                         AddQ clanPrefix & "Invalid address inserted!"
+                         Exit Sub
+                    End If
+                    
+                    If IsNumeric(Command.Argument("port")) Then
+                         If InStr(Command.Argument("address"), ",") Then
+                              If Len(Command.Argument("password")) > 0 Then
+                                   WriteConfigEntry "Clan Management Script", "vent_rilo", Command.Argument("address") & " " & Command.Argument("port") & " " & Command.Argument("password"), clanConfig
+                                   AddQ clanPrefix & Username & " has changed the ventrilo to: [" & Left(Command.Argument("address"), Len(Command.Argument("address")) - 1) & " : " & Left(Command.Argument("port"), Len(Command.Argument("port")) - 1) & " : " & Command.Argument("password") & "]"
+                              Else
+                                   WriteConfigEntry "Clan Management Script", "vent_rilo", Command.Argument("address") & " " & Command.Argument("port"), clanConfig
+                                   AddQ clanPrefix & Username & " has changed the ventrilo to: [" & Left(Command.Argument("address"), Len(Command.Argument("address")) - 1) & " : " & Command.Argument("port") & " : No password]"
+                              End If
+                         Else
+                              AddQ clanPrefix & "Invalid useage! Proper syntax: " & BotVars.Trigger & "changevent <ipaddress>, <port>, [password]"
+                         End If
+                    Else
+                         AddQ clanPrefix & "Invalid port inserted!"
+                    End If
+               End If
+          Else
+               AddQ clanPrefix & "Invalid useage! Proper syntax: " & BotVars.Trigger & "changevent <ipaddress>, <port>, [password]"
+          End If
+     Else
+          AddQ clanPrefix & "Please specify an IP address"
+     End If
+End Sub
+
+
+Private Sub Site_cmd(Username, Command)
+     Dim ventRilo, vent, web_site, I, J
+
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               If LCase(GetConfigEntry("Clan Management Script", "web_site", clanConfig)) <> "none" Then
+                    web_site = GetConfigEntry("Clan Management Script", "web_site", clanConfig)
+                    If LCase(GetConfigEntry("Clan Management Script", "vent_rilo", clanConfig)) <> "none" Then
+                         If (InStr(LCase(GetConfigEntry("Clan Management Script", "vent_rilo", clanConfig)), ", ") > 0) Then
+                              J = 0
+                              ventRilo = Split(GetConfigEntry("Clan Management Script", "vent_rilo", clanConfig), ", ")
+                              For I = 0 To UBound(ventRilo)
+                                   J = J + 1
+                              Next
+                              
+                              vent = "< IP Address: [" & ventRilo(0) & "] Port: [" & ventRilo(1) & "] Password: [None] >"
+                              If J = 3 Then
+                                   vent = Left(vent, Len(vent) - 19) & " Password: [" & ventRilo(2) & "] >"
+                              End If
+                         Else
+                              AddQ clanPrefix & "Invalid ventrilo inserted!"
+                              Exit Sub
+                         End If
+                    Else
+                         vent = "None"
+                    End If
+               Else
+                    web_site = "None"
+               End If
+               
+               AddQ clanPrefix & "Website : < " & web_site & " > | Ventrilo : " & vent
+          End If
+     Else
+          AddQ clanPrefix & "Please specify an IP address and a port"
+     End If
+End Sub
+
+
+Private Sub HierArchy_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               AddQ clanPrefix & "The hierarchy ranks are : (User) (Captain) (Inspector) (Warden) (Moderator) (Super-Moderator) (Manager) (Overseer) (Administrator) (Super-Administrator) (Head-Administrator)"
+          End If
+     End If
+End Sub
+
+
+Private Sub Go_cmd(Username, Command)
+     If NOT UserExists(Username) Then Exit Sub
+     
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               AddQ clanPrefix & "Going to channel [" & Command.Argument("channel") & "]", 1
+               AddQ "/j " & Command.Argument("channel"), 2
+          End If
+     Else
+          AddQ clanPrefix & "Please specify a channel"
+     End If
+End Sub
+
+
+Private Sub Staff_cmd(Username, Command)
+     Dim line
+
+     If NOT UserExists(Username) Then Exit Sub
+     If Command.WasWhispered Then Exit Sub
+     
+     If Command.IsValid Then
+          If Command.HasAccess Then
+               dbConnect()
+                    Set rs = dbConn.Execute("SELECT `user_name` FROM `users` WHERE `access` = 100")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         line = "[Head-Admin]: "
+                         rs.MoveFirst
+                         Do Until rs.EOF
+                              line = line & rs.Fields(0) & " "
+                              rs.MoveNext
+                              
+                              If Len(line) >= 250 Then
+                                   AddQ clanPrefix & line & " [More...]"
+                                   line = ""
+                                   Exit Do
+                              End If	
+                         Loop
+                    End If
+                
+                    Set rs = dbConn.Execute("SELECT `user_name` FROM `users` WHERE `access` < 100 AND `access` > 89")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         line = line & "[Super-Admins]: "
+                         rs.MoveFirst
+                         Do Until rs.EOF
+                              line = line & rs.Fields(0) & " "
+                              rs.MoveNext
+                              
+                              If Len(line) >= 250 Then
+                                   AddQ clanPrefix & line & " [More...]"
+                                   line = ""
+                                   Exit Do
+                              End If	
+                         Loop
+                    End If
+                
+                    Set rs = dbConn.Execute("SELECT `user_name` FROM `users` WHERE `access` < 90 AND `access` > 79")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         line = line & "[Admins]: "
+                         rs.MoveFirst
+                         Do Until rs.EOF
+                              line = line & rs.Fields(0) & " "
+                              rs.MoveNext
+                              
+                              If Len(line) >= 250 Then
+                                   AddQ clanPrefix & line & " [More...]"
+                                   line = ""
+                                   Exit Do
+                              End If	
+                         Loop
+                    End If
+                
+                    Set rs = dbConn.Execute("SELECT `user_name` FROM `users` WHERE `access` < 80 AND `access` > 69")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         line = line & "[Overseers]: "
+                         rs.MoveFirst
+                         Do Until rs.EOF
+                              line = line & rs.Fields(0) & " "
+                              rs.MoveNext
+                              
+                              If Len(line) >= 250 Then
+                                   AddQ clanPrefix & line & " [More...]"
+                                   line = ""
+                                   Exit Do
+                              End If	
+                         Loop
+                    End If
+                
+                    Set rs = dbConn.Execute("SELECT `user_name` FROM `users` WHERE `access` < 70 AND `access` > 59")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         line = line & "[Managers]: "
+                         rs.MoveFirst
+                         Do Until rs.EOF
+                              line = line & rs.Fields(0) & " "
+                              rs.MoveNext
+                              
+                              If Len(line) >= 250 Then
+                                   AddQ clanPrefix & line & " [More...]"
+                                   line = ""
+                                   Exit Do
+                              End If	
+                         Loop
+                    End If
+                
+                    Set rs = dbConn.Execute("SELECT `user_name` FROM `users` WHERE `access` < 60 AND `access` > 49")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         line = line & "[Super-Moderators]: "
+                         rs.MoveFirst
+                         Do Until rs.EOF
+                              line = line & rs.Fields(0) & " "
+                              rs.MoveNext
+                              
+                              If Len(line) >= 250 Then
+                                   AddQ clanPrefix & line & " [More...]"
+                                   line = ""
+                                   Exit Do
+                              End If	
+                         Loop
+                    End If
+                
+                    Set rs = dbConn.Execute("SELECT `user_name` FROM `users` WHERE `access` < 50 AND `access` > 39")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         line = line & "[Moderators]: "
+                         rs.MoveFirst
+                         Do Until rs.EOF
+                              line = line & rs.Fields(0) & " "
+                              rs.MoveNext
+                              
+                              If Len(line) >= 250 Then
+                                   AddQ clanPrefix & line & " [More...]"
+                                   line = ""
+                                   Exit Do
+                              End If	
+                         Loop
+                    End If
+                
+                    Set rs = dbConn.Execute("SELECT `user_name` FROM `users` WHERE `access` < 40 AND `access` > 29")
+                    If NOT (rs.BOF) AND NOT (rs.EOF) Then
+                         line = line & "[Wardens]: "
+                         rs.MoveFirst
+                         Do Until rs.EOF
+                              line = line & rs.Fields(0) & " "
+                              rs.MoveNext
+                              
+                              If Len(line) >= 250 Then
+                                   AddQ clanPrefix & line & " [More...]"
+                                   line = ""
+                                   Exit Do
+                              End If	
+                         Loop
+                    End If
+                    
+                   AddQ clanPrefix & Trim(line)
+               dbDisconnect()
+          End If
+     End If
+End Sub
+     
+
+'/////////
+' TIMERS
+
+Sub counterTimer_Timer()
+     If CStr(Time) = "12:00:01 AM" Then
+          dbConnect
+               Set rs = dbConn.Execute("SELECT `users_day`, `users_week`, `week_day`, `week_num` FROM `counts`")
+               If rs.Fields(2) = "7" Then
+                    If rs.Fields(3) = "4" Then
+                         Set rs = dbConn.Execute("UPDATE `counts` SET `users_month` = '0', `week_num` = '1'")
+                    Else
+                         Set rs = dbConn.Execute("UPDATE `counts` SET `week_num` = '" & rs.Fields(3) + 1 & "'")
+                    End If
+               
+                    Set rs = dbConn.Execute("UPDATE `counts` SET `users_week` = '0', `week_day` = '1'")
+               Else
+                    Set rs = dbConn.Execute("UPDATE `counts` SET `week_day` = '" & rs.Fields(2) + 1 & "'")
+               End If
+               
+               Set rs = dbConn.Execute("UPDATE `counts` SET `users_day` = '0'")
+          dbDisconnect
+     End If
+End Sub
+
+
+'////////////////
+' MISCELLANEOUS
+
+Private Sub AddUser(Username, Access)
+     Call Command(BotVars.Username, "/add " & Username & " " & Access, True)
+End Sub
+
+
+Private Sub DelMail(Username, ID)
+     Set rs = dbConn.Execute("SELECT `mail_state` FROM `mails` WHERE `mail_id` = '" & ID & "'")
+     If rs.Fields(0) = nonread Then
+          Set rs = dbConn.Execute("UPDATE `mails` SET `mail_state` = '" & deleted & "' WHERE `mail_id` = '" & ID & "'")
+          Set rs = dbConn.Execute("SELECT `mails_new`, `mails_trunk` FROM `users` WHERE `user_name` = '" & Username & "'")
+          If rs.Fields(0) > 1 Then
+               Set rs = dbConn.Execute("UPDATE `users` SET `mails_new` = '" & rs.Fields(0) - 1 & "', `mails_trunk` = '" & rs.Fields(1) + 1 & "' WHERE `user_name` = '" & Username & "'")
+          Else
+               Set rs = dbConn.Execute("UPDATE `users` SET `mails_new` = '0', `mails_trunk` = '1' WHERE `user_name` = '" & Username & "'")
+          End If
+     ElseIf rs.Fields(0) = read Then
+          Set rs = dbConn.Execute("UPDATE `mails` SET `mail_state` = '" & deleted & "' WHERE `mail_id` = '" & ID & "'")
+          Set rs = dbConn.Execute("SELECT `mails_old`, `mails_trunk` FROM `users` WHERE `user_name` = '" & Username & "'")
+          If rs.Fields(0) > 1 Then
+               If rs.Fields(1) > 0 Then
+                    Set rs = dbConn.Execute("UPDATE `users` SET `mails_old` = '" & rs.Fields(0) - 1 & "', `mails_trunk` = '" & rs.Fields(1) + 1 & "' WHERE `user_name` = '" & Username & "'")
+               Else
+                    Set rs = dbConn.Execute("UPDATE `users` SET `mails_old` = '" & rs.Fields(0) - 1 & "', `mails_trunk` = '1' WHERE `user_name` = '" & Username & "'")
+               End If
+          Else
+               If rs.Fields(1) > 0 Then
+                    Set rs = dbConn.Execute("UPDATE `users` SET `mails_old` = '0', `mails_trunk` = '" & rs.Fields(1) + 1 & "' WHERE `user_name` = '" & Username & "'")
+               Else
+                    Set rs = dbConn.Execute("UPDATE `users` SET `mails_old` = '0', `mails_trunk` = '1' WHERE `user_name` = '" & Username & "'")
+               End If
+          End If
+     End If
+     
+     AddQ "/w " & Username & " • Mail #" & ID & " has been deleted! (You can restore the mail with " & BotVars.Trigger & "restoremail)"
+End Sub
+
+
+Private Sub DelMailAll(Username)
+     Dim id, trunked_mail
+
+     Set rs = dbConn.Execute("SELECT `mails` FROM `users` WHERE `user_name` = '" & Username & "'")
+     id = Left(rs.Fields(0), Len(rs.Fields(0)) - 1)
+     id = Split(id, ",")
+     
+     For I = 0 To UBound(id)
+          Set rs = dbConn.Execute("SELECT `mail_state` FROM `mails` WHERE `mail_id` = '" & id(I) & "'")
+          If rs.Fields(0) = nonread OR rs.Fields(0) = read Then
+               Set rs = dbConn.Execute("UPDATE `mails` SET `mail_state` = '" & deleted & "' WHERE `mail_id` = '" & id(I) & "'")
+               trunked_mail = trunked_mail + 1
+          End If
+     Next
+     
+     Set rs = dbConn.Execute("UPDATE `users` SET `mails_new` = '0', `mails_old` = '0' WHERE `user_name` = '" & Username & "'")
+     Set rs = dbConn.Execute("SELECT `mails_trunk` FROM `users` WHERE `user_name` = '" & Username & "'")
+     If rs.Fields(0) > 0 Then
+          Set rs = dbConn.Execute("UPDATE `users` SET `mails_trunk` = '" & rs.Fields(0) + trunked_mail & "' WHERE `user_name` = '" & Username & "'")
+     Else
+          Set rs = dbConn.Execute("UPDATE `users` SET `mails_trunk` = '" & trunked_mail & "' WHERE `user_name` = '" & Username & "'")
+     End If
+     
+     AddQ "/w " & Username & " • Mailbox has been cleared! (You can restore the " & trunked_mail & " mails with " & BotVars.Trigger & "restoremail)"
+End Sub
+
+
+Private Sub RestoreMail(Username, ID)
+     Set rs = dbConn.Execute("UPDATE `mails` SET `mail_state` = '" & read & "' WHERE `mail_id` = '" & ID & "'")
+     Set rs = dbConn.Execute("SELECT `mails_old`, `mails_trunk` FROM `users` WHERE `user_name` = '" & Username & "'")
+     If rs.Fields(0) > 1 Then
+          If rs.Fields(1) > 1 Then
+               Set rs = dbConn.Execute("UPDATE `users` SET `mails_old` = '" & rs.Fields(0) + 1 & "', `mails_trunk` = '" & rs.Fields(1) - 1 & "' WHERE `user_name` = '" & Username & "'")
+          Else
+               Set rs = dbConn.Execute("UPDATE `users` SET `mails_old` = '" & rs.Fields(0) + 1 & "', `mails_trunk` = '0' WHERE `user_name` = '" & Username & "'")
+          End If
+     Else
+          If rs.Fields(1) > 1 Then
+               Set rs = dbConn.Execute("UPDATE `users` SET `mails_old` = '1', `mails_trunk` = '" & rs.Fields(1) - 1 & "' WHERE `user_name` = '" & Username & "'")
+          Else
+               Set rs = dbConn.Execute("UPDATE `users` SET `mails_old` = '1', `mails_trunk` = '0' WHERE `user_name` = '" & Username & "'")
+          End If
+     End If
+     
+     AddQ "/w " & Username & " • Mail #" & ID & " has been restored and sent to old mails!"
+End Sub
+
+
+Private Sub RestoreMailAll(Username)
+     Dim id, restored_mail
+
+     Set rs = dbConn.Execute("SELECT `mails` FROM `users` WHERE `user_name` = '" & Username & "'")
+     id = Left(rs.Fields(0), Len(rs.Fields(0)) - 1)
+     id = Split(id, ",")
+     
+     For I = 0 To UBound(id)
+          Set rs = dbConn.Execute("SELECT `mail_state` FROM `mails` WHERE `mail_id` = '" & id(I) & "'")
+          If rs.Fields(0) = deleted Then
+               Set rs = dbConn.Execute("UPDATE `mails` SET `mail_state` = '" & read & "' WHERE `mail_id` = '" & id(I) & "'")
+               restored_mail = restored_mail + 1
+          End If
+     Next
+     
+     Set rs = dbConn.Execute("UPDATE `users` SET `mails_new` = '0', `mails_old` = '" & restored_mail & "', `mails_trunk` = '0' WHERE `user_name` = '" & Username & "'")
+     
+     AddQ "/w " & Username & " • Trunk has been cleared! The " & restored_mail & " mails have been restored and sent to old mails!"
+End Sub
+
+
+Private Sub CheckWarns(Username)
+     dbConnect
+          Set rs = dbConn.Execute("SELECT `warns` FROM `users` WHERE `user_name` = '" & Username & "'")
+          If NOT (rs.BOF) AND NOT (rs.EOF) Then
+               If rs.Fields(0) > 99 Then
+                    Call Command(BotVars.Username, "/" & GetConfigEntry("Clan Management Script", "warn_punish", clanConfig) & " " & Username & " Warn limit exceeded", True)
+               End If
+          End If
+     dbDisconnect
+End Sub
+
+
+Private Sub RemoveID(Username, ID)
+     Dim IDs, warnIDs
+
+     Set rs = dbConn.Execute("SELECT `warn_amount`, `user_name` FROM `warns` WHERE `warn_id` = '" & ID & "'")
+     Set rs2 = dbConn.Execute("SELECT `warns`, `warn_id` FROM `users` WHERE `user_name` = '" & rs.Fields(1) & "'")
+     
+     warnIDs = rs2.Fields(1)
+     IDs = Replace(warnIDs, ID & ",","")
+          
+     Set rs = dbConn.Execute("UPDATE `users` SET `warns` = '" & rs2.Fields(0) - rs.Fields(0) & "', `warn_id` = '" & IDs & "' WHERE `user_name` = '" & rs.Fields(1) & "'")
+     AddQ clanPrefix & "Player [" & Username & "] has deleted warn #" & ID
+     
+     Set rs = dbConn.Execute("UPDATE `warns` SET `warn_amount` = 'Deleted' WHERE `warn_id` = '" & ID & "'")
+End Sub
+
+
+Private Sub dbConnect
+     Set dbConn = CreateObject("ADODB.Connection")
+     dbConnStringProperty = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & clanDataBase
+     dbConn.ConnectionString = dbConnStringProperty
+     dbConn.Open
+End Sub
+
+
+Private Sub dbDisconnect
+     dbConn.Close
+End Sub
+
+
+Private Sub recreateDB()
+     dbConnect
+          dbConn.Execute("DROP TABLE `users`, `requests`, `invites`, `mails`, `warns`, `counts`")
+          AddChat RGB(245, 184, 0), "[Clan Management Script] Database deleted"
+          AddChat RGB(0, 245, 61), "[Clan Management Script] Recreating database"
+          
+          dbConn.Execute("CREATE TABLE `users` (`user_id` varchar(5), `user_name` varchar(20), `mails_new` varchar(4), `mails_old` varchar(4), `mails_trunk` varchar(4), `mails_total` varchar(4), `mails_sent` varchar(4), `mails_received` varchar(4), `mails_read` varchar(4), `mails` varchar(255), `vouch_date` varchar(10), `send_date` varchar(10), `vouched_by` varchar(25), `warns` varchar(4), `warn_id` varchar(200), `warn_date` varchar(10), `warned_by` varchar(20), `warn_reason` varchar(200), `vouched` varchar(5), `edit_name` varchar(20), `edit_age` varchar(4), `edit_sex` varchar(10), `edit_location` varchar(20), `access` INT, `patron` varchar(20), `banned` varchar(10))")
+          dbConn.Execute("CREATE TABLE `requests` (`request_id` varchar(5), `user_name` varchar(20), `vouch_message` varchar(200), `send_date` varchar(10), `vouch_date` varchar(10), `vouch_state` varchar(5), `vouched_by` varchar(20))")
+          dbConn.Execute("CREATE TABLE `invites` (`invite_id` varchar(5), `user_name` varchar(20), `invite_message` varchar(200), `send_date` varchar(10), `invite_date` varchar(10), `invite_state` varchar(5), `invited_by` varchar(20), `invite_user` varchar(5))")
+          dbConn.Execute("CREATE TABLE `mails` (`mail_id` varchar(5), `mailed_from` varchar(20), `mailed_to` varchar(20), `date_mailed` varchar(10), `date_read` varchar(10), `mail` varchar(255), `mail_state` INT)")
+          dbConn.Execute("CREATE TABLE `warns` (`warn_id` varchar(5), `user_name` varchar(20), `warn_reason` varchar(200), `warn_amount` varchar(10), `warn_date` varchar(10), `warn_user` varchar(20))")
+          dbConn.Execute("CREATE TABLE `counts` (`users_day` varchar(5), `users_week` varchar(5), `week_day` varchar(5), `week_num` varchar(5), `users_month` varchar(5), `autovouched_users` varchar(5))")
+          
+          
+          Set rs = dbConn.Execute("INSERT INTO `counts` (`users_day`, `users_week`, `week_day`, `week_num`, `users_month`, `autovouched_users`) VALUES ('" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "')")
+          Set rs = dbConn.Execute("UPDATE `counts` SET `users_day` = '1', `users_week` = '1', `week_day` = '1', `week_num` = '1', `users_month` = '1', `autovouched_users` = '1'")
+          
+          Set rs = dbConn.Execute("INSERT INTO `users` (`user_id`, `user_name`, `mails_new`, `mails_old`, `mails_trunk`, `mails_total`, `mails_sent`, `mails_received`, `mails_read`, `mails`, `vouch_date`, `send_date`, `vouched_by`, `warns`, `warn_id`, `warn_date`, `warned_by`, `warn_reason`, `vouched`, `edit_name`, `edit_age`, `edit_sex`, `edit_location`) VALUES ('" & Get_UserID & "', '" & GetConfigEntry("Clan Management Script", "clan_director", clanConfig) & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & Get_Date & "', '" & "N/A" & "', '" & "Auto Vouch" & "', '" & 0 & "', '" & 0 & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "Y" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "', '" & "N/A" & "')")
+          
+          AddChat RGB(219, 112, 255), "[Clan Management Script] Database recreated" 
+     dbDisconnect
+End Sub
+
+
+Private Sub createDB()
+     Set dbCatalog = CreateObject("ADOX.Catalog")
+     dbCatalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & clanDataBase   
+     
+     dbConnect
+          dbConn.Execute("CREATE TABLE `users` (`user_id` varchar(5), `user_name` varchar(20), `mails_new` varchar(4), `mails_old` varchar(4), `mails_trunk` varchar(4), `mails_total` varchar(4), `mails_sent` varchar(4), `mails_received` varchar(4), `mails_read` varchar(4), `mails` varchar(255), `vouch_date` varchar(10), `send_date` varchar(10), `vouched_by` varchar(25), `warns` varchar(4), `warn_id` varchar(200), `warn_date` varchar(10), `warned_by` varchar(20), `warn_reason` varchar(200), `vouched` varchar(5), `edit_name` varchar(20), `edit_age` varchar(4), `edit_sex` varchar(10), `edit_location` varchar(20), `access` INT, `patron` varchar(20), `banned` varchar(10))")
+          dbConn.Execute("CREATE TABLE `requests` (`request_id` varchar(5), `user_name` varchar(20), `vouch_message` varchar(200), `send_date` varchar(10), `vouch_date` varchar(10), `vouch_state` varchar(5), `vouched_by` varchar(20))")
+          dbConn.Execute("CREATE TABLE `invites` (`invite_id` varchar(5), `user_name` varchar(20), `invite_message` varchar(200), `send_date` varchar(10), `invite_date` varchar(10), `invite_state` varchar(5), `invited_by` varchar(20), `invite_user` varchar(5))")
+          dbConn.Execute("CREATE TABLE `mails` (`mail_id` varchar(5), `mailed_from` varchar(20), `mailed_to` varchar(20), `date_mailed` varchar(10), `date_read` varchar(10), `mail` varchar(255), `mail_state` INT)")
+          dbConn.Execute("CREATE TABLE `warns` (`warn_id` varchar(5), `user_name` varchar(20), `warn_reason` varchar(200), `warn_amount` varchar(10), `warn_date` varchar(10), `warn_user` varchar(20))")
+          dbConn.Execute("CREATE TABLE `counts` (`users_day` varchar(5), `users_week` varchar(5), `week_day` varchar(5), `week_num` varchar(5), `users_month` varchar(5), `autovouched_users` varchar(5))")
+          
+          Set rs = dbConn.Execute("INSERT INTO `counts` (`users_day`, `users_week`, `week_day`, `week_num`, `users_month`, `autovouched_users`) VALUES ('" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "', '" & 0 & "')")
+          Set rs = dbConn.Execute("UPDATE `counts` SET `users_day` = '1', `users_week` = '1', `week_day` = '1', `week_num` = '1', `users_month` = '1', `autovouched_users` = '1'")
+     dbDisconnect
+End Sub
+
+
+Private Sub createConfig()
+     Dim response
+
+     response = MsgBox("Emote messages", vbYesNo, Script("Name"))
+
+     If response = vbYes Then
+          response = "Y"
+     Else
+          response = "N"
+     End If
+
+     WriteConfigEntry "Clan Management Script", "emote_on", response, clanConfig
+     Set response = Nothing
+     
+     response = MsgBox("Allow users to use /emote in your channel", vbYesNo, Script("Name"))
+
+     If response = vbYes Then
+          response = "Y"
+     Else
+          response = "N"
+     End If
+
+     WriteConfigEntry "Clan Management Script", "allow_emote", response, clanConfig
+     Set response = Nothing
+
+     response = MsgBox("Do you have your own website? Y/N", vbYesNo, Script("Name"))
+
+     If response = vbYes Then
+          response = "Y"
+     Else
+          response = "N"
+     End If
+     
+     If response = "Y" Then
+          WriteConfigEntry "Clan Management Script", "web_site", InputBox("Your website e.g: www.stealthbot.net/forums", Script("Name"), ""), clanConfig
+     Else
+          WriteConfigEntry "Clan Management Script", "web_site", "None", clanConfig
+     End If
+     Set response = Nothing
+     
+     response = MsgBox("Do you have your own ventrilo? Y/N", vbYesNo, Script("Name"))
+
+     If response = vbYes Then
+          response = "Y"
+     Else
+          response = "N"
+     End If
+     
+     If response = "Y" Then
+          WriteConfigEntry "Clan Management Script", "vent_rilo", InputBox("Your ventrilo - both IP, port and possible password divided by "","". If you have no password, leave it as ""password""", Script("Name"), "ventrilo.nathrezim.org,4135,password"), clanConfig
+     Else
+          WriteConfigEntry "Clan Management Script", "vent_rilo", "None", clanConfig
+     End If
+     Set response = Nothing
+     
+     WriteConfigEntry "Clan Management Script", "max_chars", InputBox("Maximum character length of a mail and a vouch request", Script("Name"), "200"), clanConfig
+     WriteConfigEntry "Clan Management Script", "clan_director", InputBox("The clan director (owner of the bot/clan leader)", Script("Name"), ""), clanConfig
+     
+     AddChat vbGreen, "Giving full access to " & GetConfigEntry("Clan Management Script", "clan_director", clanConfig) & "!"
+     
+     WriteConfigEntry "Clan Management Script", "warn_punish", InputBox("The result of having exceeded the warning limit of 100%", Script("Name"), "ban"), clanConfig
+     
+     response = MsgBox("Vouch users automatically", vbYesNo, Script("Name"))
+
+     If response = vbYes Then
+          response = "Y"
+     Else
+          response = "N"
+     End If
+
+     WriteConfigEntry "Clan Management Script", "auto_vouch", response, clanConfig
+     Set response = Nothing
+     
+     If GetConfigEntry("Clan Management Script", "auto_vouch", clanConfig) = "N" Then
+          WriteConfigEntry "Clan Management Script", "ban_nonvouched", InputBox("Do you want to ban users from the channel if they are not vouched (requires OP)", Script("Name"), "N"), clanConfig
+     
+          If GetConfigEntry("Clan Management Script", "ban_nonvouched", clanConfig) = "Y" Then
+               If GetConfigEntry("Clan Management Script", "web_site", clanConfig) <> "None" Then
+                    WriteConfigEntry "Clan Management Script", "ban_message", InputBox("The message that comes along with the banning of nonvouched users", Script("Name"), "You are not safelisted : [" & GetConfigEntry("Clan Management Script", "web_site", clanConfig) & "] or [/w " & BotVars.Username & " " & BotVars.Trigger & "vouchrequest [message]"), clanConfig
+               Else
+                    WriteConfigEntry "Clan Management Script", "ban_message", InputBox("The message that comes along with the banning of nonvouched users", Script("Name"), "You are not safelisted : [/w " & BotVars.Username & " " & BotVars.Trigger & "vouchrequest [message]"), clanConfig
+               End If
+          Else
+               WriteConfigEntry "Clan Management Script", "ban_message", "The message that comes along with the banning of nonvouched users", clanConfig
+          End If
+     ElseIf GetConfigEntry("Clan Management Script", "auto_vouch", clanConfig) = "Y" Then
+          WriteConfigEntry "Clan Management Script", "ban_nonvouched", "N", clanConfig
+          WriteConfigEntry "Clan Management Script", "ban_message", "You are not safelisted : (/w " & BotVars.Username & " " & BotVars.Trigger & "vouchrequest [message])", clanConfig
+     End If
+    
+     AddChat color.Orange, "[Clan Management Script] All settings can be edited and changed anytime you want: Settings -> View Files -> Open Bot Folder -> Clan Management Script -> settings.ini"
+End Sub
+
+
+Private Sub createCommands()
+     Dim Command, Parameter
+
+     If OpenCommand("mail") Is Nothing Then
+          With CreateCommand("mail")
+               .Description = "Mails another user" 
+               .RequiredRank = 0
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("message", False, "String")
+               .Parameters.Add Parameter
+               .Aliases.Add "send"
+               .Aliases.Add "sendmail"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("inbox") Is Nothing Then
+          With CreateCommand("inbox")
+               .Description = "Displays your mails" 
+               .RequiredRank = 0
+               .Aliases.Add "mymail"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("readnew") Is Nothing Then
+          With CreateCommand("readnew")
+               .Description = "Displays new mails" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("readold") Is Nothing Then
+          With CreateCommand("readold")
+               .Description = "Displays old mails" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("readtrunk") Is Nothing Then
+          With CreateCommand("readtrunk")
+               .Description = "Displays trunk mails" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("read") Is Nothing Then
+          With CreateCommand("read")
+               .Description = "Reads a specified mail" 
+               .RequiredRank = 0
+               .Parameters.Add .NewParameter("id", False, "Word")
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("delmail") Is Nothing Then
+          With CreateCommand("delmail")
+               .Description = "Deletes a mail and moves it to the trunk" 
+               .RequiredRank = 0
+               .Parameters.Add .NewParameter("id/all", False, "Word")
+               .Aliases.Add "deletemail"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("restoremail") Is Nothing Then
+          With CreateCommand("restoremail")
+               .Description = "Restores all deleted mails" 
+               .RequiredRank = 0
+               .Parameters.Add .NewParameter("id", False, "Word")
+               .Aliases.Add "restore"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("vouch") Is Nothing Then
+          With CreateCommand("vouch")
+               .Description = "Vouches a user" 
+               .RequiredRank = 30
+               .Parameters.Add .NewParameter("user", False, "Word")
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("unvouch") Is Nothing Then
+          With CreateCommand("unvouch")
+               .Description = "Unvouches/removes a user" 
+               .RequiredRank = 30
+               .Parameters.Add .NewParameter("user", False, "Word")
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("vouchrequest") Is Nothing Then
+          With CreateCommand("vouchrequest")
+               .Description = "Adds a vouch request" 
+               .RequiredRank = 0
+               .Parameters.Add .NewParameter("message", False, "String")
+               .Aliases.Add "request"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("showrequests") Is Nothing Then
+          With CreateCommand("showrequests")
+               .Description = "Shows the names of users who have made a request" 
+               .RequiredRank = 20
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("viewrequest") Is Nothing Then
+          With CreateCommand("viewrequest")
+               .Description = "Displays a request" 
+               .RequiredRank = 20
+               .Parameters.Add .NewParameter("user", False, "Word")
+               .Aliases.Add "view"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("approve") Is Nothing Then
+          With CreateCommand("approve")
+               .Description = "Approves a specified request" 
+               .RequiredRank = 30
+               .Parameters.Add .NewParameter("user", False, "Word")
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("deny") Is Nothing Then
+          With CreateCommand("deny")
+               .Description = "Denies a specified request" 
+               .RequiredRank = 30
+               .Parameters.Add .NewParameter("user", False, "Word")
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("info") Is Nothing Then
+          With CreateCommand("info")
+               .Description = "Displays information about a specified user" 
+               .RequiredRank = 0
+               .Parameters.Add .NewParameter("user", True, "Word")
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("users") Is Nothing Then
+          With CreateCommand("users")
+               .Description = "Displays some general user information" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("userinfo") Is Nothing Then
+          With CreateCommand("userinfo")
+               .Description = "Displays some user information for the current day, week and month" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("recentusers") Is Nothing Then
+          With CreateCommand("recentusers")
+               .Description = "Displays the recent vouched users" 
+               .RequiredRank = 0
+               .Parameters.Add .NewParameter("users", True, "Word")
+               .Aliases.Add "lastusers"
+               .Save
+          End With
+     End If
+
+     If OpenCommand("warn") Is Nothing Then
+          With CreateCommand("warn")
+               .Description = "Warns a user with a specified amount and a reason" 
+               .RequiredRank = 40
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("amount", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("reason", True, "String")
+               .Parameters.Add Parameter
+               .Save
+          End With
+     End If
+
+     If OpenCommand("warndelete") Is Nothing Then
+          With CreateCommand("warndelete")
+               .Description = "Deletes a specified warning id" 
+               .RequiredRank = 40
+               .Parameters.Add .NewParameter("id", False, "Word")
+               .Aliases.Add "warndel"
+               .Save
+          End With
+     End If
+
+     If OpenCommand("warns") Is Nothing Then
+          With CreateCommand("warns")
+               .Description = "Displays your current warn status" 
+               .RequiredRank = 0
+               .Parameters.Add .NewParameter("user", True, "Word")
+               .Save
+          End With
+     End If
+
+     If OpenCommand("warninfo") Is Nothing Then
+          With CreateCommand("warninfo")
+               .Description = "Gives some warn information of a specified warn id" 
+               .RequiredRank = 20
+               .Parameters.Add .NewParameter("id", False, "Word")
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("edit") Is Nothing Then
+          With CreateCommand("edit")
+               .Description = "Edits name, age, sex or location" 
+               .RequiredRank = 0
+               Set Parameter = .NewParameter("entry", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("value", False, "Word")
+               .Parameters.Add Parameter
+               .Aliases.Add "set"
+               .Save
+          End With
+     End If
+
+     If OpenCommand("whoami") Is Nothing Then
+          With CreateCommand("whoami")
+               .Description = "Displays personal information such as name, age & sex for the user" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+
+     If OpenCommand("whois") Is Nothing Then
+          With CreateCommand("whois")
+               .Description = "Displays personal information such as name, age & sex for another user" 
+               .RequiredRank = 0
+               .Parameters.Add .NewParameter("user", False, "Word")
+               .Save
+          End With
+     End If
+
+     If OpenCommand("apply") Is Nothing Then
+          With CreateCommand("apply")
+               .Description = "Applies to join the clan" 
+               .RequiredRank = 0
+               .Parameters.Add .NewParameter("message", False, "String")
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("time") Is Nothing Then
+          With CreateCommand("time")
+               .Description = "Displays the current time" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("kickidles") Is Nothing Then
+          With CreateCommand("kickidles")
+               .Description = "Kicks all idle users" 
+               .RequiredRank = 20
+               .Aliases.Add "kickafk"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("promote") Is Nothing Then
+          With CreateCommand("promote")
+               .Description = "Promotes a chosen user to a higher rank" 
+               .RequiredRank = 30
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("rank", True, "Word")
+               .Parameters.Add Parameter
+               .Aliases.Add "upgrade"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("demote") Is Nothing Then
+          With CreateCommand("demote")
+               .Description = "Demotes a chosen user to a lower rank" 
+               .RequiredRank = 30
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("rank", True, "Word")
+               .Parameters.Add Parameter
+               .Aliases.Add "degrade"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("setaccess") Is Nothing Then
+          With CreateCommand("setaccess")
+               .Description = "Sets a specific user's access" 
+               .RequiredRank = 30
+               Set Parameter = .NewParameter("user", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("access", False, "Word")
+               .Parameters.Add Parameter
+               .Aliases.Add "set"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("changesite") Is Nothing Then
+          With CreateCommand("changesite")
+               .Description = "Changes the website of the clan" 
+               .RequiredRank = 100
+               .Parameters.Add .NewParameter("site", False, "Word")
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("changevent") Is Nothing Then
+          With CreateCommand("changevent")
+               .Description = "Changes the clan's ventrilo" 
+               .RequiredRank = 100
+               Set Parameter = .NewParameter("address", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("port", False, "Word")
+               .Parameters.Add Parameter
+               Set Parameter = .NewParameter("password", True, "String")
+               .Parameters.Add Parameter
+               .Aliases.Add "changeventrilo"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("site") Is Nothing Then
+          With CreateCommand("site")
+               .Description = "Displays the clan's website and ventrilo" 
+               .RequiredRank = 0
+               .Aliases.Add "vent"
+               .Aliases.Add "website"
+               .Aliases.Add "ventrilo"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("hierarchy") Is Nothing Then
+          With CreateCommand("hierarchy")
+               .Description = "Displays the hierarchy (ranks)" 
+               .RequiredRank = 20
+               .Aliases.Add "ranks"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("go") Is Nothing Then
+          With CreateCommand("go")
+               .Description = "Joins a specified channel/clan" 
+               .RequiredRank = 100
+               .Parameters.Add .NewParameter("channel", False, "String")
+               .Aliases.Add "join"
+               .Save
+          End With
+     End If
+     
+     If OpenCommand("staff") Is Nothing Then
+          With CreateCommand("staff")
+               .Description = "Displays the staff members of your clan/league" 
+               .RequiredRank = 0
+               .Save
+          End With
+     End If
+     
+     Set Command = Nothing
+     Set Parameter = Nothing
+End Sub

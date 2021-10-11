@@ -1,0 +1,405 @@
+Option Explicit
+
+Script("Name")     = "ShoutHandler"
+Script("Author")   = "AwaKening"
+Script("Major")    = 1
+Script("Minor")    = 1
+Script("Revision") = 5
+Script("Filename") = "ShoutHandler.txt"
+Script("Commands") = "shouthandler <on/off>:shoutlength <length>:shoutpercent <percent>:" &_
+                     "shoutpunishment <command>:shoutmessage <phrase>"
+Script("Description") = "Detect a percentage of CAPS in a message and choose punishment"
+
+
+'// Written by AwaKening 02/20/2010
+
+' CHANGELOGS
+'
+' 1.1.5
+'    - Warnings and Punishment can now call to other scripted commands
+' 1.1.4
+'    - Improved warndecay accuracy
+' 1.1.3
+'    - %w can now be used in warnings and punishments to indicate (warns/allowed)
+' 1.1.2
+'    - Minimum length is now checked after non-alpha characters are removed
+' 1.1.1
+'    - Fixed an error with /shoutwarning from last update
+' 1.1.0
+'    - Script will now warn users x times before using punishment within a timelimit
+'    - Added setting WarnMessage
+'    - Added setting WarnCount
+'    - Added setting WarnTime (Must change in scripts.ini, no command)
+'    - Added command /shoutcount <number>
+'    - Added command /shoutwarning <message>
+'    - Fixed an error on load introduced in last update
+'    - Fixed an error in GetDBEntry from last update
+' 1.0.2
+'    - Added setting Safelist
+'    - Added setting SafeAccess
+'    - Added function ShoutSetting
+' 1.0.1
+'    - Removed shoutmessage command and setting
+'    - Punishment will handle the whole thing now instead by using %u in your punishment
+'    - Added command /shoutwarning <phrase>
+
+Private Warned
+
+Sub Event_Load()
+        Call CreateCommands()
+        Call CreateSettings()
+
+        Set Warned = CreateObject("Scripting.Dictionary")
+        Warned.CompareMode = 1
+
+        CreateObj "LongTimer", "DropWarns"
+        DropWarns.Interval = 15
+        DropWarns.Enabled = True        
+End Sub
+
+Sub Event_UserEmote(Username, Flags, Message)
+        Check4Shout Username, Message
+End Sub
+
+Sub Event_UserTalk(Username, Flags, Message, Ping)
+        Check4Shout Username, Message
+End Sub
+
+Sub Event_Command(Command)
+        With Command
+
+                Select Case LCase(.Name)
+                Case "shouthandler"
+                        .Respond ShoutHandler(.Args)
+                Case "shoutlength"
+                        .Respond ShoutLength(.Args)
+                Case "shoutpercent"
+                        .Respond ShoutPercent(.Args)
+                Case "shoutpunishment"
+                        .Respond ShoutPunishment(.Args)
+                Case "shoutmessage"
+                        .Respond "This command has been disabled since version 1.0.1.  "&_
+                        "Instead use your entire phrase in shoutpunishment.  %u for Username"
+                Case "shoutwarning"
+                        .Respond ShoutWarning(.Args)
+                Case "shoutcount"
+                        .Respond ShoutCount(.Args)
+                End Select
+        End With
+End Sub
+
+Sub DropWarns_Timer()
+        If Warned.Count=0 Then Exit Sub
+
+        Dim user, warns
+
+        For Each user in Warned.Keys
+                warns = Warned.Item(user)
+
+                If (Abs(DateDiff("n", warns(1), Now)) >= ShoutSetting("WarnTime")) Then
+                        warns(0) = warns(0)-1
+                        warns(1) = Now
+
+                        If (warns(0) <= 0) Then
+                                Warned.Remove user
+                        Else
+                                Warned.Item(user) = warns
+                        End If
+                End If
+        Next
+End Sub
+
+Private Function ShoutWarning(ByVal Text)
+        If LenB(Text)=0 Then
+                ShoutWarning = "Shout Warning is currently: " &GetSettingsEntry("WarnMessage") 
+        Else
+                WriteSettingsEntry "WarnMessage", Text
+                ShoutWarning = "Shout Warning set to: " &Text
+        End If
+End Function
+
+Private Function ShoutCount(ByVal Text)
+        If LenB(Text)=0 Then
+                ShoutCount = "Shout Warnings currently: " &GetSettingsEntry("WarnCount") 
+        ElseIf IsNumeric(Text) Then
+                WriteSettingsEntry "ShoutCount", Text
+                ShoutCount = "Shout Warning Count set to: " &Text
+        End If
+End Function
+
+Private Function ShoutHandler(ByVal Text)
+        If LenB(Text)=0 Then
+                ShoutHandler = "Shout Hander Active = " &CBool(ShoutSetting("Active"))
+        ElseIf LCase(Text) = "off" Then
+                WriteSettingsEntry "Active", 0
+                ShoutHandler = "Disabled Shout Handler"
+        ElseIf LCase(Text) = "on" Then
+                WriteSettingsEntry "Active", -1
+                ShoutHandler = "Enabled Shout Handler"
+        End If
+End Function
+
+Private Function ShoutLength(ByVal Text)
+        If LenB(Text)=0 Then
+                ShoutLength = "Shout Minimum Length is currently " &GetSettingsEntry("MinLength") 
+        ElseIf IsNumeric(Text) Then
+                WriteSettingsEntry "MinLength", Text
+                ShoutLength = "Shout Minimum Length set to " &Text
+        End If
+End Function
+
+Private Function ShoutPercent(ByVal Text)
+        If LenB(Text)=0 Then
+                ShoutPercent = "Shout Percentage is currently " &GetSettingsEntry("Percent")
+        ElseIf IsNumeric(Text) Then
+                WriteSettingsEntry "Percent", Text
+                ShoutPercent = "Shout Percentage set to " &Text
+        End If
+End Function
+
+Private Function ShoutPunishment(ByVal Text)
+        If LenB(Text)=0 Then
+                ShoutPunishment = "Shout Punishment is currently " &GetSettingsEntry("Punishment") 
+        Else
+                WriteSettingsEntry "Punishment", Text
+                ShoutPunishment = "Shout Punishment set to " &Text
+        End If
+End Function
+
+Private Sub Check4Shout(ByVal Username, ByVal Text)
+        If NOT(ShoutSetting("Active")) Then Exit Sub
+
+        Dim i, caps, letter, sLength, warning
+
+        sLength = Len(Text)
+
+        For i=1 to Len(Text)
+
+                letter = Mid(Text,i,1)
+                If letter = UCase(letter) Then
+
+                        If UCase(letter) = LCase(letter) Then
+                                sLength = sLength-1
+                        Else
+                                caps = caps+1
+                        End If
+                End If 
+        Next
+
+        If (sLength < ShoutSetting("MinLength")) Then Exit Sub
+
+        If (100*(caps/sLength) >= ShoutSetting("Percent")) Then
+                If NOT(IsImmune(Username)) Then
+                        If OverWarnings(Username, warning) Then
+                                Command myUsername, Replace(Replace(ShoutSetting("Punishment"), _
+                                "%u", Username), "%w", warning), True
+                        Else
+                                Command myUsername, Replace(Replace(ShoutSetting("WarnMessage"), _
+                                "%u", Username), "%w", warning), True
+                        End If
+                End If
+        End If
+End Sub
+
+Private Function OverWarnings(ByVal Username, ByRef warning)
+        Dim allowed
+
+        allowed = ShoutSetting("WarnCount")
+
+        '// If no warnings, then variable warning will be a null string
+        If (allowed < 1) Then
+                OverWarnings = True
+                Exit Function
+        End If
+
+        If NOT(Warned.Exists(Username)) Then
+                Warned.Add Username, Array(1, Now)
+        Else
+                Warned.Item(Username) = Array(Warned.Item(Username)(0)+1, Now)
+
+                If (Warned.Item(Username)(0) > allowed) Then OverWarnings = True
+        End If
+
+        warning = StringFormat("{0}/{1}", Warned.Item(Username)(0), allowed)
+End Function
+
+Private Function IsImmune(ByVal Username)
+        Dim safe
+
+        If ShoutSetting("Safelist") Then
+                If IsSafeListed(Username) Then
+                        IsImmune = True
+                        Exit Function
+                End If
+        End If
+
+        safe = ShoutSetting("SafeAccess")
+        If LenB(safe) = 0 Then Exit Function
+
+        If IsNumeric(safe) Then
+                If GetDBEntry(Username).Rank >= safe Then IsImmune = True
+        Else
+                If InStr(1, GetDBEntry(Username).Flags, safe, 1)>0 Then IsImmune = True
+        End If
+End Function
+
+Private Function ShoutSetting(Setting)
+        Dim entry
+        entry = GetSettingsEntry(Setting)
+
+        If IsNumeric(entry) Then
+                ShoutSetting = cInt(entry)
+        Else
+                Select Case UCase(entry)
+                        Case "NO", "N", "FALSE", "0": ShoutSetting = False
+                        Case "YES", "Y", "TRUE", "-1": ShoutSetting = True
+                        Case Else: ShoutSetting = entry
+                End Select
+        End If
+End Function 
+
+Private Sub CreateCommands()
+        Dim cmd, Param
+
+        If NOT(OpenCommand("shoutwarning")) Is Nothing Then Exit Sub
+
+        Set cmd = CreateCommand("shoutwarning")
+        With cmd
+                Set Param = .NewParameter("Message", False, "Phrase")
+                Param.Description = "%u, Stop shouting."
+                .Parameters.Add Param
+
+                .RequiredRank = 70
+                .Description = "Warning message before punishment"
+                .Save
+        End With
+
+        Set cmd = CreateCommand("shoutcount")
+        With cmd
+                Set Param = .NewParameter("Warns", False, "Number")
+                Param.Description = "Allowed"
+                .Parameters.Add Param
+
+                .RequiredRank = 70
+                .Description = "How Many warning will be issued"
+                .Save
+        End With
+
+        AddChat color.Plum, "Created Commands (shoutwarning, shoutcount)"
+
+        Set cmd   = Nothing
+        Set Param = Nothing
+
+        If NOT(OpenCommand("shouthandler")) Is Nothing Then Exit Sub
+
+        Set cmd = CreateCommand("shouthandler")
+        With cmd
+                Set Param = .NewParameter("State", False, "On/Off")
+                Param.Description = "On or Off."
+                .Parameters.Add Param
+
+                .RequiredRank = 70
+                .Description = "Turn handler on/off"
+                .Save
+        End With
+
+        Set cmd = CreateCommand("shoutlength")
+        With cmd
+                Set Param = .NewParameter("Length", False, "Number")
+                Param.Description = "Length of message"
+                .Parameters.Add Param
+
+                .RequiredRank = 70
+                .Description = "Minimum length of message"
+                .Save
+        End With
+
+        Set cmd = CreateCommand("shoutpercent")
+        With cmd
+                Set Param = .NewParameter("Percentage", False, "Number")
+                Param.Description = "1-100"
+                .Parameters.Add Param
+
+                .Aliases.Add "shoutpercentage"
+                .RequiredRank = 70
+                .Description = "Percentage of CAPS"
+                .Save
+        End With
+
+        Set cmd = CreateCommand("shoutpunishment")
+        With cmd
+                Set Param = .NewParameter("Command", False, "Word")
+                Param.Description = "/kick %u"
+                .Parameters.Add Param
+
+                .RequiredRank = 70
+                .Description = "Type of output/punishment to use"
+                .Save
+        End With
+
+        AddChat color.Plum, "Created Commands (shouthandler, shoutlength, " &_
+        "shoutpercent, shoutpunishment)"
+
+        Set cmd   = Nothing
+        Set Param = Nothing
+End Sub
+
+Private Sub CreateSettings()
+        Dim version, myversion
+
+        version = Script("Major")&"."&Script("Minor")&"."&Script("Revision")
+        myversion = GetSettingsEntry("version")
+
+        If myversion = version Then Exit Sub
+
+        If myversion = "1.0.0" Then
+                WriteSettingsEntry "Punishment (info)", "Type of command issued when CAPS" &_
+                " detected. %u for Username"
+                WriteSettingsEntry "Punishment", GetSettingsEntry("Punishment")& " %u " &_
+                GetSettingsEntry("Message")
+
+                WriteSettingsEntry "Message (info)", "This setting is now Unused."
+                WriteSettingsEntry "Message", vbNullString
+                AddChat color.Plum, "Punishment and Message have been combined in your shout settings."
+        End If
+
+        WriteSettingsEntry "version", version
+        AddChat color.Plum, "AwaKening's ShoutHandler Script has been updated to " &version
+
+        If LenB(GetSettingsEntry("WarnMessage"))>0 Then Exit Sub
+
+        WriteSettingsEntry "WarnMessage (info)", "Warning to give users before Punishment is used"
+        WriteSettingsEntry "WarnMessage", "%u, (%w) Please stop shouting."
+
+        WriteSettingsEntry "WarnCount (info)", "How many warnings will be given"
+        WriteSettingsEntry "WarnCount", 2
+
+        WriteSettingsEntry "WarnTime (info)", "Minutes - How often a warn will drop off per user"
+        WriteSettingsEntry "WarnTime", 10
+
+        If LenB(GetSettingsEntry("Safelist"))>0 Then Exit Sub
+
+        WriteSettingsEntry "Safelist (info)", "Ignore safelisted users?  Y/N"
+        WriteSettingsEntry "Safelist", "N"
+
+        WriteSettingsEntry "SafeAccess (info)", "Users with Access greater than this or Flags will be ignored"
+        WriteSettingsEntry "SafeAccess", 100
+
+        If LenB(GetSettingsEntry("Active")) > 0 Then Exit Sub
+
+        WriteSettingsEntry "Active (info)", "Is the Script currenlty active?  Y/N"
+        WriteSettingsEntry "Active", "Y"
+
+        WriteSettingsEntry "MinLength (info)", "Messages need to be at least this length to be checked."
+        WriteSettingsEntry "MinLength", 3
+
+        WriteSettingsEntry "Percent (info)", "Messages containing this percent of CAPS or " &_
+        "higher trigger punishment (1-100)"
+        WriteSettingsEntry "Percent", 100
+
+        WriteSettingsEntry "Punishment (info)", "Type of command issued when CAPS detected. %u for Username"
+        WriteSettingsEntry "Punishment", "/kick %u Stop Shouting!"
+
+        AddChat color.Plum, "SHOUT HANDLER Settings Loaded from Scripts.ini"
+        AddChat color.Plum, "   Changes take effect immediately"
+End Sub

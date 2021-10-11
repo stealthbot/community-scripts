@@ -1,0 +1,949 @@
+Option Explicit
+Script("Name") = "Custom Command Editor"
+Script("Author") = "Tuck"
+Script("Major") = 1
+Script("Revision") = 5
+
+Private Commands, Form1, Connection, FormCommand, sGet, sRun, IsUIOpen
+Set Commands = CreateObject("Scripting.Dictionary")
+
+Public Sub Event_Load()
+    Connect
+    Load_Form
+    Create_BuildInCommands
+    Load_Commands
+    CreateObj("Menu", "Open").Caption = "Launch Custom Command Editor"
+    sGet = GetSettingsEntry("Get")
+    If Len(sGet) = 0 Then
+        WriteSettingsEntry "Get", "-1"
+        sGet = "-1"
+    End If
+    sRun = GetSettingsEntry("Run")
+    If Len(sRun) = 0 Then
+        WriteSettingsEntry "Run", "-1"
+        sRun = "-1"
+    End If
+    IsUIOpen = False
+    Disconnect
+End Sub
+
+Private Sub Create_BuildInCommands()
+    Dim Parameter
+    If OpenCommand("cmdadd") Is Nothing Then
+        With CreateCommand("cmdadd")
+            .Aliases.Add "addcmd"
+            .RequiredRank = 70
+            .RequiredFlags = "AM"
+            .Description = "Adds Custom Commands."
+            Set Parameter = .NewParameter("r", false, "Numeric")
+            With Parameter
+                .Description = "Required access to use the command, between -1 and 200. (For public commands use 0)."
+            End With
+            .Parameters.Add Parameter
+            Set Parameter = .NewParameter("w", false, "Word")
+            With Parameter
+                .Description = "Command word."
+            End With
+            .Parameters.Add Parameter
+            Set Parameter = .NewParameter("a", false, "String")
+            With Parameter
+                .Description = "Actions to take if a user uses the command."
+            End With
+            .Parameters.Add Parameter
+            Set Parameter = Nothing
+            .Save
+        End With
+    End If
+    If OpenCommand("cmddel") Is Nothing Then
+        With CreateCommand("cmddel")
+            .Aliases.Add "delcmd"
+            .RequiredRank = 70
+            .RequiredFlags = "AM"
+            .Description = "Deletes Custom Commands."
+            Set Parameter = .NewParameter("w", false, "Word")
+            With Parameter
+                .Description = "Command word."
+            End With
+            .Parameters.Add Parameter
+            Set Parameter = Nothing
+            .Save
+        End With
+    End If
+    If OpenCommand("cmdlist") Is Nothing Then
+        With CreateCommand("cmdlist")
+            .Aliases.Add "listcmds"
+            .RequiredRank = 70
+            .RequiredFlags = "AM"
+            .Description = "Lists the current custom commands and their required access levels."
+            .Save
+        End With
+    End If
+End Sub
+
+Public Sub Event_Close()
+    Connect
+    Form1_Command3_Click
+    Update_Commands
+    Connection.Execute("Delete * From `Commands`")
+    Dim Command
+    For Each Command In Commands.Items()
+        With Connection
+            If .Execute(StringFormat("Select Count(*) From `Commands` Where `Name`='{0}'", SaveStr(LCase(Command.Name)))).Fields(0) = 0 Then
+                .Execute(StringFormat("Insert Into `Commands` (`Name`, `String`, `Access`, `Flags`, `Created`, `Modified`) Values " &_
+                "('{0}', '{1}', '{2}', '{3}', '{4}', '{5}')", SaveStr(LCase(Command.Name)), SaveStr(Command.Str), SaveStr(Command.Access), _
+                SaveStr(SQL_Flags(Command.Flags, "%F")), SaveStr(Command.Created), SaveStr(Command.Modified)))
+            Else
+                .Execute(StringFormat("Update `Commands` Set `String`='{0}', `Access`='{1}'{4}, `Modified`='{2}'" &_
+                " Where `Name`='{3}'", SaveStr(Command.Str), SaveStr(Command.Access), SaveStr(Command.Modified), SaveStr(LCase(Command.Name)), _
+                SaveStr(SQL_Flags(Command.Flags, ", `Flags`='%F'"))))
+            End If
+        End With
+    Next
+    Set Command = Nothing
+    Disconnect
+End Sub
+
+Private Function SaveStr(Str)
+    SaveStr = Replace(Str, "'", "\\""")
+End Function
+
+Private Function LoadStr(Str)
+    LoadStr = Replace(Str, "\\""", "'")
+End Function
+
+Private Sub Cmd_Add(Command)
+    If OpenCommand(Command.Argument("w")) Is Nothing Then
+        Dim Cmd
+        Set Cmd = new CommandObject
+        Cmd.Name = LCase(Command.Argument("w"))
+        Cmd.Access = Command.Argument("r")
+        Cmd.Created = Date
+        Cmd.Modified = Date
+        Cmd.Str = Replace(Command.Argument("a"), "%nl", vbNewLine, 1, -1, vbTextCompare)
+        If (Int(sGet) = -1 Or GetDBEntry(Command.Username).Rank < Int(sGet)) And Not Command.Username = BotVars.Username Then
+            Cmd.Str = Replace(Cmd.Str, "%get(", "get(", 1, -1, vbTextCompare)
+        End If
+        If (Int(sRun) = -1 Or GetDBEntry(Command.Username).Rank < Int(sRun)) And Not Command.Username = BotVars.Username Then
+            Cmd.Str = Replace(Cmd.Str, "%run(", "run(", 1, -1, vbTextCompare)
+        End If
+        Dim X, Y, B
+        Y = 1
+        B = True
+        Do
+            B = False
+            For X = 1 To Len(Cmd.Str)
+                If LCase(Mid(Cmd.Str, X, 2)) = "%" & Y And Not Mid(Cmd.Str, X + 2, 1) = ":" Then
+                    Cmd.Str = Replace(Cmd.Str, "%" & Y, "<%" & Y & ":Word>")
+                    B = True
+                    Exit For
+                ElseIf LCase(Mid(Cmd.Str, X, 5)) = "%rest" Then
+                    Cmd.Str = Replace(Cmd.Str, Mid(Cmd.Str, X, 5), "<%" & Y & ":String>")
+                    B = True
+                    Exit For
+                ElseIf (LCase(Mid(Cmd.Str, (X + 1), 6 + Len(Y))) = "%" & Y & ":word" And _
+                ((Mid(Cmd.Str, X, 1) = "<" And Mid(Cmd.Str, X + 7 + Len(Y), 1) = ">") Or _
+                (Mid(Cmd.Str, X, 1) = "[" And Mid(Cmd.Str, X + 7 + Len(Y), 1) = "]"))) Or _
+                (LCase(Mid(Cmd.Str, (X + 1), 8 + Len(Y))) = "%" & Y & ":string" And _
+                ((Mid(Cmd.Str, X, 1) = "<" And Mid(Cmd.Str, X + 9 + Len(Y), 1) = ">") Or _
+                (Mid(Cmd.Str, X, 1) = "[" And Mid(Cmd.Str, X + 9 + Len(Y), 1) = "]"))) Or _
+                (LCase(Mid(Cmd.Str, (X + 1), 9 + Len(Y))) = "%" & Y & ":numeric" And _
+                ((Mid(Cmd.Str, X, 1) = "<" And Mid(Cmd.Str, X + 10 + Len(Y), 1) = ">") Or _
+                (Mid(Cmd.Str, X, 1) = "[" And Mid(Cmd.Str, X + 10 + Len(Y), 1) = "]"))) Then
+                    Y = Y + 1
+                End If
+            Next
+        Loop Until (B = False)
+        Set Y = Nothing
+        Set X = Nothing
+        Set B = Nothing
+        Commands.Add LCase(Cmd.Name), Cmd
+        Load_Command Cmd
+        If IsUIOpen Then
+            With Form1.GetObjByName("List1")
+                .AddItem LCase(Cmd.Name)
+                .ListIndex = (.ListCount - 1)
+            End With
+            Form1.GetObjByName("Command4").Enabled = 0
+        End If
+        Set Cmd = Nothing
+        Command.Respond(StringFormat("Command ""{0}"" added.", Command.Argument("w")))
+    Else
+        Command.Respond("A command by that name already exists.")
+    End If
+End Sub
+
+Private Sub Cmd_Del(Command)
+    If OpenCommand(Command.Argument("w")) Is Nothing Or Exists(Command.Argument("w")) = -1 Then
+        Command.Respond("No such command exists.")
+    Else
+        With Form1.GetObjByName("List1")
+            Dim CommandObj, Key
+            Set CommandObj = new CommandObject
+            CommandObj.Name = LCase(Command.Argument("w"))
+            Key = Exists(LCase(CommandObj.Name))
+            Commands.Remove Key
+            DeleteCommand LCase(CommandObj.Name)
+            If IsUIOpen Then
+                Form1.GetObjByName("Command2").Enabled = 0
+                .Clear
+                Dim Cmd
+                For Each Cmd In Commands.Items()
+                    .AddItem LCase(Cmd.Name)
+                Next
+                Set Cmd = Nothing
+                Dim X
+                For X = 1 To 5
+                    With Form1.GetObjByName("Text" & X)
+                        .Enabled = 1
+                        .Text = vbNullString
+                        .Enabled = 0
+                    End With
+                Next
+                Form1.GetObjByName("Command4").Enabled = 0
+                Set FormCommand = Nothing
+                Set X = Nothing
+            End If
+            Set CommandObj = Nothing
+            Set Key = Nothing
+        End With
+        Command.Respond(StringFormat("Command ""{0}"" deleted.", Command.Argument("w")))
+    End If
+End Sub
+
+Private Sub Cmd_List(Command)
+    Dim Response, Cmd
+    Response = vbNullString
+    For Each Cmd In Commands.Items()
+        Response = StringFormat("{0}, {1} [{2}]", Response, LCase(Cmd.Name), Cmd.Access)
+    Next
+    Set Cmd = Nothing
+    If Len(Response) > 0 Then
+        Command.Respond(StringFormat("Found commands: {0}.", Mid(Response, 3)))
+    Else
+        Command.Respond("No custom commands available")
+    End If
+    Set Response = Nothing
+End Sub
+
+Public Sub Event_Command(Command)
+    Dim Key
+    Key = Exists(LCase(Command.Name))
+    If Not Command.IsValid Then Exit Sub
+    If Key = -1 Then
+        Select Case LCase(Command.Name)
+            Case "cmdadd" : Cmd_Add Command
+            Case "cmddel" : Cmd_Del Command
+            Case "cmdlist" : Cmd_List Command
+        End Select
+    Else
+        Dim X, Y, Response, Security
+        Response = Replace(Commands.Item(Key).Str, "%0", Command.Username)
+        Y = 1
+        Security = True
+        Do
+            Security = False
+            For X = 1 To Len(Response)
+                If LCase(Mid(Response, (X + 1), 6 + Len(Y))) = "%" & Y & ":word" And _
+                ((Mid(Response, X, 1) = "<" And Mid(Response, X + 7 + Len(Y), 1) = ">") Or _
+                (Mid(Response, X, 1) = "[" And Mid(Response, X + 7 + Len(Y), 1) = "]")) Then
+                    Response = Replace(Response, Mid(Response, X, 8 + Len(Y)), Command.Argument("%" & Y), 1, -1, vbTextCompare)
+                    Y = Y + 1
+                    Security = True
+                ElseIf LCase(Mid(Response, (X + 1), 8 + Len(Y))) = "%" & Y & ":string" And _
+                ((Mid(Response, X, 1) = "<" And Mid(Response, X + 9 + Len(Y), 1) = ">") Or _
+                (Mid(Response, X, 1) = "[" And Mid(Response, X + 9 + Len(Y), 1) = "]")) Then
+                    Response = Replace(Response, Mid(Response, X, 10 + Len(Y)), Command.Argument("%" & Y), 1, -1, vbTextCompare)
+                    Y = Y + 1
+                    Security = True
+                ElseIf LCase(Mid(Response, (X + 1), 9 + Len(Y))) = "%" & Y & ":numeric" And _
+                ((Mid(Response, X, 1) = "<" And Mid(Response, X + 10 + Len(Y), 1) = ">") Or _
+                (Mid(Response, X, 1) = "[" And Mid(Response, X + 10 + Len(Y), 1) = "]")) Then
+                    Response = Replace(Response, Mid(Response, X, 11 + Len(Y)), Command.Argument("%" & Y), 1, -1, vbTextCompare)
+                    Y = Y + 1
+                    Security = True
+                End If
+            Next
+        Loop Until (Security = False)
+        Security = True
+        Do
+            Security = False
+            For X = 1 To Len(Response)
+                If (LCase(Mid(Response, X, 5)) = "%get(" And Not sGet = 0) Or (LCase(Mid(Response, X, 5)) = "%run(" And Not sRun = 0) Then
+                    Code = vbNullString
+                    Extra = Array(0, 0)
+                    For Y = (X + 5) To Len(Response)
+                        If Mid(Response, Y, 1) = """" And Not Mid(Response, Y, 2) = """""" Then
+                            If Extra(0) = 1 Then
+                                Extra(0) = 0
+                            Else
+                                Extra(0) = 1
+                            End If
+                        ElseIf Mid(Response, Y, 1) = "(" And Extra(0) = 0 Then
+                            Extra(1) = Extra(1) + 1
+                        ElseIf Mid(Response, Y, 1) = ")" And Extra(0) = 0 Then
+                            If Extra(1) = 0 Then
+                                Exit For
+                            Else
+                                Extra(1) = Extra(1) - 1
+                            End If
+                        End If
+                        Code = Code & Mid(Response, Y, 1)
+                    Next
+                    Dim Code, Extra, XCode
+                    On Error Resume Next
+                    If LCase(Mid(Response, X, 5)) = "%get(" Then
+                        XCode = Eval(Code)
+                    Else
+                        ExecuteGlobal Code
+                        XCode = vbNullString
+                    End If
+                    If Not Err.Number = 0 Then
+                        AddChat vbRed, StringFormat("Custom command error '0x{0}' in {1}: {2}", Hex(Err.Number), LCase(Command.Name), Err.Description)
+                        AddChat vbRed, StringFormat("Offending line: {0}", Code)
+                        XCode = vbNullString
+                    End If
+                    On Error GoTo 0
+                    Response = Replace(Response, StringFormat("{0}{1})", Mid(Response, X, 5), Code), XCode, 1, -1, vbTextCompare)
+                    If InStr(Response, StringFormat("{0}{1}", Mid(Response, X, 5), Code)) > 0 Then
+                        Response = Replace(Response, StringFormat("{0}{1}", Mid(Response, X, 5), Code), XCode, 1, -1, vbTextCompare)
+                    End If
+                    Security = True
+                    Set Code = Nothing
+                    Set XCode = Nothing
+                    Set Extra = Nothing
+                End If
+            Next
+        Loop Until (Security = False)
+        Set Security = Nothing
+        Set Y = Nothing
+        Dim Str
+        Str = Split(Response, vbCrLf)
+        For X = 0 To UBound(Str)
+            If Len(Str(X)) > 0 Then Command.Respond(Str(X))
+        Next
+        Set X = Nothing
+        Set Str = Nothing
+        Set Response = Nothing
+    End If
+End Sub
+
+Private Sub Update_Commands()
+    Dim Cmd
+    For Each Cmd In Commands.Items()
+        Dim Command
+        Set Command = OpenCommand(LCase(Cmd.Name))
+        If Command Is Nothing Then
+            Commands.Remove LCase(Cmd.Name)
+        Else
+            Cmd.Access = Command.RequiredRank
+            Cmd.Flags = Command.RequiredFlags
+        End If
+        Set Command = Nothing
+    Next
+    Set Cmd = Nothing
+End Sub
+
+Private Function SQL_Flags(ByVal Flags, ByVal Str)
+    If Len(Flags) > 0 Then
+        SQL_Flags = Replace(Str, "%F", Flags)
+    Else
+        SQL_Flags = vbNullString
+    End If
+End Function
+
+Private Function Exists(ByVal Command)
+    Exists = -1
+    Dim Cmd
+    For Each Cmd In Commands.Items()
+        If LCase(Cmd.Name) = LCase(Command) Then
+            Exists = LCase(Cmd.Name)
+            Exit For
+        End If
+    Next
+    Set Cmd = Nothing
+End Function
+
+Private Sub Load_Commands()
+    With Connection.Execute("Select * From `Commands`")
+        Do Until (.EOF Or .BOF)
+            Dim Command
+            Set Command = new CommandObject
+            Command.Name     = LoadStr(.Fields(0))
+            Command.Str      = LoadStr(.Fields(1))
+            Command.Access   = LoadStr(.Fields(2))
+            Command.Flags    = LoadStr(.Fields(3))
+            Command.Created  = LoadStr(.Fields(4))
+            Command.Modified = LoadStr(.Fields(5))
+            Commands.Add LCase(Command.Name), Command
+            Load_Command Command
+            Set Command = Nothing
+            .MoveNext
+        Loop
+    End With
+End Sub
+
+Private Sub Load_Command(ByVal Command)
+    If OpenCommand(LCase(Command.Name)) Is Nothing Then
+        With CreateCommand(LCase(Command.Name))
+            .RequiredRank = Command.Access
+            If Len(Command.Flags) > 0 Then .RequiredFlags = Command.Flags
+            Dim X, Y, Response
+            Response = Command.Str
+            Y = 1
+            For X = 1 To Len(Response)
+                Dim Splitted
+                If LCase(Mid(Response, (X + 1), 6 + Len(Y))) = "%" & Y & ":word" And _
+                ((Mid(Response, X, 1) = "<" And Mid(Response, X + 7 + Len(Y), 1) = ">") Or _
+                (Mid(Response, X, 1) = "[" And Mid(Response, X + 7 + Len(Y), 1) = "]")) Then
+                    Splitted = Split(Mid(Response, (X + 1), 6 + Len(Y)), ":")
+                    .Parameters.Add .NewParameter((Splitted(0)), (Mid(Response, X, 1) = "["), (Splitted(1)))
+                    Y = Y + 1
+                ElseIf LCase(Mid(Response, (X + 1), 8 + Len(Y))) = "%" & Y & ":string" And _
+                ((Mid(Response, X, 1) = "<" And Mid(Response, X + 9 + Len(Y), 1) = ">") Or _
+                (Mid(Response, X, 1) = "[" And Mid(Response, X + 9 + Len(Y), 1) = "]")) Then
+                    Splitted = Split(Mid(Response, (X + 1), 8 + Len(Y)), ":")
+                    .Parameters.Add .NewParameter((Splitted(0)), (Mid(Response, X, 1) = "["), (Splitted(1)))
+                    Y = Y + 1
+                ElseIf LCase(Mid(Response, (X + 1), 9 + Len(Y))) = "%" & Y & ":numeric" And _
+                ((Mid(Response, X, 1) = "<" And Mid(Response, X + 10 + Len(Y), 1) = ">") Or _
+                (Mid(Response, X, 1) = "[" And Mid(Response, X + 10 + Len(Y), 1) = "]")) Then
+                    Splitted = Split(Mid(Response, (X + 1), 9 + Len(Y)), ":")
+                    .Parameters.Add .NewParameter((Splitted(0)), (Mid(Response, X, 1) = "["), (Splitted(1)))
+                    Y = Y + 1
+                End If
+                Set Splitted = Nothing
+            Next
+            Set Y = Nothing
+            Set X = Nothing
+            .Save
+        End With
+    End If
+End Sub
+
+Private Sub Load_Form()
+    With CreateObj("Form", "Form1")
+        With .CreateObj("ListBox", "List1")
+            .Height        =   4350
+            .Left          =   120
+            .TabIndex      =   0
+            .Top           =   210
+            .Width         =   2295
+        End With
+        With .CreateObj("Button", "Command1")
+            .Caption      =   "Add"
+            .Height       =   375
+            .Left         =   120
+            .TabIndex     =   2
+            .Top          =   4605
+            .Width        =   1148
+        End With
+        With .CreateObj("Button", "Command2")
+            .Caption      =   "Delete"
+            .Enabled      =   0
+            .Height       =   375
+            .Left         =   1265
+            .TabIndex     =   3
+            .Top          =   4600
+            .Width        =   1162
+        End With
+        With .CreateObj("Label", "Label1")
+            .BackColor    =   &H00000000
+            .Caption      =   "Rank (-1 - 200):"
+            .ForeColor    =   &H00FFFFFF
+            .Height       =   285
+            .Left         =   2520
+            .TabIndex     =   4
+            .Top          =   240
+            .Width        =   1215
+        End With
+        With .CreateObj("Label", "Label2")
+            .BackColor    =   &H00000000
+            .Caption      =   "Flags:"
+            .ForeColor    =   &H00FFFFFF
+            .Height       =   285
+            .Left         =   3840
+            .TabIndex     =   5
+            .Top          =   240
+            .Width        =   1215
+        End With
+        With .CreateObj("Label", "Label3")
+            .BackColor    =   &H00000000
+            .Caption      =   "Created on:"
+            .ForeColor    =   &H00FFFFFF
+            .Height       =   285
+            .Left         =   5160
+            .TabIndex     =   6
+            .Top          =   240
+            .Width        =   1215
+        End With
+        With .CreateObj("Label", "Label4")
+            .BackColor    =   &H00000000
+            .Caption      =   "Last modified on:"
+            .ForeColor    =   &H00FFFFFF
+            .Height       =   285
+            .Left         =   6480
+            .TabIndex     =   7
+            .Top          =   240
+            .Width        =   1215
+        End With
+        With .CreateObj("TextBox", "Text1")
+            .BackColor    =   &HCC3300
+            .ForeColor    =   &H00FFFFFF
+            .Enabled      =   0
+            .Height       =   285
+            .Left         =   2520
+            .TabIndex     =   8
+            .Top          =   480
+            .Width        =   1215
+        End With
+        With .CreateObj("TextBox", "Text2")
+            .BackColor    =   &HCC3300
+            .ForeColor    =   &H00FFFFFF
+            .Enabled      =   0
+            .Height       =   285
+            .Left         =   3840
+            .TabIndex     =   9
+            .Top          =   480
+            .Width        =   1215
+        End With
+        With .CreateObj("TextBox", "Text3")
+            .BackColor    =   &HCC3300
+            .ForeColor    =   &H00FFFFFF
+            .Enabled      =   0
+            .Height       =   285
+            .Left         =   5160
+            .TabIndex     =   10
+            .Top          =   480
+            .Width        =   1215
+        End With
+        With .CreateObj("TextBox", "Text4")
+            .BackColor    =   &HCC3300
+            .ForeColor    =   &H00FFFFFF
+            .Enabled      =   0
+            .Height       =   285
+            .Left         =   6480
+            .TabIndex     =   11
+            .Top          =   480
+            .Width        =   1215
+        End With
+        With .CreateObj("TextBox", "Text5")
+            .BackColor    =   &HCC3300
+            .ForeColor    =   &H00FFFFFF
+            .Enabled      =   0
+            .Height       =   3715
+            .Left         =   2520
+            .TabIndex     =   12
+            .Top          =   840
+            .Width        =   5175
+        End With
+        With .CreateObj("Button", "Command3")
+            .Caption      =   "Close"
+            .Height       =   375
+            .Left         =   5070
+            .TabIndex     =   13
+            .Top          =   4600
+            .Width        =   1155
+        End With
+        With .CreateObj("Button", "Command4")
+            .Caption      =   "Apply"
+            .Enabled      =   0
+            .Height       =   375
+            .Left         =   6210
+            .TabIndex     =   14
+            .Top          =   4600
+            .Width        =   1515
+        End With
+        With .CreateObj("Button", "Command5")
+            .Caption      =   "Debug Command"
+            .Enabled      =   0
+            .Height       =   375
+            .Left         =   2520
+            .TabIndex     =   14
+            .Top          =   4600
+            .Width        =   2560
+        End With
+        .BackColor        =   &H00000000
+        .BorderStyle      =   3
+        .Caption          =   "Custom Command Editor"
+        .LinkTopic        =   "Form1"
+        .ScaleHeight      =   5070
+        .ScaleMode        =   0
+        .ScaleWidth       =   7815
+        .Width            =   7905
+        .Height           =   5485
+    End With
+End Sub
+
+Private Sub Connect()
+    Dim FileSystem
+    Set FileSystem = CreateObject("Scripting.FileSystemObject")
+    Set Connection = CreateObject("ADODB.Connection")
+    If FileSystem.FileExists(BotPath() & "\CCE.mdb") Then
+        Connection.ConnectionString = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & BotPath() & "\CCE.mdb"
+        Connection.Open
+    Else
+        With CreateObject("ADOX.Catalog")
+            .Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & BotPath() & "\CCE.mdb"
+        End With
+        With Connection
+            .ConnectionString = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & BotPath() & "\CCE.mdb"
+            .Open
+            .Execute("Create Table `Commands` (`Name` Text Not Null, `String` Memo Not Null, `Access` Int Not Null, " &_
+            "`Flags` Text Null, `Created` Timestamp Not Null, `Modified` Timestamp Not Null)")
+        End With
+    End If
+    Set FileSystem = Nothing
+End Sub
+
+Public Sub Open_Click()
+    Update_Commands
+    With Form1.GetObjByName("List1")
+        Form1.GetObjByName("Command2").Enabled = 0
+        .Clear
+        Dim Cmd
+        For Each Cmd In Commands.Items()
+            .AddItem LCase(Cmd.Name)
+        Next
+        Set Cmd = Nothing
+        Dim X
+        For X = 1 To 5
+            With Form1.GetObjByName("Text" & X)
+                .Enabled = 1
+                .Text = vbNullString
+                .Enabled = 0
+            End With
+        Next
+        Form1.GetObjByName("Command4").Enabled = 0
+        Set FormCommand = Nothing
+        If .ListCount > 0 Then .ListIndex = (.ListCount - 1)
+        Set X = Nothing
+    End With
+    Form1.Show
+    IsUIOpen = True
+End Sub
+
+Public Sub Form1_List1_GotFocus()
+    Dim X
+    With Form1.GetObjByName("List1")
+        If Not .ListIndex = - 1 Then
+            Dim Command, Key
+            Set Command = new CommandObject
+            Key = Exists(.List(.ListIndex))
+            Set Command = Commands.Item(Key)
+            Set Key = Nothing
+            Set FormCommand = Command
+            Form1.GetObjByName("Command2").Enabled = 1
+            For X = 1 To 5
+                With Form1.GetObjByName("Text" & X)
+                    .Enabled = 1
+                    .Text = vbNullString
+                    If X > 2 And X < 5 Then .Enabled = 0
+                End With
+            Next
+            Form1.GetObjByName("Text1").Text = Mid(Command.Access, 1)
+            Form1.GetObjByName("Text2").Text = Mid(Command.Flags, 1)
+            Form1.GetObjByName("Text3").Text = Mid(Command.Created, 1)
+            Form1.GetObjByName("Text4").Text = Mid(Command.Modified, 1)
+            Form1.GetObjByName("Text5").Text = Mid(Command.Str, 1)
+            Set Command = Nothing
+        Else
+            Form1.GetObjByName("Command2").Enabled = 0
+            For X = 1 To 5
+                With Form1.GetObjByName("Text" & X)
+                    .Enabled = 1
+                    .Text = vbNullString
+                    .Enabled = 0
+                End With
+            Next
+            Set FormCommand = Nothing
+        End If
+    End With
+    Set X = Nothing
+End Sub
+
+Public Sub Form1_List1_Click()
+    Form1_List1_GotFocus
+End Sub
+
+Private sub Disconnect()
+    On Error Resume Next
+    Connection.Close
+    Set Connection = Nothing
+    On Error GoTo 0
+End Sub
+
+Public Sub Form1_Command4_Click()
+    Dim Key
+    Key = Exists(LCase(FormCommand.Name))
+    FormCommand.Access = Form1.GetObjByName("Text1").Text 
+    FormCommand.Flags = Form1.GetObjByName("Text2").Text
+    FormCommand.Created = Form1.GetObjByName("Text3").Text
+    FormCommand.Modified = Date
+    Form1.GetObjByName("Text4").Text = Mid(FormCommand.Modified, 1)
+    FormCommand.Str = Form1.GetObjByName("Text5").Text
+    Dim X, Y, B
+    Y = 1
+    B = True
+    Do
+        B = False
+        For X = 1 To Len(FormCommand.Str)
+            If LCase(Mid(FormCommand.Str, X, 2)) = "%" & Y And Not Mid(FormCommand.Str, X + 2, 1) = ":" Then
+                FormCommand.Str = Replace(FormCommand.Str, "%" & Y, "<%" & Y & ":Word>")
+                B = True
+                Exit For
+            ElseIf LCase(Mid(FormCommand.Str, X, 5)) = "%rest" Then
+                FormCommand.Str = Replace(FormCommand.Str, Mid(FormCommand.Str, X, 5), "<%" & Y & ":String>")
+                B = True
+                Exit For
+            ElseIf (LCase(Mid(FormCommand.Str, (X + 1), 6 + Len(Y))) = "%" & Y & ":word" And _
+            ((Mid(FormCommand.Str, X, 1) = "<" And Mid(FormCommand.Str, X + 7 + Len(Y), 1) = ">") Or _
+            (Mid(FormCommand.Str, X, 1) = "[" And Mid(FormCommand.Str, X + 7 + Len(Y), 1) = "]"))) Or _
+            (LCase(Mid(FormCommand.Str, (X + 1), 8 + Len(Y))) = "%" & Y & ":string" And _
+            ((Mid(FormCommand.Str, X, 1) = "<" And Mid(FormCommand.Str, X + 9 + Len(Y), 1) = ">") Or _
+            (Mid(FormCommand.Str, X, 1) = "[" And Mid(FormCommand.Str, X + 9 + Len(Y), 1) = "]"))) Or _
+            (LCase(Mid(FormCommand.Str, (X + 1), 9 + Len(Y))) = "%" & Y & ":numeric" And _
+            ((Mid(FormCommand.Str, X, 1) = "<" And Mid(FormCommand.Str, X + 10 + Len(Y), 1) = ">") Or _
+            (Mid(FormCommand.Str, X, 1) = "[" And Mid(FormCommand.Str, X + 10 + Len(Y), 1) = "]"))) Then
+                Y = Y + 1
+            End If
+        Next
+    Loop Until (B = False)
+    Set Y = Nothing
+    Set X = Nothing
+    Set B = Nothing
+    If Not Key = - 1 Then
+        Commands.Remove Key
+        DeleteCommand Key
+    Else
+        Key = LCase(FormCommand.Name)
+    End If
+    Commands.Add Key, FormCommand
+    Load_Command FormCommand
+    With Form1.GetObjByName("List1")
+        If Commands.Count > .ListCount Then
+            .AddItem Key
+            .ListIndex = (.ListCount - 1)
+        End If
+    End With
+    Set Key = Nothing
+    Form1.GetObjByName("Command4").Enabled = 0
+End Sub
+
+Public Sub Form1_Command3_Click()
+    Form1.Hide
+    IsUIOpen = False
+End Sub
+
+Public Sub Form1_Command2_Click()
+    With Form1.GetObjByName("List1")
+        Dim Index
+        Index = .ListIndex
+        Commands.Remove .List(Index)
+        DeleteCommand .List(Index)
+        .RemoveItem Index
+        If .ListCount > 0 Then .ListIndex = (Index - 1)
+        Form1_List1_GotFocus
+        Set Index = Nothing
+    End With
+End Sub
+
+Public Sub Form1_Command1_Click()
+    Dim Command
+    Set Command = new CommandObject
+    Command.Name = LCase(InputBox("Input Custom Command Name:", "Custom Command Editor - New Command"))
+    If Len(Command.Name) > 0 And Len(Trim(Command.Name)) > 0 Then
+        If OpenCommand(LCase(Command.Name)) Is Nothing Then
+            With Form1.GetObjByName("List1")
+                Command.Access = 0
+                Command.Created = Date
+                Command.Modified = Date
+                Command.Str = vbNullString
+                Set FormCommand = Command
+                Form1.GetObjByName("Command2").Enabled = 0
+                Dim X
+                For X = 1 To 5
+                    With Form1.GetObjByName("Text" & X)
+                        .Enabled = 1
+                        .Text = vbNullString
+                        If X > 2 And X < 5 Then .Enabled = 0
+                    End With
+                Next
+                Set X = Nothing
+                Form1.GetObjByName("Text1").Text = Mid(Command.Access, 1)
+                Form1.GetObjByName("Text2").Text = Mid(vbNullString, 1)
+                Form1.GetObjByName("Text3").Text = Mid(Command.Created, 1)
+                Form1.GetObjByName("Text4").Text = Mid(Command.Modified, 1)
+                With Form1.GetObjByName("Text5")
+                    .Text = Mid(Command.Str, 1)
+                    .SetFocus
+                End With
+            End With
+        Else
+            Custom_Error StringFormat("Command '{0}', already exists.", LCase(Command.Name))
+        End If
+    ElseIf Len(Command.Name) > 0 Then
+        Custom_Error StringFormat("Command '{0}', is not a valid string.", LCase(Command.Name))
+    End If
+    Set Command = Nothing
+End Sub
+
+Private Sub Custom_Error(ByVal Str)
+    MsgBox Str, 0, "Custom Command Editor - Error"
+End Sub
+
+Private Sub SetText(ByVal Value)
+    With Form1.GetObjByName(Value)
+        If InStr(.Text, vbCrLf) > 0 Then .Text = Replace(.Text, vbCrLf, vbNullString)
+        .SelStart = Len(.Text)
+    End With
+End Sub
+
+Private Sub ApplyCheck()
+    Dim Text1, Text5
+    Text1 = Form1.GetObjByName("Text1").Text
+    Text5 = Form1.GetObjByName("Text5").Text
+    If Not FormCommand Is Nothing Then
+        If (Len(Text1) > 0 And IsNumeric(Text1) And Len(Text5) > 0) And _
+        (Not Mid(FormCommand.Access, 1) = Text1 Or _
+        Not Mid(FormCommand.Flags, 1) = Form1.GetObjByName("Text2").Text Or _
+        Not Mid(FormCommand.Created, 1) = Form1.GetObjByName("Text3").Text Or _
+        Not Mid(FormCommand.Modified, 1) = Form1.GetObjByName("Text4").Text Or _
+        Not Mid(FormCommand.Str, 1) = Text5) Then
+            Form1.GetObjByName("Command4").Enabled = 1
+        Else
+            Form1.GetObjByName("Command4").Enabled = 0
+        End If
+        If (Len(Text5) > 0) Then
+            Form1.GetObjByName("Command5").Enabled = 1
+        Else
+            Form1.GetObjByName("Command5").Enabled = 0
+        End If
+    End If
+    Set Text1 = Nothing
+    Set Text5 = Nothing
+End Sub
+
+Public Sub Form1_Text1_Change()
+    SetText("Text1")
+    ApplyCheck
+End Sub
+
+Public Sub Form1_Text2_Change()
+    SetText("Text2")
+    ApplyCheck
+End Sub
+
+Public Sub Form1_Text3_Change()
+    SetText("Text3")
+    ApplyCheck
+End Sub
+
+Public Sub Form1_Text4_Change()
+    ApplyCheck
+End Sub
+
+Public Sub Form1_Text5_Change()
+    ApplyCheck
+End Sub
+
+Public Sub Form1_Command5_Click()
+    Dim X, Y, Response, Security
+    Response = Replace(Form1.GetObjByName("Text5").Text, "%0", "DEBUGGER")
+    Y = 1
+    Security = True
+    Do
+        Security = False
+        For X = 1 To Len(Response)
+            If LCase(Mid(Response, (X + 1), 6 + Len(Y))) = "%" & Y & ":word" And _
+            ((Mid(Response, X, 1) = "<" And Mid(Response, X + 7 + Len(Y), 1) = ">") Or _
+            (Mid(Response, X, 1) = "[" And Mid(Response, X + 7 + Len(Y), 1) = "]")) Then
+                Response = Replace(Response, Mid(Response, X, 8 + Len(Y)), "#D%" & Y, 1, -1, vbTextCompare)
+                Y = Y + 1
+                Security = True
+            ElseIf LCase(Mid(Response, (X + 1), 8 + Len(Y))) = "%" & Y & ":string" And _
+            ((Mid(Response, X, 1) = "<" And Mid(Response, X + 9 + Len(Y), 1) = ">") Or _
+            (Mid(Response, X, 1) = "[" And Mid(Response, X + 9 + Len(Y), 1) = "]")) Then
+                Response = Replace(Response, Mid(Response, X, 10 + Len(Y)), "#D%" & Y, 1, -1, vbTextCompare)
+                Y = Y + 1
+                Security = True
+            ElseIf LCase(Mid(Response, (X + 1), 9 + Len(Y))) = "%" & Y & ":numeric" And _
+            ((Mid(Response, X, 1) = "<" And Mid(Response, X + 10 + Len(Y), 1) = ">") Or _
+            (Mid(Response, X, 1) = "[" And Mid(Response, X + 10 + Len(Y), 1) = "]")) Then
+                Response = Replace(Response, Mid(Response, X, 11 + Len(Y)), "#D%" & Y, 1, -1, vbTextCompare)
+                Y = Y + 1
+                Security = True
+            End If
+        Next
+    Loop Until(Security = False)
+    Security = True
+    Do
+        Security = False
+        For X = 1 To Len(Response)
+            If (LCase(Mid(Response, X, 5)) = "%get(" And Not sGet = 0) Or (LCase(Mid(Response, X, 5)) = "%run(" And Not sRun = 0) Then
+                Code = vbNullString
+                Extra = Array(0, 0)
+                For Y = (X + 5) To Len(Response)
+                    If Mid(Response, Y, 1) = """" And Not Mid(Response, Y, 2) = """""" Then
+                        If Extra(0) = 1 Then
+                            Extra(0) = 0
+                        Else
+                            Extra(0) = 1
+                        End If
+                    ElseIf Mid(Response, Y, 1) = "(" And Extra(0) = 0 Then
+                        Extra(1) = Extra(1) + 1
+                    ElseIf Mid(Response, Y, 1) = ")" And Extra(0) = 0 Then
+                        If Extra(1) = 0 Then
+                            Exit For
+                        Else
+                            Extra(1) = Extra(1) - 1
+                        End If
+                    End If
+                    Code = Code & Mid(Response, Y, 1)
+                Next
+                Dim Code, Extra, XCode
+                On Error Resume Next
+                If LCase(Mid(Response, X, 5)) = "%get(" Then
+                    XCode = Eval(Code)
+                Else
+                    ExecuteGlobal Code
+                    XCode = vbNullString
+                End If
+                If Not Err.Number = 0 Then
+                    With Form1.GetObjByName("List1")
+                        AddChat vbRed, StringFormat("Custom command error '0x{0}' in {1}: {2}", Hex(Err.Number), .List(.ListIndex), Err.Description)
+                    End With
+                    AddChat vbRed, StringFormat("Offending line: {0}", Code)
+                    XCode = vbNullString
+                End If
+                On Error GoTo 0
+                Response = Replace(Response, StringFormat("{0}{1})", Mid(Response, X, 5), Code), XCode, 1, -1, vbTextCompare)
+                If InStr(Response, StringFormat("{0}{1}", Mid(Response, X, 5), Code)) > 0 Then
+                    Response = Replace(Response, StringFormat("{0}{1}", Mid(Response, X, 5), Code), XCode, 1, -1, vbTextCompare)
+                End If
+                Security = True
+                Set Code = Nothing
+                Set XCode = Nothing
+                Set Extra = Nothing
+            End If
+        Next
+    Loop Until (Security = False)
+    Set Security = Nothing
+    Set Y = Nothing
+    Dim Str
+    Str = Split(Response, vbCrLf)
+    For X = 0 To UBound(Str)
+        If Len(Str(X)) > 0 Then AddChat vbMagenta, Str(X)
+    Next
+    Set X = Nothing
+    Set Str = Nothing
+    Set Response = Nothing
+End Sub
+
+Class CommandObject
+    Public Name
+    Public Str
+    Public Access
+    Public Flags
+    Public Created
+    Public Modified
+End Class

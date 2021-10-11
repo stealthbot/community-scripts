@@ -1,0 +1,334 @@
+Script("Name") = "getwins"
+Script("Author") = "The-Black-Ninja"
+Script("Major") = 1
+Script("Minor") = 5
+Script("Revision") = 0
+Script("Description") = "Gets number of wins needed for a specified race."
+
+
+Private Const getwinsCmd = "getwins"  '// Command name
+Private Const defaultProd = "TFT"     '// TFT = Frozen Throne, ROC = Reign of Chaos
+Private Const getwinsAccess = 40      '// Access needed
+Private Const getwinsAntiSpam = 20    '// Seconds users must wait before issuing the command again
+
+Private getwinsRequests, getwinsLastRequest, lastUser
+
+
+Sub Event_Load()
+   
+   Set getwinsRequests = CreateObject("Scripting.Dictionary")
+   getwinsLastRequest = Now -1   
+   
+   Randomize
+End Sub
+
+
+Sub Event_Usertalk(Username, Flags, Message, Ping)
+
+   getwins_cmd Username, Message, 1
+End Sub
+
+Sub Event_PressedEnter(Text)
+
+   getwins_cmd BotVars.Username, Text, 4
+End Sub
+
+Sub Event_PacketReceived(Protocol, ID, Length, Data)
+
+   If Protocol = "BNCS" Then
+      If ID = &H35 Then
+         Set pak = DataBufferEx()
+         pak.Data = Data
+         pak.position = 4
+         cookie = pak.GetDWORD               
+         If NOT getwinsRequests.Exists(cookie) Then Exit Sub         
+         status = pak.GetByte
+         des = pak.GetString
+         loc = pak.GetString
+         tag = pak.getraw(4)
+                  
+         If status = 0 Then  '// Lookup successful         
+            GetGeneralInfo 4, cookie, getwinsRequests.Item(cookie)(0), StrReverse(UCase(getwinsRequests.Item(cookie)(1)))
+         Else
+            Dsp getwinsRequests.Item(cookie)(2), """ " & getwinsRequests.Item(cookie)(0) & " "" does not exist in " & GetBotRealm & " on " & getwinsRequests.Item(cookie)(1) & ".", getwinsRequests.Item(cookie)(3), vbGreen
+            getwinsRequests.Remove cookie
+            getwinsLastRequest = Now
+            Exit Sub
+         End If
+         
+      ElseIf ID = &H44 Then
+         Set pak = DataBufferEx()
+         pak.Data = Data
+         pak.position = 4
+         subID = pak.GetByte
+         cookie = pak.GetDWORD         
+         If NOT getwinsRequests.Exists(cookie) Then Exit Sub                  
+         iconID = pak.GetRaw(4)
+         records = pak.GetByte
+         
+         For i = 0 To records -1
+            pak.GetDWord
+            pak.GetWord
+            pak.GetWord
+            pak.GetByte
+            pak.GetByte
+            pak.GetWord
+            pak.GetDWord
+         Next        
+         raceRecords = pak.GetByte
+         
+         totalL = 0
+         totalW = 0
+         
+         For i = 0 To raceRecords
+            Select Case raceRecords
+               Case 6
+                  If i < 5 Then
+                     Select Case i
+                        Case 0: race = "Random"
+                        Case 1: race = "Human"
+                        Case 2: race = "Orc"
+                        Case 3: race = "Undead"
+                        Case 4: race = "Night Elf"
+                     End Select
+                     wins = pak.GetWord
+                     loss = pak.GetWord
+                     
+                     totalL = totalL + loss
+                     totalW = totalW + wins
+                     
+                     If wins = 0 Then 
+                        winP = "0"
+                     Else
+                        winP = FormatNumber(((wins/(wins+loss))*100), 2)
+                     End If
+                     
+                     text = text & race & ": Wins [" & wins & "], Loss [" & loss & "], " & winP & " win % ~~ "
+                  Else
+                     wins = pak.GetWord
+                     loss = pak.GetWord                     
+                  End If             
+               Case 5
+                  If i < 4 Then
+                     AddChat vbMagenta, "Reading race record #" & i & " ..."
+
+                     AddChat vbGreen, "Wins: " & pak.GetWord
+                     AddChat vbGreen, "Loss: " & pak.GetWord
+                  End If                  
+            End Select
+         Next
+         
+         If totalL = 0 Then
+            If totalW = 0 Then
+               Dsp getwinsRequests.Item(cookie)(2), getwinsRequests.Item(cookie)(0) & " has 0 wins and 0 losses; 1 win achieves 100%.", getwinsRequests.Item(cookie)(3), vbGreen
+               getwinsRequests.Remove cookie
+               getwinsLastRequest = Now                 
+               Exit Sub
+            Else
+               Dsp getwinsRequests.Item(cookie)(2), getwinsRequests.Item(cookie)(0) & " has 0 losses giving 100% win percentage.", getwinsRequests.Item(cookie)(3), vbGreen
+               getwinsRequests.Remove cookie
+               getwinsLastRequest = Now                 
+               Exit Sub
+            End If
+         End If
+
+         Select Case LCase(getwinsRequests.Item(cookie)(4))
+            Case "r"
+               iso = Split(Split(text, "Random: ")(1), " win")(0)
+               win = Split(Split(iso, "Wins [")(1), "]")(0)
+               loss = Split(Split(iso, "Loss [")(1), "]")(0)
+               x = (getwinsRequests.Item(cookie)(5)/100 * CInt(loss))/(1 - getwinsRequests.Item(cookie)(5)/100)
+               y = "Random"
+               z = Split(Split(iso, "Loss [")(1), "], ")(1)
+            Case "ne"
+               iso = Split(Split(text, "Night Elf: ")(1), " win")(0)
+               loss = Split(Split(iso, "Loss [")(1), "]")(0)
+               win = Split(Split(iso, "Wins [")(1), "]")(0)               
+               x = (getwinsRequests.Item(cookie)(5)/100 * CInt(loss))/(1 - getwinsRequests.Item(cookie)(5)/100)
+               y = "Night Elf"
+               z = Split(Split(iso, "Loss [")(1), "], ")(1)               
+            Case "h"
+               iso = Split(Split(text, "Human: ")(1), " win")(0)
+               loss = Split(Split(iso, "Loss [")(1), "]")(0)
+               win = Split(Split(iso, "Wins [")(1), "]")(0)               
+               x = (getwinsRequests.Item(cookie)(5)/100 * CInt(loss))/(1 - getwinsRequests.Item(cookie)(5)/100)                      
+               y = "Human"
+               z = Split(Split(iso, "Loss [")(1), "], ")(1)               
+            Case "o"            
+               iso = Split(Split(text, "Orc: ")(1), " win")(0)
+               loss = Split(Split(iso, "Loss [")(1), "]")(0)
+               win = Split(Split(iso, "Wins [")(1), "]")(0)               
+               x = (getwinsRequests.Item(cookie)(5)/100 * CInt(loss))/(1 - getwinsRequests.Item(cookie)(5)/100)                   
+               y = "Orc"
+               z = Split(Split(iso, "Loss [")(1), "], ")(1)               
+            Case "u"
+               iso = Split(Split(text, "Undead: ")(1), " win")(0)
+               loss = Split(Split(iso, "Loss [")(1), "]")(0)
+               win = Split(Split(iso, "Wins [")(1), "]")(0)               
+               x = (getwinsRequests.Item(cookie)(5)/100 * CInt(loss))/(1 - getwinsRequests.Item(cookie)(5)/100)                    
+               y = "Undead"
+               z = Split(Split(iso, "Loss [")(1), "], ")(1)               
+            Case "all"
+               x = (getwinsRequests.Item(cookie)(5)/100 * CInt(totalL))/(1 - getwinsRequests.Item(cookie)(5)/100)                          
+               win = totalW
+               y = "Overall"
+               z = FormatNumber(totalW/(totalW+totalL)*100, 2)
+         End Select
+         
+         x = CInt(x)
+         If x - win < 0 Then
+            Dsp getwinsRequests.Item(cookie)(2), getwinsRequests.Item(cookie)(0) & " is above " & getwinsRequests.Item(cookie)(5) & "% (has " & z & "%) for the race: " & y, getwinsRequests.Item(cookie)(3), vbGreen
+         Else         
+            Dsp getwinsRequests.Item(cookie)(2), getwinsRequests.Item(cookie)(0) & " needs " & x-win & " more wins (currently has " & win & ") to achieve " & getwinsRequests.Item(cookie)(5) & "% for the race: " & y, getwinsRequests.Item(cookie)(3), vbGreen
+         End If
+         
+         getwinsRequests.Remove cookie
+         getwinsLastRequest = Now         
+      End If
+   End If
+End Sub
+
+
+Private Sub getwins_cmd(Username, Message, dspId)
+
+   If DateDiff("s", getwinsLastRequest, Now) < getwinsAntiSpam Then Exit Sub
+
+   If dspId = 4 Then     
+      If Left(Message, 2) = "//" Then 
+         If Split(Mid(Lcase(Message), Len("//")+1))(0) = Lcase(getwinsCmd) Then
+            dspId = 2
+            VetoThisMessage
+         Else
+            Exit Sub
+         End If
+      Else
+         If Left(Message, 1) = "/" Then
+            If Split(Mid(Lcase(Message), Len("/")+1))(0) = Lcase(getwinsCmd) Then 
+               VetoThisMessage         
+            Else
+               Exit Sub
+            End If
+         Else
+            Exit Sub
+         End If
+      End If
+   Else
+      If GetDBEntry(Username).Rank < getwinsAccess Then Exit Sub
+      If Left(Message, Len(BotVars.Trigger)) <> BotVars.Trigger OR Len(Message) = Len(BotVars.Trigger) Then      
+         Exit Sub
+      Else
+         If Split(Mid(Message, Len(BotVars.Trigger)+1))(0) <> Lcase(getwinsCmd) Then Exit Sub
+      End If
+   End If
+      
+   msgArr = Split(Message)
+   
+   Select Case UBound(msgArr)
+      Case 2
+         race = msgArr(1)
+         user = Username
+         prcnt = msgArr(2)
+         prod = GetProduct(defaultProd)         
+      Case 3
+         If NOT (msgArr(3) = "roc" OR msgArr(3) = "tft") Then      
+            race = msgArr(1)         
+            user = msgArr(3)
+            prcnt = msgArr(2)
+            prod = GetProduct(defaultProd)
+         Else
+            race = msgArr(1)
+            user = Username
+            prcnt = msgArr(2)
+            prod = GetProduct(msgArr(3))
+         End If
+      Case 4
+         race = msgArr(1)      
+         prcnt = msgArr(2)
+         user = msgArr(3)
+         prod = GetProduct(msgArr(4))
+   End Select
+   
+   If prod = "invalid" Then
+      Dsp dspId, "Invalid product.", Username, vbGreen
+      Exit Sub
+   End If
+     
+   cookie = GetNewCookie
+   getwinsRequests.Item(cookie) = Array(user, prod, dspId, Username, race, prcnt)
+   
+   CheckExists cookie, user
+End Sub
+
+
+Private Sub CheckExists(cookie, name)
+
+   DataBuffer.InsertDWord cookie
+   DataBuffer.InsertNTString CStr(name)
+   DataBuffer.SendPacket &H35
+End Sub
+
+
+Private Sub GetGeneralInfo(ID, cookie, name, product)
+      
+   DataBuffer.InsertByte ID
+   DataBuffer.InsertDWord cookie
+   DataBuffer.InsertNTString CStr(name)
+   DataBuffer.InsertNonNTString product
+   DataBuffer.SendPacket &H44
+End Sub
+
+
+Private Function GetBotRealm
+
+   serv = LCase(BotVars.Server)
+
+   If InStr(serv, "east") > 0 Then
+         GetBotRealm = "Azeroth"
+   ElseIf InStr(serv, "west") > 0 Then
+         GetBotRealm = "Lordaeron"
+   ElseIf InStr(serv, "europe") > 0 Then
+         GetBotRealm = "Northrend"         
+   ElseIf InStr(serv, "asia") > 0 Then
+         GetBotRealm = "Kalimdor"         
+   ElseIf InStr(serv, "63.240") > 0 Then
+         GetBotRealm = "Azeroth"
+   ElseIf InStr(serv, "63.241") > 0 Then
+         GetBotRealm = "Lordaeron"         
+   ElseIf InStr(serv, "213.248") > 0 Then
+         GetBotRealm = "Northrend"     
+   ElseIf InStr(serv, "211.233") > 0 Then
+         GetBotRealm = "Kalimdor"         
+   End If
+End Function
+
+Private Function GetNewCookie
+
+   key = getwinsRequests.Keys
+
+   cookieFound = False
+   
+   Do Until cookieFound
+      tMatch = False   
+      num = Int(((1000 + 1) - (1)) * Rnd + (1))
+      
+      For i = 0 To Ubound(key)
+         If num = CInt(key(i)) Then
+            tMatch = True
+            Exit For
+         End If
+      Next
+      
+      If NOT tMatch Then cookieFound = True
+   Loop
+   
+   GetNewCookie = num
+End Function
+
+Private Function GetProduct(prod)
+   
+   Select Case LCase(prod)
+      Case "tft": GetProduct = "w3xp"
+      Case "roc": GetProduct = "war3"
+      Case Else:  GetProduct = "invalid"
+   End Select
+End Function

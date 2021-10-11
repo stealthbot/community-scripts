@@ -1,0 +1,327 @@
+Option Explicit
+
+Script("Name")           = "Submit Torch"
+Script("Author")         = "HarryGSn"
+Script("Major")          = "1"
+Script("Minor")          = "0"
+Script("Revision")       = "0"
+Script("Description")    = "Saves torch item name's in database, used for DIABLO Game"
+Script("Last Modified")  = "27/5/12"
+Script("ScriptTag")		 = "ST"
+Script("ID")			 = "6987-script-for-loging-torches"
+
+Private ScriptFolder, FSO, iniPath
+Private ScriptVersion, msgPrefix
+Private dbConn, dbPath, isDatabaseConnected
+
+Sub Event_Load()
+	Dim Folder
+	
+	ScriptFolder = BotPath & "Torch Database\"
+	
+	Set FSO = CreateObject("Scripting.FileSystemObject")
+     
+    If Not FSO.FolderExists(ScriptFolder) Then
+		AddChat RGB(255, 100, 0), "[" & Script("Name") & "] • Script Database Files Were not found!"
+		AddChat RGB(255, 100, 0), "[" & Script("Name") & "] • Creating Database Files..."
+        Set Folder = FSO.CreateFolder(ScriptFolder)
+    End If	
+
+	iniPath = ScriptFolder & "Settings.ini"       
+	dbPath = ScriptFolder & "Torch Database.mdb"
+ 
+	If Not FSO.FileExists(dbPath) Then
+          Call CreateDatabase()
+    End If
+ 
+    ScriptVersion = "v" & Script("Major") & "." & Script("Minor") & "." & Script("Revision")    
+        AddChat RGB(255, 100, 0), "[" & Script("Author") &"]'s [" & Script("Name") & "] Loaded with success!"
+		
+        If Not Setting("Version") = ScriptVersion Then
+        WriteConfigEntry "Settings", "version", ScriptVersion, iniPath
+        AddChat color.Magenta, "[" & Script("Name") & "] Updated to [" & ScriptVersion & "] with success!"
+    End If
+	 
+	
+	Call CreateCommands()
+	Call CreateSettings()
+	
+	dbconnect()
+	
+End Sub
+
+Sub Event_Command(Command)
+    With Command
+	
+	If .Username = BotVars.Username Then
+		msgPrefix = ""
+	Else
+		If BoolSetting("emote_on") Then
+			msgPrefix = "/emote • "
+		Else
+			msgPrefix = ""
+		End If
+	End If
+	
+    If Not .IsValid Then
+		.Respond StringFormat("{0}Please supply the valid command syntax!", msgPrefix)
+		Exit Sub
+	End If
+
+	If Not BoolSetting("Respond_When_Whispered") Then
+		If .WasWhispered Then Exit Sub
+	End If
+	
+	Select Case LCase(.Name)
+		Case "torch"
+			If .Username = BotVars.Username Then
+				AddChat vbRed, Script("Name") & ": As a bot, you're not allowed to set your torch!"
+				Exit Sub
+			Else
+				.Respond StringFormat("{0}", torchset_cmd(.Username, .Argument("TorchName")))
+			End If
+		Case "torchinfo"
+			If .WasWhispered Then Exit Sub
+			.Respond StringFormat("{0}", torchinfo_cmd())
+		Case "showtorch"
+			If .WasWhispered Then Exit Sub		
+			.Respond StringFormat("{0}", torchshow_cmd(.Argument("User")))
+		Case "cleartorch"
+			If .WasWhispered Then Exit Sub		
+			.Respond StringFormat("{0}", torchclear_cmd(.Argument("User")))
+		Case "torchusers"
+			If .WasWhispered Then Exit Sub
+			.Respond StringFormat("{0}", torchentries_cmd())
+		End Select
+	End With
+End Sub
+
+Private Function torchentries_cmd()
+	Dim SQL, TorchList, I
+	
+	Set SQL = dbConn.Execute("SELECT `username` FROM `torches` ORDER BY `username` ASC")
+	
+	If DatabaseCounter() = 0 Then
+		TorchList = ""
+	ElseIf DatabaseCounter() = 1 Then
+		TorchList = SQL.Fields(0)
+	Else
+		I = 0
+		Do Until I = DatabaseCounter()
+			If I = (DatabaseCounter() - 1 ) Then
+				TorchList = TorchList & StringFormat("{0}", SQL.Fields(0))
+			Else
+				TorchList = TorchList & StringFormat("{0} | ", SQL.Fields(0))
+			End If
+			I = I + 1
+			SQL.MoveNext
+		Loop
+	End If
+	
+	If TorchList = "" Then
+		torchentries_cmd = StringFormat("{0}There are no entries yet!", msgPrefix)
+	Else
+		torchentries_cmd = StringFormat("{0}User Entries [{1}]", msgPrefix, TorchList)
+	End If
+	
+	Set SQL = Nothing
+End Function
+
+Private Function torchshow_cmd(User)
+	Dim SQL
+	
+	Set SQL = dbConn.Execute("SELECT `torch_name` FROM `torches` WHERE `username` = '" & User & "'")
+	If Not (SQL.BOF) And Not (SQL.EOF) Then
+		torchshow_cmd = StringFormat("{0}[{1}] Info | Current Torch [{2}]", msgPrefix, User , SQL.Fields(0))
+	Else
+		torchshow_cmd = StringFormat("{0}There is no entry found on user [{1}]!" , msgPrefix , User)
+	End If
+	
+	Set SQL = Nothing
+End Function
+
+Private Function torchinfo_cmd()
+	Dim Connectivity
+	
+	If Err.Number = 0 Then
+		Connectivity = "Connected"
+	Else
+		Connectivity = "Disconnected"
+	End If
+	
+	torchinfo_cmd = StringFormat("{0}[{1}]'s [{2}] Version [{3}] | Database Connection [{4}] | Entries on Database [{5}]", msgPrefix, Script("Author"), Script("Name"), ScriptVersion, Connectivity, DatabaseCounter())
+End Function
+
+Private Function torchset_cmd(Username, TorchName)
+	Dim SQL
+	
+	If Len(TorchName) > 30 Then
+		torchset_cmd = StringFormat("/w {0} The length of the item must not be over 30 characters!", Username)
+		Exit Function
+	End If
+	
+	Set SQL = dbConn.Execute("SELECT `torch_name` FROM `torches` WHERE `username` = '" & Username & "'")
+	If Not (SQL.BOF) And Not (SQL.EOF) Then
+		dbConn.Execute("UPDATE `torches` SET `torch_name` = '" & TorchName & "', `date_submitted` = '" & Now & "' WHERE `username` = '" & Username & "'")
+	Else
+		dbConn.Execute("INSERT INTO `torches` (`username`,`torch_name`,`date_submitted`) VALUES ('" & Username & "', '" & TorchName & "', '" & Now & "')")
+	End If
+	
+	torchset_cmd = StringFormat("/w {0} Successfully Submitted!", Username)
+	
+	Set SQL = Nothing
+End Function
+
+Private Function torchclear_cmd(User)
+	Dim TorchName, SQL
+	If DatabaseCounter() = 0 Then
+		torchclear_cmd = StringFormat("{0}There are no entries in my database to clear!" , msgPrefix)
+	Else
+		Set SQL = dbConn.Execute("SELECT `torch_name` FROM `torches` WHERE `username` = '" & User & "'")
+		If Not SQL.EOF And Not SQL.BOF Then
+			TorchName = SQL.Fields(0)
+			Set SQL = dbConn.Execute("DELETE * FROM `torches` WHERE `username` = '" & User & "'")		
+			torchclear_cmd = StringFormat("{0}[{1}]'s Torch [{2}] Was Cleared!" , msgPrefix, User, TorchName)
+		Else
+			torchclear_cmd = StringFormat("{0}User's [{1}] entry doesn't exist!", msgPrefix, User)
+		End If	
+		Set SQL = Nothing
+	End If
+End Function
+
+Private Function DatabaseCounter()
+	Dim SQL
+	Set SQL = dbConn.Execute("SELECT COUNT (`user_id`) FROM `torches`")
+	DatabaseCounter = SQL.Fields(0)
+	Set SQL = Nothing
+End Function
+
+
+Private Sub dbConnect()
+	Dim dbConnStringProperty
+    Set dbConn = CreateObject("ADODB.Connection")
+	dbConnStringProperty = "Driver={Microsoft Access Driver (*.mdb)};Dbq=" & dbPath
+	dbConn.ConnectionString = dbConnStringProperty
+	dbConn.Open
+	If Err.Number = 0 Then
+		AddChat vbGreen, Script("Name") & ": Successfully connected to the database!"
+		isDatabaseConnected = True
+	Else
+		AddChat vbRed, Script("Name") & ": Unable to establish connection to the database!"
+		isDatabaseConnected = False
+	End If
+End Sub
+
+
+Private Sub CreateDatabase()
+	Dim Catalog
+    Set Catalog = CreateObject("ADOX.Catalog")
+    Catalog.Create "Provider=Microsoft.Jet.OLEDB.4.0;Jet OLEDB:Engine Type=5;Data Source=" & dbPath
+
+    dbConnect()
+		dbConn.Execute("CREATE TABLE `torches` (`user_id` Counter, `username` varchar(40), `torch_name` varchar(30), `date_submitted` varchar(40) )")
+	dbConn.Close
+   
+    AddChat color.Orange, "["& Script("Name") &"] Database Successfuly created!"
+End Sub
+
+
+Private Function Setting(Entry)
+    Setting = GetConfigEntry("Settings", Entry, iniPath)
+End Function
+
+Private Function BoolSetting(Entry)
+     Select Case UCase(Setting(Entry))
+          Case "Y", "YES", "TRUE", "T", "1"
+               BoolSetting = True
+          Case Else
+               BoolSetting = False
+     End Select
+End Function
+
+Private Sub CreateCommands()
+    Dim Parameter
+	
+    If OpenCommand("torch") Is Nothing Then
+        With CreateCommand("torch")
+            .Description = "Saves the user's current Torch" 
+            .RequiredRank = 20
+            Set Parameter = .NewParameter("TorchName", False, "Word")
+                Parameter.Description = "The Torch Name"
+            .Parameters.Add Parameter
+            .Save
+        End With
+    End If
+
+    If OpenCommand("showtorch") Is Nothing Then
+        With CreateCommand("showtorch")
+            .Description = "Shows the user's current Torch" 
+            .RequiredRank = 20
+            Set Parameter = .NewParameter("User", False, "Word")
+                Parameter.Description = "The Username"
+            .Parameters.Add Parameter
+            .Save
+        End With
+    End If	
+
+    If OpenCommand("torchinfo") Is Nothing Then
+        With CreateCommand("torchinfo")
+            .Description = "Shows the Torch Database info" 
+            .RequiredRank = 50
+            .Save
+        End With
+    End If		
+	
+    If OpenCommand("cleartorch") Is Nothing Then
+        With CreateCommand("cleartorch")
+            .Description = "Removes the user's current Torch" 
+            .RequiredRank = 100
+            Set Parameter = .NewParameter("User", False, "Word")
+                Parameter.Description = "The Username"
+            .Parameters.Add Parameter
+            .Save
+        End With
+    End If
+	
+    If OpenCommand("torchusers") Is Nothing Then
+        With CreateCommand("torchusers")
+            .Description = "Shows the users who submitted a torchname" 
+            .RequiredRank = 50
+            .Save
+        End With
+    End If			
+	
+End Sub
+
+Private Sub CreateSettings()
+	Dim Response
+	
+	If Setting("Respond_When_Whispered") = vbNullString Then
+		response = MsgBox("Respond when the commands are whispered?" & vbNewLine & "Works only for the torch command!" , vbYesNo, Script("Name") & " by " & Script("Author"))
+		If response = vbYes Then
+			response = "Y"
+		Else
+			response = "N"
+		End If
+
+		WriteConfigEntry "Settings", "Respond_When_Whispered", response, iniPath
+	End If
+	
+	If Setting("emote_on") = vbNullString Then
+		response = MsgBox("Emote all messages?", vbYesNo, Script("Name") & " by " & Script("Author"))
+		If response = vbYes Then
+			response = "Y"
+		Else
+			response = "N"
+		End If
+
+		WriteConfigEntry "Settings", "emote_on", response, iniPath
+	End If	
+	
+	If BoolSetting("emote_on") Then
+		msgPrefix = "/emote • "
+	Else
+		msgPrefix = ""
+	End If
+
+End Sub
